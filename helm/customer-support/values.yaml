@@ -1,0 +1,24 @@
+image:
+  repository: customer-support
+  tag: local
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 8000
+
+postgres:
+  enabled: true
+  image: pgvector/pgvector:pg16
+  database: support
+  username: support
+  password: local-only-password
+  storage: 1Gi
+
+retrieval:
+  provider: pgvector
+
+resources: {}
+

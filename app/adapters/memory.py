@@ -1,0 +1,89 @@
+import re
+
+from langchain_core.documents import Document
+
+from app.models import ConversationRecord, IncomingMessage, StoredMessage
+
+STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "can",
+    "do",
+    "for",
+    "how",
+    "i",
+    "in",
+    "is",
+    "it",
+    "my",
+    "of",
+    "on",
+    "the",
+    "to",
+    "what",
+    "you",
+    "your",
+}
+
+
+def tokenize(text: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]+", text.lower())) - STOP_WORDS
+
+
+class MemoryConversationRepository:
+    def __init__(self) -> None:
+        self.conversations: dict[tuple[str, str], ConversationRecord] = {}
+        self.messages: dict[str, StoredMessage] = {}
+
+    async def initialize(self) -> None:
+        return None
+
+    async def get_or_create(self, message: IncomingMessage) -> ConversationRecord:
+        key = (message.channel, message.external_chat_id)
+        if key not in self.conversations:
+            self.conversations[key] = ConversationRecord(
+                channel=message.channel,
+                external_chat_id=message.external_chat_id,
+                external_user_id=message.external_user_id,
+            )
+        return self.conversations[key]
+
+    async def save_message(self, message: StoredMessage) -> bool:
+        if message.event_id in self.messages:
+            return False
+        self.messages[message.event_id] = message
+        return True
+
+
+class MemoryRetrievalStore:
+    def __init__(self) -> None:
+        self.documents: dict[str, list[Document]] = {}
+
+    async def initialize(self) -> None:
+        return None
+
+    async def upsert(self, documents: list[Document], namespace: str) -> None:
+        self.documents.setdefault(namespace, []).extend(documents)
+
+    async def search(self, query: str, namespace: str, limit: int = 4) -> list[Document]:
+        query_tokens = tokenize(query)
+
+        def score(document: Document) -> float:
+            tokens = tokenize(document.page_content)
+            return len(query_tokens & tokens) / max(len(query_tokens), 1)
+
+        ranked = sorted(self.documents.get(namespace, []), key=score, reverse=True)
+        return [document for document in ranked if score(document) > 0][:limit]
+
+
+class ExtractiveAnswerGenerator:
+    async def generate(self, query: str, documents: list[Document]) -> tuple[str, float]:
+        if not documents:
+            return "I could not find enough information to answer that safely.", 0.0
+        source = documents[0]
+        answer = source.page_content
+        overlap = len(tokenize(query) & tokenize(answer)) / max(len(tokenize(query)), 1)
+        confidence = min(0.95, 0.55 + overlap)
+        return answer, confidence

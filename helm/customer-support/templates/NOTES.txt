@@ -1,0 +1,5 @@
+Port-forward the API:
+  kubectl port-forward service/{{ include "customer-support.fullname" . }} 8000:{{ .Values.service.port }}
+
+Then open http://localhost:8000/docs.
+

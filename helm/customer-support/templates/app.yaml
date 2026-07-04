@@ -17,7 +17,7 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "customer-support.fullname" . }}
+  name: {{ include "customer-support.fullname" . }}-app
   labels:
     {{- include "customer-support.labels" . | nindent 4 }}
 spec:

@@ -1,7 +1,5 @@
 from dataclasses import dataclass
 
-from langchain_core.documents import Document
-
 from app.adapters.memory import (
     ExtractiveAnswerGenerator,
     MemoryConversationRepository,
@@ -14,23 +12,7 @@ from app.adapters.postgres import (
 )
 from app.config import Settings
 from app.graph import build_support_graph
-
-SEED_DOCUMENTS = [
-    Document(
-        page_content=(
-            "To reset your password, open Settings, select Security, then choose Reset password. "
-            "A reset link will be sent to your verified email address."
-        ),
-        metadata={"source": "kb/password-reset"},
-    ),
-    Document(
-        page_content=(
-            "Refund requests can be submitted within 30 days of purchase. Include the order "
-            "number and the reason for the request."
-        ),
-        metadata={"source": "kb/refunds"},
-    ),
-]
+from app.knowledge import SEED_KNOWLEDGE_NAMESPACE, load_knowledge_documents
 
 
 @dataclass
@@ -63,7 +45,10 @@ async def create_container(settings: Settings) -> Container:
     await conversations.initialize()
     await retrieval.initialize()
     if settings.seed_knowledge:
-        await retrieval.upsert(SEED_DOCUMENTS, "knowledge")
+        await retrieval.upsert(
+            load_knowledge_documents(settings.knowledge_path),
+            SEED_KNOWLEDGE_NAMESPACE,
+        )
     generator = ExtractiveAnswerGenerator()
     graph = build_support_graph(conversations, retrieval, generator, settings.confidence_threshold)
     return Container(conversations, retrieval, graph, database)

@@ -58,11 +58,23 @@ spec:
           env:
             - name: SUPPORT_RETRIEVAL_PROVIDER
               value: {{ .Values.retrieval.provider | quote }}
+            - name: SUPPORT_SEED_KNOWLEDGE
+              value: {{ .Values.knowledge.seedOnStartup | quote }}
+            {{- if .Values.knowledge.existingConfigMap }}
+            - name: SUPPORT_KNOWLEDGE_PATH
+              value: {{ .Values.knowledge.mountPath | quote }}
+            {{- end }}
             - name: SUPPORT_DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ include "customer-support.fullname" . }}-postgres
                   key: database-url
+          {{- if .Values.knowledge.existingConfigMap }}
+          volumeMounts:
+            - name: knowledge
+              mountPath: {{ .Values.knowledge.mountPath | quote }}
+              readOnly: true
+          {{- end }}
           readinessProbe:
             httpGet:
               path: /healthz
@@ -77,3 +89,9 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+      {{- if .Values.knowledge.existingConfigMap }}
+      volumes:
+        - name: knowledge
+          configMap:
+            name: {{ .Values.knowledge.existingConfigMap | quote }}
+      {{- end }}

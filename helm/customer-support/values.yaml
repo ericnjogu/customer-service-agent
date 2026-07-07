@@ -20,5 +20,9 @@ postgres:
 retrieval:
   provider: pgvector
 
-resources: {}
+knowledge:
+  existingConfigMap: "seed-knowledge"
+  mountPath: /knowledge
+  seedOnStartup: true
 
+resources: {}

@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     answer_provider: str = "extractive"
     confidence_threshold: float = 0.60
     seed_knowledge: bool = True
+    knowledge_path: str | None = None
 
 
 @lru_cache

@@ -97,7 +97,7 @@ class PgVectorRetrievalStore:
                     VALUES ($1, $2, $3, $4::jsonb, $5::vector)
                     ON CONFLICT (namespace, source) DO UPDATE
                     SET content = EXCLUDED.content, metadata = EXCLUDED.metadata,
-                        embedding = EXCLUDED.embedding
+                        embedding = EXCLUDED.embedding, updated_at = now()
                     """,
                     namespace,
                     source,
@@ -159,6 +159,23 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
     content text NOT NULL,
     metadata jsonb NOT NULL DEFAULT '{{}}',
     embedding vector({EMBEDDING_DIMENSIONS}) NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE(namespace, source)
 );
+
+ALTER TABLE knowledge_documents
+ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+
+ALTER TABLE knowledge_documents
+ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+
+DELETE FROM knowledge_documents older
+USING knowledge_documents newer
+WHERE older.namespace = newer.namespace
+  AND older.source = newer.source
+  AND older.ctid < newer.ctid;
+
+CREATE UNIQUE INDEX IF NOT EXISTS knowledge_documents_namespace_source_idx
+ON knowledge_documents(namespace, source);
 """

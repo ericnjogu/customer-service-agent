@@ -3,6 +3,7 @@ from typing import TypedDict
 from langchain_core.documents import Document
 from langgraph.graph import END, START, StateGraph
 
+from app.knowledge import SEED_KNOWLEDGE_NAMESPACE
 from app.models import ConversationRecord, IncomingMessage, StoredMessage, SupportReply
 from app.ports import AnswerGenerator, ConversationRepository, RetrievalStore
 
@@ -36,7 +37,7 @@ def build_support_graph(
         return {"conversation": conversation}
 
     async def retrieve(state: SupportState) -> dict:
-        documents = await retrieval.search(state["message"].text, "knowledge")
+        documents = await retrieval.search(state["message"].text, SEED_KNOWLEDGE_NAMESPACE)
         return {"documents": documents}
 
     async def answer(state: SupportState) -> dict:

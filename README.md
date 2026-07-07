@@ -1,9 +1,10 @@
 # Customer Support Agent
 
-Increment 1 is a locally runnable vertical slice using FastAPI, LangGraph, LangChain
-documents, and a configurable retrieval boundary. Helm deploys the service with PostgreSQL
-and pgvector. No external LLM key is needed yet: a deterministic extractive generator and
-local hash embeddings make the workflow inspectable and reproducible.
+Increment 2 is a locally runnable vertical slice using FastAPI, LangGraph, LangChain
+documents, file-based KB ingestion, and a configurable retrieval boundary. Helm deploys
+the service with PostgreSQL and pgvector. No external LLM key is needed yet: a deterministic
+extractive generator and local hash embeddings make the workflow inspectable and
+reproducible.
 
 ## What works
 
@@ -12,10 +13,10 @@ local hash embeddings make the workflow inspectable and reproducible.
   answers for future escalation.
 - In-memory adapters for fast development and tests.
 - PostgreSQL conversation persistence and pgvector retrieval in Kubernetes.
-- Seed knowledge for password-reset and refund questions.
+- Startup knowledge loaded from a mounted directory, with demo knowledge as the local fallback.
 - Helm chart validation and API/graph tests.
 
-Human handover, Telegram, conversation memory, and production LLM/embedding providers are
+Human handover, Telegram, admin KB upload UI, conversation memory, and production LLM/embedding providers are
 intentionally reserved for later increments.
 
 ## Run in the IDE
@@ -57,18 +58,19 @@ daemon is required.
 ```bash
 kubectl config use-context rancher-desktop
 nerdctl --namespace k8s.io build -t customer-support:local .
-helm upgrade --install cs-iteration-0x helm/customer-support
-kubectl rollout status statefulset/support-customer-support-postgres
-kubectl rollout status deployment/support-customer-support
-kubectl port-forward service/support-customer-support 8000:8000
+kubectl create namespace customer-support
+helm upgrade --install support helm/customer-support --namespace customer-support
+kubectl rollout status statefulset/support-customer-support-postgres --namespace customer-support
+kubectl rollout status deployment/support-customer-support-app --namespace customer-support
+kubectl port-forward service/support-customer-support-app 8000:8000 --namespace customer-support
 ```
 
 In another terminal, send the same synthetic webhook shown above. Inspect the deployment
 with:
 
 ```bash
-kubectl get pods
-kubectl logs deployment/support-customer-support
+kubectl get pods --namespace customer-support
+kubectl logs deployment/support-customer-support-app --namespace customer-support
 ```
 
 The `Dockerfile` remains in the repository because it is the standard OCI image build
@@ -76,6 +78,53 @@ recipe; `nerdctl`, rather than Docker, builds it for Kubernetes.
 
 The default password in `values.yaml` is deliberately local-only. Override it outside local
 development and use a secret manager in production.
+
+### Mount local KB files through a ConfigMap
+
+Keep the actual KB files outside the repository, for example:
+
+```bash
+mkdir -p "$HOME/customer-support-knowledge"
+cat > "$HOME/customer-support-knowledge/refunds.md" <<'EOF'
+Refund requests can be submitted within 30 days of purchase. Include the order number
+and the reason for the request.
+EOF
+```
+
+Create or update a ConfigMap from that directory:
+
+```bash
+kubectl create configmap seed-knowledge \
+  --namespace customer-support \
+  --from-file=drinks.txt \
+  --from-file=menu-gpt-4.txt \
+  --dry-run=client \
+  -o yaml | kubectl apply -f -
+```
+
+or using selected files:
+
+```bash
+kubectl create configmap seed-knowledge \
+  --namespace customer-support \
+  --from-file=drinks.txt \
+  --from-file=menu-gpt-4.txt \
+  --dry-run=client \
+  -o yaml | kubectl apply -f -
+
+```
+
+Then mount it into the app:
+
+```bash
+helm upgrade --install support helm/customer-support \
+  --namespace customer-support \
+  --set knowledge.existingConfigMap=support-knowledge
+```
+
+The app reads `.md` and `.txt` files from `/knowledge` by default. ConfigMaps are suitable
+for these small 4 KB documents, but keep the total ConfigMap size comfortably below
+Kubernetes' 1 MiB object limit.
 
 ## Configuration
 
@@ -86,10 +135,11 @@ Environment variables use the `SUPPORT_` prefix:
 | `SUPPORT_RETRIEVAL_PROVIDER` | `memory` | `memory` or `pgvector` |
 | `SUPPORT_DATABASE_URL` | unset | PostgreSQL connection string |
 | `SUPPORT_CONFIDENCE_THRESHOLD` | `0.60` | Below this, mark for escalation |
-| `SUPPORT_SEED_KNOWLEDGE` | `true` | Load demo knowledge at startup |
+| `SUPPORT_SEED_KNOWLEDGE` | `true` | Load startup knowledge |
+| `SUPPORT_KNOWLEDGE_PATH` | unset | Directory containing `.md`/`.txt` KB files; demo knowledge is used when unset |
 
-## Increment 1 boundary
+## Increment 2 boundary
 
-An `escalated: true` response is only a decision signal in this increment. Creating or
-reusing a human support group belongs to Increment 3. This keeps the first review point
-small while proving the graph, persistence, retrieval abstraction, container, and chart.
+An `escalated: true` response is still only a decision signal. Creating or reusing a human
+support group belongs to Increment 3. This increment adds an operator-driven KB ingestion
+path, not yet an admin upload UI or document approval workflow.

@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 
 from app.adapters.memory import (
@@ -14,6 +15,8 @@ from app.config import Settings
 from app.graph import build_support_graph
 from app.knowledge import SEED_KNOWLEDGE_NAMESPACE, load_knowledge_documents
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class Container:
@@ -29,6 +32,12 @@ class Container:
 
 async def create_container(settings: Settings) -> Container:
     database = None
+    logger.info(
+        "Creating app container with retrieval_provider=%s seed_knowledge=%s knowledge_path=%s",
+        settings.retrieval_provider,
+        settings.seed_knowledge,
+        settings.knowledge_path or "<unset>",
+    )
     if settings.retrieval_provider == "pgvector":
         if not settings.database_url:
             raise ValueError("SUPPORT_DATABASE_URL is required when using pgvector")
@@ -45,10 +54,16 @@ async def create_container(settings: Settings) -> Container:
     await conversations.initialize()
     await retrieval.initialize()
     if settings.seed_knowledge:
-        await retrieval.upsert(
-            load_knowledge_documents(settings.knowledge_path),
+        documents = load_knowledge_documents(settings.knowledge_path)
+        logger.info(
+            "Loaded %d seed knowledge document(s) for namespace=%s sources=%s",
+            len(documents),
             SEED_KNOWLEDGE_NAMESPACE,
+            [str(document.metadata.get("source", "unknown")) for document in documents],
         )
+        await retrieval.upsert(documents, SEED_KNOWLEDGE_NAMESPACE)
+    else:
+        logger.info("Seed knowledge loading is disabled")
     generator = ExtractiveAnswerGenerator()
     graph = build_support_graph(conversations, retrieval, generator, settings.confidence_threshold)
     return Container(conversations, retrieval, graph, database)

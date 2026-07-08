@@ -9,9 +9,19 @@ This project currently uses increment-based milestones instead of semantic versi
 
 ### Added
 
+- Startup logging for seed knowledge loading, mounted KB file discovery, and pgvector
+  document upserts, with KB file/upsert traces visible at `INFO`.
+- `SUPPORT_LOG_LEVEL` / `logging.level` configuration for controlling application logs.
+- `SUPPORT_LOG_FORMAT` / `logging.format` configuration using Python logging `{}` style.
+- Logging filter that suppresses noisy Uvicorn access logs for `/healthz` probes.
+- Local deploy helper script for Rancher Desktop Kubernetes rebuilds and rollouts.
+
 ### Changed
 
 ### Fixed
+
+- Seed knowledge loading now ignores Kubernetes ConfigMap projected-volume backing paths
+  such as `..2026_*`, preventing duplicate file ingestion.
 
 ### Deferred
 

@@ -25,4 +25,8 @@ knowledge:
   mountPath: /knowledge
   seedOnStartup: true
 
+logging:
+  level: INFO
+  format: "{asctime} - {levelname}:{name}:{message}"
+
 resources: {}

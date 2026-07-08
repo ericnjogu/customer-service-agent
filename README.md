@@ -73,6 +73,49 @@ kubectl get pods --namespace customer-support
 kubectl logs deployment/support-customer-support-app --namespace customer-support
 ```
 
+### Redeploy after changing Python code
+
+Helm only recreates Pods when the rendered Kubernetes Pod template changes. Rebuilding
+`customer-support:local` changes the local image contents, but the Deployment still points
+to the same image tag, so Kubernetes will keep running the existing Pods until you restart
+the rollout or use a new image tag.
+
+For local development with the `cs-local` release:
+
+```bash
+nerdctl --namespace k8s.io build -t customer-support:local .
+
+helm upgrade --install cs-local helm/customer-support \
+  --namespace customer-support \
+  --set logging.level=DEBUG
+
+kubectl rollout restart deployment/cs-local-customer-support-app \
+  --namespace customer-support
+
+kubectl rollout status deployment/cs-local-customer-support-app \
+  --namespace customer-support
+```
+
+Then check the new Pod logs:
+
+```bash
+kubectl logs deployment/cs-local-customer-support-app \
+  --namespace customer-support
+```
+
+Or run the helper script:
+
+```bash
+scripts/deploy-local.sh
+```
+
+The script defaults to `cs-local`, `customer-support`, `customer-support:local`, and
+`DEBUG` logging. Override those values with environment variables:
+
+```bash
+RELEASE_NAME=support LOG_LEVEL=INFO scripts/deploy-local.sh
+```
+
 The `Dockerfile` remains in the repository because it is the standard OCI image build
 recipe; `nerdctl`, rather than Docker, builds it for Kubernetes.
 
@@ -119,7 +162,7 @@ Then mount it into the app:
 ```bash
 helm upgrade --install support helm/customer-support \
   --namespace customer-support \
-  --set knowledge.existingConfigMap=support-knowledge
+  --set knowledge.existingConfigMap=seed-knowledge
 ```
 
 The app reads `.md` and `.txt` files from `/knowledge` by default. ConfigMaps are suitable
@@ -137,6 +180,8 @@ Environment variables use the `SUPPORT_` prefix:
 | `SUPPORT_CONFIDENCE_THRESHOLD` | `0.60` | Below this, mark for escalation |
 | `SUPPORT_SEED_KNOWLEDGE` | `true` | Load startup knowledge |
 | `SUPPORT_KNOWLEDGE_PATH` | unset | Directory containing `.md`/`.txt` KB files; demo knowledge is used when unset |
+| `SUPPORT_LOG_LEVEL` | `INFO` | Application log level, for example `DEBUG` |
+| `SUPPORT_LOG_FORMAT` | `{asctime} - {levelname}:{name}:{message}` | Python logging format using `{}` style |
 
 ## Increment 2 boundary
 

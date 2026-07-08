@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     confidence_threshold: float = 0.60
     seed_knowledge: bool = True
     knowledge_path: str | None = None
+    log_level: str = "INFO"
+    log_format: str = "{asctime} - {levelname}:{name}:{message}"
 
 
 @lru_cache

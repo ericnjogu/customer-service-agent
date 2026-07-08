@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import math
 import re
 
@@ -9,6 +10,7 @@ from langchain_core.documents import Document
 from app.models import ConversationRecord, IncomingMessage, StoredMessage
 
 EMBEDDING_DIMENSIONS = 64
+logger = logging.getLogger(__name__)
 
 
 def local_embedding(text: str) -> list[float]:
@@ -88,9 +90,20 @@ class PgVectorRetrievalStore:
 
     async def upsert(self, documents: list[Document], namespace: str) -> None:
         assert self.database.pool
+        logger.info(
+            "Upserting %d pgvector knowledge document(s) into namespace=%s",
+            len(documents),
+            namespace,
+        )
         async with self.database.pool.acquire() as connection:
             for document in documents:
                 source = str(document.metadata.get("source", "unknown"))
+                logger.info(
+                    "Upserting pgvector knowledge document namespace=%s source=%s content_chars=%d",
+                    namespace,
+                    source,
+                    len(document.page_content),
+                )
                 await connection.execute(
                     """
                     INSERT INTO knowledge_documents(namespace, source, content, metadata, embedding)
@@ -105,6 +118,7 @@ class PgVectorRetrievalStore:
                     json.dumps(document.metadata),
                     vector_literal(local_embedding(document.page_content)),
                 )
+        logger.info("Finished pgvector knowledge upsert for namespace=%s", namespace)
 
     async def search(self, query: str, namespace: str, limit: int = 4) -> list[Document]:
         assert self.database.pool

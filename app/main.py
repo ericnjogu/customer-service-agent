@@ -24,40 +24,25 @@ class HealthzAccessLogFilter(logging.Filter):
         return "/healthz" not in str(record.args)
 
 
-def configure_logging(log_level: str, log_format: str) -> int:
-    level_name = log_level.upper()
-    level = logging.getLevelName(level_name)
-    if not isinstance(level, int):
-        level_name = "INFO"
-        level = logging.INFO
-
+def configure_logging(log_level: str, log_format: str) -> None:
     logging.basicConfig(
-        level=level,
+        level=log_level,
         format=log_format,
         style="{",
-        force=True,
     )
-    logging.getLogger().setLevel(level)
-    for logger_name in ("app", "app.container", "app.knowledge", "app.adapters.postgres"):
-        logging.getLogger(logger_name).setLevel(level)
 
     uvicorn_access_logger = logging.getLogger("uvicorn.access")
     uvicorn_access_logger.addFilter(HealthzAccessLogFilter())
-
-    return level
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    effective_log_level = logging.getLevelName(
-        configure_logging(settings.log_level, settings.log_format)
-    )
+    configure_logging(settings.log_level, settings.log_format)
     logging.getLogger(__name__).info(
-        "Starting %s with configured_log_level=%s effective_log_level=%s",
+        "Starting %s with configured log level=%s",
         settings.app_name,
         settings.log_level,
-        effective_log_level,
     )
     app.state.container = await create_container(settings)
     yield

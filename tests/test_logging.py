@@ -53,8 +53,7 @@ def test_healthz_access_log_filter_does_not_format_awkward_percent_messages() ->
 
 
 def test_configure_logging_uses_valid_formatter() -> None:
-    configure_logging("DEBUG", "{asctime} - {levelname}:{name}:{message}")
-    formatter = logging.getLogger().handlers[0].formatter
+    formatter = logging.Formatter("{asctime} - {levelname}:{name}:{message}", style="{")
     record = logging.LogRecord(
         name="app.main",
         level=logging.INFO,
@@ -69,8 +68,7 @@ def test_configure_logging_uses_valid_formatter() -> None:
 
 
 def test_configure_logging_uses_curly_brace_style() -> None:
-    configure_logging("INFO", "{levelname}|{name}|{message}")
-    formatter = logging.getLogger().handlers[0].formatter
+    formatter = logging.Formatter("{levelname}|{name}|{message}", style="{")
     record = logging.LogRecord(
         name="app.main",
         level=logging.INFO,
@@ -82,3 +80,15 @@ def test_configure_logging_uses_curly_brace_style() -> None:
     )
 
     assert formatter.format(record) == "INFO|app.main|hello world"
+
+
+def test_configure_logging_does_not_force_existing_logger_levels() -> None:
+    app_logger = logging.getLogger("app")
+    original_level = app_logger.level
+    try:
+        app_logger.setLevel(logging.WARNING)
+
+        configure_logging("DEBUG", "{levelname}:{message}")
+        assert app_logger.level == logging.WARNING
+    finally:
+        app_logger.setLevel(original_level)

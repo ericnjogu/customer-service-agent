@@ -1,4 +1,5 @@
 import re
+from uuid import UUID
 
 from langchain_core.documents import Document
 
@@ -49,6 +50,38 @@ class MemoryConversationRepository:
                 external_user_id=message.external_user_id,
             )
         return self.conversations[key]
+
+    async def get_by_id(self, conversation_id: UUID) -> ConversationRecord | None:
+        return next(
+            (
+                conversation
+                for conversation in self.conversations.values()
+                if conversation.id == conversation_id
+            ),
+            None,
+        )
+
+    async def update_status(
+        self,
+        conversation_id: UUID,
+        *,
+        status: str | None = None,
+        issue_status: str | None = None,
+        reason: str | None = None,
+    ) -> ConversationRecord:
+        conversation = await self.get_by_id(conversation_id)
+        if not conversation:
+            raise KeyError(f"Conversation not found: {conversation_id}")
+
+        updated = conversation.model_copy(
+            update={
+                "status": status or conversation.status,
+                "issue_status": issue_status or conversation.issue_status,
+            }
+        )
+        key = (updated.channel, updated.external_chat_id)
+        self.conversations[key] = updated
+        return updated
 
     async def save_message(self, message: StoredMessage) -> bool:
         if message.event_id in self.messages:

@@ -41,6 +41,14 @@ def build_support_graph(
         return {"documents": documents}
 
     async def answer(state: SupportState) -> dict:
+        if state["conversation"].status == "HUMAN_ACTIVE":
+            return {
+                "answer": "This conversation is currently being handled by human support.",
+                "confidence": 0.0,
+                "citations": [],
+                "escalated": True,
+            }
+
         text, confidence = await generator.generate(state["message"].text, state["documents"])
         citations = [str(item.metadata.get("source", "unknown")) for item in state["documents"]]
         return {
@@ -51,15 +59,23 @@ def build_support_graph(
         }
 
     async def persist_reply(state: SupportState) -> dict:
+        conversation = state["conversation"]
+        if state["escalated"] and conversation.status != "HUMAN_ACTIVE":
+            conversation = await conversations.update_status(
+                conversation.id,
+                status="HANDOFF_PENDING",
+                issue_status="ESCALATED",
+                reason="Low confidence support graph answer",
+            )
         await conversations.save_message(
             StoredMessage(
-                conversation_id=state["conversation"].id,
+                conversation_id=conversation.id,
                 event_id=f"reply:{state['message'].event_id}",
                 sender_type="BOT",
                 body=state["answer"],
             )
         )
-        return {}
+        return {"conversation": conversation}
 
     workflow = StateGraph(SupportState)
     workflow.add_node("persist_message", persist_message)
@@ -82,4 +98,6 @@ async def invoke_support_graph(graph, message: IncomingMessage) -> SupportReply:
         confidence=state["confidence"],
         citations=state["citations"],
         escalated=state["escalated"],
+        handling_status=state["conversation"].status,
+        issue_status=state["conversation"].issue_status,
     )

@@ -1,4 +1,5 @@
 from typing import Protocol
+from uuid import UUID
 
 from langchain_core.documents import Document
 
@@ -9,6 +10,17 @@ class ConversationRepository(Protocol):
     async def initialize(self) -> None: ...
 
     async def get_or_create(self, message: IncomingMessage) -> ConversationRecord: ...
+
+    async def get_by_id(self, conversation_id: UUID) -> ConversationRecord | None: ...
+
+    async def update_status(
+        self,
+        conversation_id: UUID,
+        *,
+        status: str | None = None,
+        issue_status: str | None = None,
+        reason: str | None = None,
+    ) -> ConversationRecord: ...
 
     async def save_message(self, message: StoredMessage) -> bool: ...
 

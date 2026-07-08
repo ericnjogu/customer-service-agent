@@ -1,12 +1,13 @@
 import logging
 from contextlib import asynccontextmanager
+from uuid import UUID
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 
 from app.config import get_settings
 from app.container import create_container
 from app.graph import invoke_support_graph
-from app.models import IncomingMessage, SupportReply
+from app.models import ConversationRecord, ConversationStatusUpdate, IncomingMessage, SupportReply
 
 
 class HealthzAccessLogFilter(logging.Filter):
@@ -74,3 +75,31 @@ async def health() -> dict[str, str]:
 @app.post("/webhooks/synthetic", response_model=SupportReply)
 async def synthetic_webhook(message: IncomingMessage, request: Request) -> SupportReply:
     return await invoke_support_graph(request.app.state.container.graph, message)
+
+
+@app.get("/conversations/{conversation_id}", response_model=ConversationRecord)
+async def get_conversation(conversation_id: UUID, request: Request) -> ConversationRecord:
+    conversation = await request.app.state.container.conversations.get_by_id(conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conversation
+
+
+@app.patch("/conversations/{conversation_id}/status", response_model=ConversationRecord)
+async def update_conversation_status(
+    conversation_id: UUID,
+    update: ConversationStatusUpdate,
+    request: Request,
+) -> ConversationRecord:
+    if update.status is None and update.issue_status is None:
+        raise HTTPException(status_code=400, detail="At least one status field is required")
+
+    try:
+        return await request.app.state.container.conversations.update_status(
+            conversation_id,
+            status=update.status,
+            issue_status=update.issue_status,
+            reason=update.reason,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Conversation not found") from None

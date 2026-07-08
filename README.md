@@ -1,10 +1,10 @@
 # Customer Support Agent
 
-Increment 2 is a locally runnable vertical slice using FastAPI, LangGraph, LangChain
-documents, file-based KB ingestion, and a configurable retrieval boundary. Helm deploys
-the service with PostgreSQL and pgvector. No external LLM key is needed yet: a deterministic
-extractive generator and local hash embeddings make the workflow inspectable and
-reproducible.
+Increment 3 is a locally runnable vertical slice using FastAPI, LangGraph, LangChain
+documents, file-based KB ingestion, issue status tracking, and a configurable retrieval
+boundary. Helm deploys the service with PostgreSQL and pgvector. No external LLM key is
+needed yet: a deterministic extractive generator and local hash embeddings make the
+workflow inspectable and reproducible.
 
 ## What works
 
@@ -14,10 +14,11 @@ reproducible.
 - In-memory adapters for fast development and tests.
 - PostgreSQL conversation persistence and pgvector retrieval in Kubernetes.
 - Startup knowledge loaded from a mounted directory, with demo knowledge as the local fallback.
+- Conversation handling status and issue status updates for the handoff foundation.
 - Helm chart validation and API/graph tests.
 
-Human handover, Telegram, admin KB upload UI, conversation memory, and production LLM/embedding providers are
-intentionally reserved for later increments.
+Actual support group creation, Telegram, admin KB upload UI, conversation memory, and
+production LLM/embedding providers are intentionally reserved for later increments.
 
 ## Run in the IDE
 
@@ -169,6 +170,42 @@ The app reads `.md` and `.txt` files from `/knowledge` by default. ConfigMaps ar
 for these small 4 KB documents, but keep the total ConfigMap size comfortably below
 Kubernetes' 1 MiB object limit.
 
+## Conversation and issue status
+
+The graph now tracks two related status concepts:
+
+| Field | Values | Purpose |
+|---|---|---|
+| `status` | `BOT_ACTIVE`, `HANDOFF_PENDING`, `HUMAN_ACTIVE` | Who should handle the conversation |
+| `issue_status` | `NEW`, `IN_PROGRESS`, `CLOSED`, `ESCALATED`, `REOPENED` | Support issue lifecycle |
+
+When the graph produces a low-confidence answer, it marks the conversation as:
+
+```json
+{
+  "status": "HANDOFF_PENDING",
+  "issue_status": "ESCALATED"
+}
+```
+
+Inspect a conversation:
+
+```bash
+curl http://localhost:8000/conversations/<conversation-id>
+```
+
+Update status, for example when a human agent accepts a handoff:
+
+```bash
+curl -X PATCH http://localhost:8000/conversations/<conversation-id>/status \
+  -H 'content-type: application/json' \
+  -d '{
+    "status": "HUMAN_ACTIVE",
+    "issue_status": "IN_PROGRESS",
+    "reason": "Human support accepted the handoff"
+  }'
+```
+
 ## Configuration
 
 Environment variables use the `SUPPORT_` prefix:
@@ -183,8 +220,8 @@ Environment variables use the `SUPPORT_` prefix:
 | `SUPPORT_LOG_LEVEL` | `INFO` | Application log level, for example `DEBUG` |
 | `SUPPORT_LOG_FORMAT` | `{asctime} - {levelname}:{name}:{message}` | Python logging format using `{}` style |
 
-## Increment 2 boundary
+## Increment 3 boundary
 
-An `escalated: true` response is still only a decision signal. Creating or reusing a human
-support group belongs to Increment 3. This increment adds an operator-driven KB ingestion
-path, not yet an admin upload UI or document approval workflow.
+An `escalated: true` response now persists a handoff-pending status. Creating or reusing
+a real Telegram/WhatsApp support group, forwarding selected agent messages, and exposing
+an admin console still belong to later increments.

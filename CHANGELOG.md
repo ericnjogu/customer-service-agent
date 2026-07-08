@@ -15,8 +15,14 @@ This project currently uses increment-based milestones instead of semantic versi
 - `SUPPORT_LOG_FORMAT` / `logging.format` configuration using Python logging `{}` style.
 - Logging filter that suppresses noisy Uvicorn access logs for `/healthz` probes.
 - Local deploy helper script for Rancher Desktop Kubernetes rebuilds and rollouts.
+- Conversation `issue_status` tracking with `NEW`, `IN_PROGRESS`, `CLOSED`, `ESCALATED`,
+  and `REOPENED` lifecycle values.
+- Conversation status APIs for reading conversations and updating handling/issue status.
+- Status event persistence in PostgreSQL for conversation status changes.
 
 ### Changed
+
+- Low-confidence graph replies now persist `HANDOFF_PENDING` and `ESCALATED` status.
 
 ### Fixed
 

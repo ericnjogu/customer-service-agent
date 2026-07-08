@@ -20,6 +20,8 @@ async def test_grounded_question_returns_citation() -> None:
     assert reply.escalated is False
     assert reply.citations == ["kb/password-reset"]
     assert "Settings" in reply.answer
+    assert reply.handling_status == "BOT_ACTIVE"
+    assert reply.issue_status == "NEW"
 
 
 async def test_unknown_question_is_marked_for_escalation() -> None:
@@ -37,6 +39,12 @@ async def test_unknown_question_is_marked_for_escalation() -> None:
     assert reply.escalated is True
     assert reply.confidence == 0.0
     assert reply.citations == []
+    assert reply.handling_status == "HANDOFF_PENDING"
+    assert reply.issue_status == "ESCALATED"
+
+    conversation = await container.conversations.get_by_id(reply.conversation_id)
+    assert conversation.status == "HANDOFF_PENDING"
+    assert conversation.issue_status == "ESCALATED"
 
 
 async def test_loads_knowledge_from_directory(tmp_path) -> None:
@@ -61,6 +69,8 @@ async def test_loads_knowledge_from_directory(tmp_path) -> None:
     assert reply.escalated is False
     assert reply.citations == ["kb/shipping.md"]
     assert "Shipping address changes" in reply.answer
+    assert reply.handling_status == "BOT_ACTIVE"
+    assert reply.issue_status == "NEW"
 
 
 async def test_seed_knowledge_namespace_constant_is_used() -> None:

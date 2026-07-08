@@ -3,6 +3,7 @@ import json
 import logging
 import math
 import re
+from uuid import UUID
 
 import asyncpg
 from langchain_core.documents import Document
@@ -58,12 +59,78 @@ class PostgresConversationRepository:
             VALUES ($1, $2, $3)
             ON CONFLICT (channel, external_chat_id) DO UPDATE
             SET external_user_id = EXCLUDED.external_user_id, updated_at = now()
-            RETURNING id, channel, external_chat_id, external_user_id, status
+            RETURNING id, channel, external_chat_id, external_user_id, status, issue_status
             """,
             message.channel,
             message.external_chat_id,
             message.external_user_id,
         )
+        return ConversationRecord(**dict(row))
+
+    async def get_by_id(self, conversation_id: UUID) -> ConversationRecord | None:
+        assert self.database.pool
+        row = await self.database.pool.fetchrow(
+            """
+            SELECT id, channel, external_chat_id, external_user_id, status, issue_status
+            FROM conversations WHERE id = $1
+            """,
+            conversation_id,
+        )
+        return ConversationRecord(**dict(row)) if row else None
+
+    async def update_status(
+        self,
+        conversation_id: UUID,
+        *,
+        status: str | None = None,
+        issue_status: str | None = None,
+        reason: str | None = None,
+    ) -> ConversationRecord:
+        assert self.database.pool
+        async with self.database.pool.acquire() as connection:
+            async with connection.transaction():
+                previous = await connection.fetchrow(
+                    """
+                    SELECT status, issue_status FROM conversations WHERE id = $1
+                    FOR UPDATE
+                    """,
+                    conversation_id,
+                )
+                if not previous:
+                    raise KeyError(f"Conversation not found: {conversation_id}")
+
+                row = await connection.fetchrow(
+                    """
+                    UPDATE conversations
+                    SET status = COALESCE($2, status),
+                        issue_status = COALESCE($3, issue_status),
+                        updated_at = now()
+                    WHERE id = $1
+                    RETURNING id, channel, external_chat_id, external_user_id, status, issue_status
+                    """,
+                    conversation_id,
+                    status,
+                    issue_status,
+                )
+                await connection.execute(
+                    """
+                    INSERT INTO conversation_status_events(
+                        conversation_id,
+                        previous_status,
+                        new_status,
+                        previous_issue_status,
+                        new_issue_status,
+                        reason
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                    """,
+                    conversation_id,
+                    previous["status"],
+                    row["status"],
+                    previous["issue_status"],
+                    row["issue_status"],
+                    reason,
+                )
         return ConversationRecord(**dict(row))
 
     async def save_message(self, message: StoredMessage) -> bool:
@@ -152,6 +219,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     external_chat_id text NOT NULL,
     external_user_id text NOT NULL,
     status text NOT NULL DEFAULT 'BOT_ACTIVE',
+    issue_status text NOT NULL DEFAULT 'NEW',
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE(channel, external_chat_id)
@@ -166,6 +234,17 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS conversation_status_events (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    conversation_id uuid NOT NULL REFERENCES conversations(id),
+    previous_status text NOT NULL,
+    new_status text NOT NULL,
+    previous_issue_status text NOT NULL,
+    new_issue_status text NOT NULL,
+    reason text,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS knowledge_documents (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     namespace text NOT NULL,
@@ -177,6 +256,9 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
     updated_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE(namespace, source)
 );
+
+ALTER TABLE conversations
+ADD COLUMN IF NOT EXISTS issue_status text NOT NULL DEFAULT 'NEW';
 
 ALTER TABLE knowledge_documents
 ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();

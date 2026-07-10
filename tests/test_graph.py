@@ -5,8 +5,15 @@ from app.knowledge import SEED_KNOWLEDGE_NAMESPACE
 from app.models import IncomingMessage
 
 
-async def test_grounded_question_returns_citation() -> None:
-    container = await create_container(Settings())
+async def test_grounded_question_returns_citation(tmp_path) -> None:
+    knowledge_dir = tmp_path / "knowledge"
+    knowledge_dir.mkdir()
+    (knowledge_dir / "password-reset.txt").write_text(
+        "To reset your password, open Settings, select Security, then choose Reset password.",
+        encoding="utf-8",
+    )
+
+    container = await create_container(Settings(knowledge_path=str(knowledge_dir)))
     reply = await invoke_support_graph(
         container.graph,
         IncomingMessage(
@@ -18,7 +25,7 @@ async def test_grounded_question_returns_citation() -> None:
     )
 
     assert reply.escalated is False
-    assert reply.citations == ["kb/password-reset"]
+    assert reply.citations == ["kb/password-reset.txt"]
     assert "Settings" in reply.answer
     assert reply.handling_status == "BOT_ACTIVE"
     assert reply.issue_status == "NEW"
@@ -73,8 +80,15 @@ async def test_loads_knowledge_from_directory(tmp_path) -> None:
     assert reply.issue_status == "NEW"
 
 
-async def test_seed_knowledge_namespace_constant_is_used() -> None:
-    container = await create_container(Settings())
+async def test_seed_knowledge_namespace_constant_is_used(tmp_path) -> None:
+    knowledge_dir = tmp_path / "knowledge"
+    knowledge_dir.mkdir()
+    (knowledge_dir / "shipping.md").write_text(
+        "Shipping address changes are allowed before the order is packed.",
+        encoding="utf-8",
+    )
+
+    container = await create_container(Settings(knowledge_path=str(knowledge_dir)))
 
     assert SEED_KNOWLEDGE_NAMESPACE == "seed-knowledge"
     assert SEED_KNOWLEDGE_NAMESPACE in container.retrieval.documents

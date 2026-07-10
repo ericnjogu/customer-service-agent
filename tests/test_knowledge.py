@@ -1,6 +1,10 @@
 from app.knowledge import load_knowledge_documents
 
 
+def test_load_knowledge_documents_returns_empty_list_without_configured_path() -> None:
+    assert load_knowledge_documents(None) == []
+
+
 def test_load_knowledge_documents_ignores_kubernetes_configmap_backing_dirs(tmp_path) -> None:
     knowledge_dir = tmp_path / "knowledge"
     knowledge_dir.mkdir()

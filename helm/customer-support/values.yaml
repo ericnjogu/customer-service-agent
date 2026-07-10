@@ -20,6 +20,15 @@ postgres:
 retrieval:
   provider: pgvector
 
+answer:
+  provider: openai
+
+llm:
+  model: gpt-4.1-mini
+  temperature: "0"
+  existingSecret: "api-keys"
+  secretKey: OPENAI_API_KEY
+
 knowledge:
   existingConfigMap: "seed-knowledge"
   mountPath: /knowledge
@@ -27,6 +36,14 @@ knowledge:
 
 logging:
   level: INFO
-  format: "{asctime} - {levelname}:{name}:{message}"
+  format: "{asctime} - {levelname}: {name}: {message}"
+
+langsmith:
+  LANGSMITH_TRACING: "true"
+  LANGSMITH_TRACING_V2: "true"
+  LANGSMITH_ENDPOINT: "https://eu.api.smith.langchain.com"
+  LANGSMITH_PROJECT: "customer-support"
+  existingSecret: "api-keys"
+  secretKey: LANGSMITH_API_KEY
 
 resources: {}

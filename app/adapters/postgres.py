@@ -8,25 +8,69 @@ from uuid import UUID
 import asyncpg
 from langchain_core.documents import Document
 
-from app.models import ConversationRecord, IncomingMessage, StoredMessage
+from app.models import (
+    ConversationRecord,
+    IncomingMessage,
+    StoredMessage,
+)
 
 EMBEDDING_DIMENSIONS = 64
 logger = logging.getLogger(__name__)
+STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "can",
+    "do",
+    "for",
+    "how",
+    "i",
+    "in",
+    "is",
+    "it",
+    "my",
+    "of",
+    "on",
+    "the",
+    "to",
+    "what",
+    "you",
+    "your",
+}
+
+
+def embedding_tokens(text: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]+", text.lower())) - STOP_WORDS
 
 
 def local_embedding(text: str) -> list[float]:
-    """Deterministic, dependency-free embedding for the local MVP only."""
+    """Deterministic, dependency-free token embedding for the local MVP only."""
     vector = [0.0] * EMBEDDING_DIMENSIONS
-    for token in re.findall(r"[a-z0-9]+", text.lower()):
+    for token in embedding_tokens(text):
         digest = hashlib.sha256(token.encode()).digest()
         index = int.from_bytes(digest[:2], "big") % EMBEDDING_DIMENSIONS
-        vector[index] += 1.0 if digest[2] % 2 else -1.0
+        vector[index] += 1.0
     norm = math.sqrt(sum(value * value for value in vector)) or 1.0
     return [value / norm for value in vector]
 
 
+def is_zero_vector(values: list[float]) -> bool:
+    return not any(values)
+
+
 def vector_literal(values: list[float]) -> str:
     return "[" + ",".join(f"{value:.8f}" for value in values) + "]"
+
+
+def decode_metadata(value: object) -> dict:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        decoded = json.loads(value)
+        if isinstance(decoded, dict):
+            return decoded
+    return {}
 
 
 class PostgresDatabase:
@@ -189,20 +233,28 @@ class PgVectorRetrievalStore:
 
     async def search(self, query: str, namespace: str, limit: int = 4) -> list[Document]:
         assert self.database.pool
+        query_embedding = local_embedding(query)
+        if is_zero_vector(query_embedding):
+            logger.debug(
+                "Skipping pgvector search for namespace=%s because query has no embedding tokens",
+                namespace,
+            )
+            return []
+
         rows = await self.database.pool.fetch(
             """
             SELECT content, metadata, 1 - (embedding <=> $1::vector) AS score
             FROM knowledge_documents WHERE namespace = $2
             ORDER BY embedding <=> $1::vector LIMIT $3
             """,
-            vector_literal(local_embedding(query)),
+            vector_literal(query_embedding),
             namespace,
             limit,
         )
         return [
             Document(
                 page_content=row["content"],
-                metadata={**row["metadata"], "score": row["score"]},
+                metadata={**decode_metadata(row["metadata"]), "score": row["score"]},
             )
             for row in rows
             if row["score"] > 0

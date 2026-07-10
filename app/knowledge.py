@@ -6,33 +6,13 @@ from langchain_core.documents import Document
 SEED_KNOWLEDGE_NAMESPACE = "seed-knowledge"
 logger = logging.getLogger(__name__)
 
-DEMO_DOCUMENTS = [
-    Document(
-        page_content=(
-            "To reset your password, open Settings, select Security, then choose Reset password. "
-            "A reset link will be sent to your verified email address."
-        ),
-        metadata={"source": "kb/password-reset"},
-    ),
-    Document(
-        page_content=(
-            "Refund requests can be submitted within 30 days of purchase. Include the order "
-            "number and the reason for the request."
-        ),
-        metadata={"source": "kb/refunds"},
-    ),
-]
-
 SUPPORTED_KNOWLEDGE_EXTENSIONS = {".md", ".txt"}
 
 
 def load_knowledge_documents(knowledge_path: str | None) -> list[Document]:
     if not knowledge_path:
-        logger.warning(
-            "SUPPORT_KNOWLEDGE_PATH is unset; using %d demo seed knowledge document(s)",
-            len(DEMO_DOCUMENTS),
-        )
-        return DEMO_DOCUMENTS
+        logger.info("SUPPORT_KNOWLEDGE_PATH is unset; no seed knowledge documents will be loaded")
+        return []
 
     root = Path(knowledge_path)
     logger.info("Loading seed knowledge documents from directory: %s", root)

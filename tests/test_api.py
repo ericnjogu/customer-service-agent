@@ -1,9 +1,26 @@
+import pytest
 from fastapi.testclient import TestClient
 
+from app.config import get_settings
 from app.main import app
 
 
-def test_synthetic_webhook_vertical_slice() -> None:
+@pytest.fixture(autouse=True)
+def clear_settings_cache():
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+def test_synthetic_webhook_vertical_slice(tmp_path, monkeypatch) -> None:
+    knowledge_dir = tmp_path / "knowledge"
+    knowledge_dir.mkdir()
+    (knowledge_dir / "refunds.txt").write_text(
+        "Refund requests can be submitted within 30 days of purchase.",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SUPPORT_KNOWLEDGE_PATH", str(knowledge_dir))
+
     with TestClient(app) as client:
         response = client.post(
             "/webhooks/synthetic",
@@ -16,7 +33,32 @@ def test_synthetic_webhook_vertical_slice() -> None:
         )
 
     assert response.status_code == 200
-    assert response.json()["citations"] == ["kb/refunds"]
+    assert response.json()["citations"] == ["kb/refunds.txt"]
+
+
+def test_customer_message_endpoint_receives_user_question(tmp_path, monkeypatch) -> None:
+    knowledge_dir = tmp_path / "knowledge"
+    knowledge_dir.mkdir()
+    (knowledge_dir / "password-reset.txt").write_text(
+        "To reset your password, open Settings, select Security, then choose Reset password.",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SUPPORT_KNOWLEDGE_PATH", str(knowledge_dir))
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/messages/customer",
+            json={
+                "event_id": "api-event-customer-message-1",
+                "external_chat_id": "chat-customer-message-1",
+                "external_user_id": "user-customer-message-1",
+                "text": "How do I reset my password?",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["citations"] == ["kb/password-reset.txt"]
+    assert response.json()["handling_status"] == "BOT_ACTIVE"
 
 
 def test_conversation_status_can_be_read_and_updated() -> None:

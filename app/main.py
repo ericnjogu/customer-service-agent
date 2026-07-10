@@ -7,7 +7,12 @@ from fastapi import FastAPI, HTTPException, Request
 from app.config import get_settings
 from app.container import create_container
 from app.graph import invoke_support_graph
-from app.models import ConversationRecord, ConversationStatusUpdate, IncomingMessage, SupportReply
+from app.models import (
+    ConversationRecord,
+    ConversationStatusUpdate,
+    IncomingMessage,
+    SupportReply,
+)
 
 
 class HealthzAccessLogFilter(logging.Filter):
@@ -57,9 +62,14 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.post("/messages/customer", response_model=SupportReply)
+async def receive_customer_message(message: IncomingMessage, request: Request) -> SupportReply:
+    return await invoke_support_graph(request.app.state.container.graph, message)
+
+
 @app.post("/webhooks/synthetic", response_model=SupportReply)
 async def synthetic_webhook(message: IncomingMessage, request: Request) -> SupportReply:
-    return await invoke_support_graph(request.app.state.container.graph, message)
+    return await receive_customer_message(message, request)
 
 
 @app.get("/conversations/{conversation_id}", response_model=ConversationRecord)

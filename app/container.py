@@ -1,6 +1,7 @@
 import logging
 from dataclasses import dataclass
 
+from app.adapters.llm import create_openai_answer_generator
 from app.adapters.memory import (
     ExtractiveAnswerGenerator,
     MemoryConversationRepository,
@@ -64,6 +65,24 @@ async def create_container(settings: Settings) -> Container:
         await retrieval.upsert(documents, SEED_KNOWLEDGE_NAMESPACE)
     else:
         logger.info("Seed knowledge loading is disabled")
-    generator = ExtractiveAnswerGenerator()
+
+    logger.info(f"answer provider '{settings.answer_provider}'")
+    if settings.answer_provider == "extractive":
+        logger.info("using no-op answer generator")
+        generator = ExtractiveAnswerGenerator()
+    elif settings.answer_provider == "openai":
+        if not settings.openai_api_key:
+            raise ValueError(
+                "OPENAI_API_KEY is required when SUPPORT_ANSWER_PROVIDER=openai"
+            )
+        logger.info("using openai answer generator")
+        generator = create_openai_answer_generator(
+            api_key=settings.openai_api_key,
+            model=settings.llm_model,
+            temperature=settings.llm_temperature,
+        )
+    else:
+        raise ValueError(f"Unsupported answer provider: {settings.answer_provider}")
+
     graph = build_support_graph(conversations, retrieval, generator, settings.confidence_threshold)
     return Container(conversations, retrieval, graph, database)

@@ -19,15 +19,27 @@ This project currently uses increment-based milestones instead of semantic versi
   and `REOPENED` lifecycle values.
 - Conversation status APIs for reading conversations and updating handling/issue status.
 - Status event persistence in PostgreSQL for conversation status changes.
+- Customer-message API endpoint at `POST /messages/customer`.
+- Optional OpenAI/LangChain answer provider behind `SUPPORT_ANSWER_PROVIDER=openai`.
+- Helm values and environment variables for model, temperature, and OpenAI API key secret.
+- Local run/deploy scripts can accept `OPENAI_API_KEY` and enable the OpenAI answer provider.
+- Helm values for LangSmith tracing environment variables, including Secret-backed API key
+  support.
 
 ### Changed
 
 - Low-confidence graph replies now persist `HANDOFF_PENDING` and `ESCALATED` status.
+- Answer generation now uses a configurable provider boundary; `extractive` remains the
+  default local provider.
+- Removed hard-coded demo seed documents; startup KB seeding now only loads explicitly
+  configured files.
 
 ### Fixed
 
 - Seed knowledge loading now ignores Kubernetes ConfigMap projected-volume backing paths
   such as `..2026_*`, preventing duplicate file ingestion.
+- pgvector search now accepts JSONB metadata returned by the driver as either a mapping or
+  JSON string, preventing customer-message retrieval crashes.
 
 ### Deferred
 
@@ -44,7 +56,7 @@ This project currently uses increment-based milestones instead of semantic versi
 
 ### Changed
 
-- Startup KB loading now reads mounted files before falling back to demo documents.
+- Startup KB loading reads mounted files when a knowledge path is configured.
 - Startup KB documents are written and queried using the `seed-knowledge` namespace.
 - README now documents the Rancher Desktop namespace and ConfigMap KB workflow.
 - Helm NOTES now reference the app service name and namespace correctly.

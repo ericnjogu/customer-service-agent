@@ -1,24 +1,27 @@
 # Customer Support Agent
 
-Increment 3 is a locally runnable vertical slice using FastAPI, LangGraph, LangChain
-documents, file-based KB ingestion, issue status tracking, and a configurable retrieval
-boundary. Helm deploys the service with PostgreSQL and pgvector. No external LLM key is
-needed yet: a deterministic extractive generator and local hash embeddings make the
-workflow inspectable and reproducible.
+Increment 4 is a locally runnable vertical slice using FastAPI, LangGraph, LangChain
+documents, file-based KB ingestion, issue status tracking, optional LLM-backed answer
+generation, and configurable retrieval/answer boundaries. Helm deploys the service with
+PostgreSQL and pgvector. No external LLM key is needed for the default local path: a
+deterministic extractive generator and local hash embeddings make the workflow inspectable
+and reproducible.
 
 ## What works
 
-- Synthetic webhook ingestion through `POST /webhooks/synthetic`.
+- Customer message ingestion through `POST /messages/customer`.
+- Synthetic webhook compatibility through `POST /webhooks/synthetic`.
 - A LangGraph workflow that persists, retrieves, answers, cites, and marks low-confidence
   answers for future escalation.
 - In-memory adapters for fast development and tests.
 - PostgreSQL conversation persistence and pgvector retrieval in Kubernetes.
-- Startup knowledge loaded from a mounted directory, with demo knowledge as the local fallback.
+- Startup knowledge loaded from a mounted directory or ConfigMap.
 - Conversation handling status and issue status updates for the handoff foundation.
+- Optional OpenAI/LangChain answer provider behind `SUPPORT_ANSWER_PROVIDER=openai`.
 - Helm chart validation and API/graph tests.
 
-Actual support group creation, Telegram, admin KB upload UI, conversation memory, and
-production LLM/embedding providers are intentionally reserved for later increments.
+Telegram/WhatsApp support group creation, admin KB upload UI, conversation memory, and
+production embedding providers are intentionally reserved for later increments.
 
 ## Run in the IDE
 
@@ -32,7 +35,7 @@ uv run uvicorn app.main:app --reload
 Try the vertical slice:
 
 ```bash
-curl -X POST http://localhost:8000/webhooks/synthetic \
+curl -X POST http://localhost:8000/messages/customer \
   -H 'content-type: application/json' \
   -d '{
     "event_id": "demo-1",
@@ -111,10 +114,17 @@ scripts/deploy-local.sh
 ```
 
 The script defaults to `cs-local`, `customer-support`, `customer-support:local`, and
-`DEBUG` logging. Override those values with environment variables:
+`DEBUG` logging. If `OPENAI_API_KEY` is present, it also creates/updates an OpenAI secret
+and deploys with `answer.provider=openai`. Override values with environment variables:
 
 ```bash
 RELEASE_NAME=support LOG_LEVEL=INFO scripts/deploy-local.sh
+```
+
+Deploy locally with the OpenAI answer provider:
+
+```bash
+OPENAI_API_KEY="$OPENAI_API_KEY" scripts/deploy-local.sh
 ```
 
 The `Dockerfile` remains in the repository because it is the standard OCI image build
@@ -140,8 +150,7 @@ Create or update a ConfigMap from that directory:
 ```bash
 kubectl create configmap seed-knowledge \
   --namespace customer-support \
-  --from-file=drinks.txt \
-  --from-file=menu-gpt-4.txt \
+  --from-file=./files-dir \
   --dry-run=client \
   -o yaml | kubectl apply -f -
 ```
@@ -206,22 +215,79 @@ curl -X PATCH http://localhost:8000/conversations/<conversation-id>/status \
   }'
 ```
 
+## Optional LLM answer provider
+
+The default answer provider is still deterministic and local:
+
+```env
+SUPPORT_ANSWER_PROVIDER=extractive
+```
+
+Run the API locally with the OpenAI answer provider:
+
+```bash
+OPENAI_API_KEY="$OPENAI_API_KEY" scripts/run-local.sh
+```
+
+To use an OpenAI-backed LangChain chat model with langsmith tracing, create a Kubernetes secret containing the API
+keys:
+
+```bash
+kubectl create secret generic api-keys \
+  --namespace customer-support \
+  --from-literal=OPENAI_API_KEY="key" \
+  --from-literal=key="key"
+```
+
+Then deploy on kubernetes with:
+
+```bash
+helm upgrade --install cs-local helm/customer-support \
+  --namespace customer-support \
+  --set answer.provider=openai \
+  --set llm.existingSecret=openai-api \
+  --set llm.model=gpt-4.1-mini
+```
+or run
+
+```bash
+OPENAI_API_KEY="$OPENAI_API_KEY" LANGSMITH_API_KEY="key" scripts/deploy-local.sh
+```
+
+The LLM is instructed to answer only from retrieved KB context and return structured JSON
+with `answer`, `confidence`, and `grounded`. If no documents are retrieved, or if the
+response is not grounded, the graph keeps using the existing low-confidence escalation path.
+
+
+
+
+
 ## Configuration
 
-Environment variables use the `SUPPORT_` prefix:
+Application configuration uses the `SUPPORT_` prefix. LangSmith uses its native
+`LANGSMITH_` names:
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `SUPPORT_RETRIEVAL_PROVIDER` | `memory` | `memory` or `pgvector` |
+| `SUPPORT_ANSWER_PROVIDER` | `extractive` | `extractive` or `openai` |
+| `OPENAI_API_KEY` | unset | Required when `SUPPORT_ANSWER_PROVIDER=openai` |
+| `SUPPORT_LLM_MODEL` | `gpt-4.1-mini` | OpenAI chat model used by the LLM answer provider |
+| `SUPPORT_LLM_TEMPERATURE` | `0.0` | LLM sampling temperature |
 | `SUPPORT_DATABASE_URL` | unset | PostgreSQL connection string |
 | `SUPPORT_CONFIDENCE_THRESHOLD` | `0.60` | Below this, mark for escalation |
 | `SUPPORT_SEED_KNOWLEDGE` | `true` | Load startup knowledge |
-| `SUPPORT_KNOWLEDGE_PATH` | unset | Directory containing `.md`/`.txt` KB files; demo knowledge is used when unset |
+| `SUPPORT_KNOWLEDGE_PATH` | unset | Directory containing `.md`/`.txt` KB files; no startup documents are loaded when unset |
 | `SUPPORT_LOG_LEVEL` | `INFO` | Application log level, for example `DEBUG` |
 | `SUPPORT_LOG_FORMAT` | `{asctime} - {levelname}:{name}:{message}` | Python logging format using `{}` style |
+| `LANGSMITH_TRACING` | `true` | Enable LangSmith tracing |
+| `LANGSMITH_TRACING_V2` | `true` | Enable LangSmith tracing v2 |
+| `LANGSMITH_ENDPOINT` | `https://eu.api.smith.langchain.com` | LangSmith endpoint |
+| `LANGSMITH_PROJECT` | `customer-support` | LangSmith project name |
 
-## Increment 3 boundary
+## Increment 4 boundary
 
-An `escalated: true` response now persists a handoff-pending status. Creating or reusing
-a real Telegram/WhatsApp support group, forwarding selected agent messages, and exposing
-an admin console still belong to later increments.
+An `escalated: true` response persists a handoff-pending status. The LLM provider can
+generate grounded KB answers, but creating/reusing Telegram or WhatsApp support groups,
+tracking internal agent discussion, deciding which agent messages to forward, and
+forwarding those messages to the customer still belong to later increments.

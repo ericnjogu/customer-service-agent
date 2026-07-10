@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -10,6 +11,9 @@ class Settings(BaseSettings):
     database_url: str | None = None
     retrieval_provider: str = "memory"
     answer_provider: str = "extractive"
+    llm_model: str = "gpt-4.1-mini"
+    openai_api_key: str | None = Field(default=None, validation_alias="OPENAI_API_KEY")
+    llm_temperature: float = 0.0
     confidence_threshold: float = 0.60
     seed_knowledge: bool = True
     knowledge_path: str | None = None

@@ -3,7 +3,11 @@ from uuid import UUID
 
 from langchain_core.documents import Document
 
-from app.models import ConversationRecord, IncomingMessage, StoredMessage
+from app.models import (
+    ConversationRecord,
+    IncomingMessage,
+    StoredMessage,
+)
 
 
 class ConversationRepository(Protocol):

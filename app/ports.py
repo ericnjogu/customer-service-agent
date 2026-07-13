@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
@@ -28,6 +29,13 @@ class ConversationRepository(Protocol):
 
     async def save_message(self, message: StoredMessage) -> bool: ...
 
+    async def list_messages_since(
+        self,
+        conversation_id: UUID,
+        since: datetime,
+        limit: int,
+    ) -> list[StoredMessage]: ...
+
 
 class RetrievalStore(Protocol):
     async def initialize(self) -> None: ...
@@ -38,4 +46,9 @@ class RetrievalStore(Protocol):
 
 
 class AnswerGenerator(Protocol):
-    async def generate(self, query: str, documents: list[Document]) -> tuple[str, float]: ...
+    async def generate(
+        self,
+        query: str,
+        documents: list[Document],
+        conversation_history: list[StoredMessage] | None = None,
+    ) -> tuple[str, float]: ...

@@ -1,4 +1,5 @@
 import re
+from datetime import datetime
 from uuid import UUID
 
 from langchain_core.documents import Document
@@ -89,6 +90,22 @@ class MemoryConversationRepository:
         self.messages[message.event_id] = message
         return True
 
+    async def list_messages_since(
+        self,
+        conversation_id: UUID,
+        since: datetime,
+        limit: int,
+    ) -> list[StoredMessage]:
+        messages = sorted(
+            (
+                message
+                for message in self.messages.values()
+                if message.conversation_id == conversation_id and message.created_at >= since
+            ),
+            key=lambda message: message.created_at,
+        )
+        return messages[-limit:]
+
 
 class MemoryRetrievalStore:
     def __init__(self) -> None:
@@ -112,7 +129,12 @@ class MemoryRetrievalStore:
 
 
 class ExtractiveAnswerGenerator:
-    async def generate(self, query: str, documents: list[Document]) -> tuple[str, float]:
+    async def generate(
+        self,
+        query: str,
+        documents: list[Document],
+        conversation_history: list[StoredMessage] | None = None,
+    ) -> tuple[str, float]:
         if not documents:
             return "I could not find enough information to answer that safely.", 0.0
         source = documents[0]

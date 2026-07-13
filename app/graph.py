@@ -11,6 +11,7 @@ from app.ports import AnswerGenerator, ConversationRepository, RetrievalStore
 class SupportState(TypedDict, total=False):
     message: IncomingMessage
     conversation: ConversationRecord
+    conversation_history: list[StoredMessage]
     documents: list[Document]
     answer: str
     confidence: float
@@ -23,6 +24,7 @@ def build_support_graph(
     retrieval: RetrievalStore,
     generator: AnswerGenerator,
     confidence_threshold: float,
+    conversation_history_max_messages: int,
 ):
     async def persist_message(state: SupportState) -> dict:
         conversation = await conversations.get_or_create(state["message"])
@@ -35,6 +37,15 @@ def build_support_graph(
             )
         )
         return {"conversation": conversation}
+
+    async def load_conversation_history(state: SupportState) -> dict:
+        conversation = state["conversation"]
+        history = await conversations.list_messages_since(
+            conversation.id,
+            conversation.created_at,
+            conversation_history_max_messages,
+        )
+        return {"conversation_history": history}
 
     async def retrieve(state: SupportState) -> dict:
         documents = await retrieval.search(state["message"].text, SEED_KNOWLEDGE_NAMESPACE)
@@ -49,7 +60,11 @@ def build_support_graph(
                 "escalated": True,
             }
 
-        text, confidence = await generator.generate(state["message"].text, state["documents"])
+        text, confidence = await generator.generate(
+            state["message"].text,
+            state["documents"],
+            state.get("conversation_history", []),
+        )
         citations = [str(item.metadata.get("source", "unknown")) for item in state["documents"]]
         return {
             "answer": text,
@@ -79,11 +94,13 @@ def build_support_graph(
 
     workflow = StateGraph(SupportState)
     workflow.add_node("persist_message", persist_message)
+    workflow.add_node("load_conversation_history", load_conversation_history)
     workflow.add_node("retrieve", retrieve)
     workflow.add_node("answer", answer)
     workflow.add_node("persist_reply", persist_reply)
     workflow.add_edge(START, "persist_message")
-    workflow.add_edge("persist_message", "retrieve")
+    workflow.add_edge("persist_message", "load_conversation_history")
+    workflow.add_edge("load_conversation_history", "retrieve")
     workflow.add_edge("retrieve", "answer")
     workflow.add_edge("answer", "persist_reply")
     workflow.add_edge("persist_reply", END)

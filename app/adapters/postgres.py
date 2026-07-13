@@ -3,6 +3,7 @@ import json
 import logging
 import math
 import re
+from datetime import datetime
 from uuid import UUID
 
 import asyncpg
@@ -103,7 +104,8 @@ class PostgresConversationRepository:
             VALUES ($1, $2, $3)
             ON CONFLICT (channel, external_chat_id) DO UPDATE
             SET external_user_id = EXCLUDED.external_user_id, updated_at = now()
-            RETURNING id, channel, external_chat_id, external_user_id, status, issue_status
+            RETURNING id, channel, external_chat_id, external_user_id, status, issue_status,
+                created_at
             """,
             message.channel,
             message.external_chat_id,
@@ -115,7 +117,8 @@ class PostgresConversationRepository:
         assert self.database.pool
         row = await self.database.pool.fetchrow(
             """
-            SELECT id, channel, external_chat_id, external_user_id, status, issue_status
+            SELECT id, channel, external_chat_id, external_user_id, status, issue_status,
+                created_at
             FROM conversations WHERE id = $1
             """,
             conversation_id,
@@ -150,7 +153,8 @@ class PostgresConversationRepository:
                         issue_status = COALESCE($3, issue_status),
                         updated_at = now()
                     WHERE id = $1
-                    RETURNING id, channel, external_chat_id, external_user_id, status, issue_status
+                    RETURNING id, channel, external_chat_id, external_user_id, status,
+                        issue_status, created_at
                     """,
                     conversation_id,
                     status,
@@ -181,15 +185,37 @@ class PostgresConversationRepository:
         assert self.database.pool
         result = await self.database.pool.execute(
             """
-            INSERT INTO messages(conversation_id, event_id, sender_type, body)
-            VALUES ($1, $2, $3, $4) ON CONFLICT (event_id) DO NOTHING
+            INSERT INTO messages(conversation_id, event_id, sender_type, body, created_at)
+            VALUES ($1, $2, $3, $4, $5) ON CONFLICT (event_id) DO NOTHING
             """,
             message.conversation_id,
             message.event_id,
             message.sender_type,
             message.body,
+            message.created_at,
         )
         return result == "INSERT 0 1"
+
+    async def list_messages_since(
+        self,
+        conversation_id: UUID,
+        since: datetime,
+        limit: int,
+    ) -> list[StoredMessage]:
+        assert self.database.pool
+        rows = await self.database.pool.fetch(
+            """
+            SELECT conversation_id, event_id, sender_type, body, created_at
+            FROM messages
+            WHERE conversation_id = $1 AND created_at >= $2
+            ORDER BY created_at DESC
+            LIMIT $3
+            """,
+            conversation_id,
+            since,
+            limit,
+        )
+        return [StoredMessage(**dict(row)) for row in reversed(rows)]
 
 
 class PgVectorRetrievalStore:
@@ -311,6 +337,15 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
 
 ALTER TABLE conversations
 ADD COLUMN IF NOT EXISTS issue_status text NOT NULL DEFAULT 'NEW';
+
+ALTER TABLE conversations
+ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+
+ALTER TABLE conversations
+ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+
+ALTER TABLE messages
+ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
 
 ALTER TABLE knowledge_documents
 ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();

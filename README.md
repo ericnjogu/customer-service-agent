@@ -215,6 +215,22 @@ curl -X PATCH http://localhost:8000/conversations/<conversation-id>/status \
   }'
 ```
 
+## Conversation history context
+
+For each incoming customer message, the graph loads the exact messages for the current
+conversation since `conversation.created_at` and passes them into the answer generator.
+The history is still bounded by `SUPPORT_CONVERSATION_HISTORY_MAX_MESSAGES` so very long
+open chats do not overfill the LLM context.
+
+The current prompt context is:
+
+- exact current conversation history;
+- retrieved KB documents;
+- the current customer question.
+
+Raw messages remain the source of truth. Summarized conversation memory is intentionally
+reserved for a later increment.
+
 ## Optional LLM answer provider
 
 The default answer provider is still deterministic and local:
@@ -276,6 +292,7 @@ Application configuration uses the `SUPPORT_` prefix. LangSmith uses its native
 | `SUPPORT_LLM_TEMPERATURE` | `0.0` | LLM sampling temperature |
 | `SUPPORT_DATABASE_URL` | unset | PostgreSQL connection string |
 | `SUPPORT_CONFIDENCE_THRESHOLD` | `0.60` | Below this, mark for escalation |
+| `SUPPORT_CONVERSATION_HISTORY_MAX_MESSAGES` | `50` | Safety cap for exact current-conversation messages passed into context |
 | `SUPPORT_SEED_KNOWLEDGE` | `true` | Load startup knowledge |
 | `SUPPORT_KNOWLEDGE_PATH` | unset | Directory containing `.md`/`.txt` KB files; no startup documents are loaded when unset |
 | `SUPPORT_LOG_LEVEL` | `INFO` | Application log level, for example `DEBUG` |

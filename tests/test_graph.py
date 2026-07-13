@@ -1,8 +1,22 @@
 from app.config import Settings
 from app.container import create_container
-from app.graph import invoke_support_graph
+from app.graph import build_support_graph, invoke_support_graph
 from app.knowledge import SEED_KNOWLEDGE_NAMESPACE
-from app.models import IncomingMessage
+from app.models import IncomingMessage, StoredMessage
+
+
+class RecordingAnswerGenerator:
+    def __init__(self) -> None:
+        self.histories: list[list[StoredMessage]] = []
+
+    async def generate(
+        self,
+        query: str,
+        documents,
+        conversation_history: list[StoredMessage] | None = None,
+    ) -> tuple[str, float]:
+        self.histories.append(conversation_history or [])
+        return "Recorded", 0.95
 
 
 async def test_grounded_question_returns_citation(tmp_path) -> None:
@@ -93,3 +107,32 @@ async def test_seed_knowledge_namespace_constant_is_used(tmp_path) -> None:
     assert SEED_KNOWLEDGE_NAMESPACE == "seed-knowledge"
     assert SEED_KNOWLEDGE_NAMESPACE in container.retrieval.documents
     assert "knowledge" not in container.retrieval.documents
+
+
+async def test_graph_passes_current_conversation_history_with_safety_cap() -> None:
+    container = await create_container(Settings(seed_knowledge=False))
+    generator = RecordingAnswerGenerator()
+    graph = build_support_graph(
+        container.conversations,
+        container.retrieval,
+        generator,
+        confidence_threshold=0.60,
+        conversation_history_max_messages=2,
+    )
+
+    for index in range(4):
+        await invoke_support_graph(
+            graph,
+            IncomingMessage(
+                event_id=f"history-event-{index}",
+                external_chat_id="history-chat",
+                external_user_id="history-user",
+                text=f"Question {index}",
+            ),
+        )
+
+    final_history = generator.histories[-1]
+    assert [message.body for message in final_history] == [
+        "Recorded",
+        "Question 3",
+    ]

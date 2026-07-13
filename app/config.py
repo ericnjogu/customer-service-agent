@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     openai_api_key: str | None = Field(default=None, validation_alias="OPENAI_API_KEY")
     llm_temperature: float = 0.0
     confidence_threshold: float = 0.60
+    conversation_history_max_messages: int = Field(default=50, gt=0)
     seed_knowledge: bool = True
     knowledge_path: str | None = None
     log_level: str = "INFO"

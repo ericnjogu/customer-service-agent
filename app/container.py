@@ -84,5 +84,11 @@ async def create_container(settings: Settings) -> Container:
     else:
         raise ValueError(f"Unsupported answer provider: {settings.answer_provider}")
 
-    graph = build_support_graph(conversations, retrieval, generator, settings.confidence_threshold)
+    graph = build_support_graph(
+        conversations,
+        retrieval,
+        generator,
+        settings.confidence_threshold,
+        settings.conversation_history_max_messages,
+    )
     return Container(conversations, retrieval, graph, database)

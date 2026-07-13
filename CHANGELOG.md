@@ -25,12 +25,16 @@ This project currently uses increment-based milestones instead of semantic versi
 - Local run/deploy scripts can accept `OPENAI_API_KEY` and enable the OpenAI answer provider.
 - Helm values for LangSmith tracing environment variables, including Secret-backed API key
   support.
+- Exact current-conversation history context, bounded by conversation start time and a
+  configurable message safety cap.
 
 ### Changed
 
 - Low-confidence graph replies now persist `HANDOFF_PENDING` and `ESCALATED` status.
 - Answer generation now uses a configurable provider boundary; `extractive` remains the
   default local provider.
+- LLM answer prompts now include current conversation history alongside retrieved KB
+  documents.
 - Removed hard-coded demo seed documents; startup KB seeding now only loads explicitly
   configured files.
 

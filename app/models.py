@@ -35,6 +35,7 @@ class ConversationRecord(BaseModel):
     external_user_id: str
     status: HandlingStatus = "BOT_ACTIVE"
     issue_status: IssueStatus = "NEW"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class StoredMessage(BaseModel):
@@ -42,6 +43,7 @@ class StoredMessage(BaseModel):
     event_id: str
     sender_type: Literal["CUSTOMER", "BOT", "AGENT", "SYSTEM"]
     body: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class ConversationStatusUpdate(BaseModel):

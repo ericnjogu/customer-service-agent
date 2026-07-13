@@ -5,12 +5,16 @@ from typing import Any
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from app.models import StoredMessage
+
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are a customer support assistant.
 Answer only from the provided knowledge base context.
-Be courteous and greet the customer before answering their first question.
-If the context is insufficient, say that you do not have enough information.
+Be courteous and greet the customer if this is their first question. Welcome them back
+if it has been a while since their most recent post.
+If the context is insufficient, say that you do not have enough information and ask them to 
+send a message to the management using social media pages.
 Return JSON with:
 - answer: string
 - confidence: number from 0 to 1
@@ -29,18 +33,36 @@ def format_context(documents: list[Document]) -> str:
     return "\n\n".join(chunks)
 
 
+def format_conversation_history(messages: list[StoredMessage]) -> str:
+    if not messages:
+        return "No prior conversation history is available."
+
+    return "\n".join(
+        f"{message.sender_type}: {message.body}"
+        for message in messages
+    )
+
+
 class LlmAnswerGenerator:
     def __init__(self, chat_model: Any) -> None:
         self.chat_model = chat_model
 
-    async def generate(self, query: str, documents: list[Document]) -> tuple[str, float]:
+    async def generate(
+        self,
+        query: str,
+        documents: list[Document],
+        conversation_history: list[StoredMessage] | None = None,
+    ) -> tuple[str, float]:
         if not documents:
-            return "I could not find enough information to answer that safely.", 0.0
+            return "I could not find enough information to answer that question.", 0.0
 
+        history = conversation_history or []
         messages = [
             SystemMessage(content=SYSTEM_PROMPT),
             HumanMessage(
                 content=(
+                    "Conversation history for the current issue:\n"
+                    f"{format_conversation_history(history)}\n\n"
                     "Knowledge base context:\n"
                     f"{format_context(documents)}\n\n"
                     f"Customer question:\n{query}"

@@ -5,7 +5,7 @@ info:
 
 http:
   method: post
-  url: http://localhost:8000/messages/customer
+  url: http://{{host}}/messages/customer
   headers:
     - name: content-type
       value: application/json
@@ -16,7 +16,7 @@ http:
         "event_id": "{{event_id}}",
         "external_chat_id": "chat-1",
         "external_user_id": "user-1",
-        "text": "where are the toilets?"
+        "text": "do you serve chocolate?"
       }
   auth: inherit
 

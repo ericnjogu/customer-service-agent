@@ -12,6 +12,7 @@ from app.adapters.postgres import (
     PostgresConversationRepository,
     PostgresDatabase,
 )
+from app.adapters.telegram import TelegramBotClient, TelegramSender
 from app.config import Settings
 from app.graph import build_support_graph
 from app.knowledge import SEED_KNOWLEDGE_NAMESPACE, load_knowledge_documents
@@ -24,6 +25,7 @@ class Container:
     conversations: object
     retrieval: object
     graph: object
+    telegram_sender: TelegramSender | None = None
     database: PostgresDatabase | None = None
 
     async def close(self) -> None:
@@ -91,4 +93,9 @@ async def create_container(settings: Settings) -> Container:
         settings.confidence_threshold,
         settings.conversation_history_max_messages,
     )
-    return Container(conversations, retrieval, graph, database)
+    telegram_sender = (
+        TelegramBotClient(settings.telegram_bot_token)
+        if settings.telegram_bot_token
+        else None
+    )
+    return Container(conversations, retrieval, graph, telegram_sender, database)

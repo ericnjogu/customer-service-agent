@@ -26,6 +26,11 @@ answer:
 conversationHistory:
   maxMessages: 50
 
+telegram:
+  existingSecret: "telegram-bot"
+  botTokenSecretKey: TELEGRAM_BOT_TOKEN
+  webhookSecretTokenSecretKey: TELEGRAM_WEBHOOK_SECRET_TOKEN
+
 llm:
   model: gpt-4.1-mini
   temperature: "0"

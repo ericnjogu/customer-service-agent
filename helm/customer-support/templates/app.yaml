@@ -62,6 +62,18 @@ spec:
               value: {{ .Values.answer.provider | quote }}
             - name: SUPPORT_CONVERSATION_HISTORY_MAX_MESSAGES
               value: {{ .Values.conversationHistory.maxMessages | quote }}
+            {{- if .Values.telegram.existingSecret }}
+            - name: SUPPORT_TELEGRAM_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.telegram.existingSecret | quote }}
+                  key: {{ .Values.telegram.botTokenSecretKey | quote }}
+            - name: SUPPORT_TELEGRAM_WEBHOOK_SECRET_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.telegram.existingSecret | quote }}
+                  key: {{ .Values.telegram.webhookSecretTokenSecretKey | quote }}
+            {{- end }}
             - name: SUPPORT_LLM_MODEL
               value: {{ .Values.llm.model | quote }}
             - name: SUPPORT_LLM_TEMPERATURE

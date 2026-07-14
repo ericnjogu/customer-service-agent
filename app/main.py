@@ -2,8 +2,9 @@ import logging
 from contextlib import asynccontextmanager
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request
 
+from app.adapters.telegram import telegram_reply_text, telegram_update_to_incoming_message
 from app.config import get_settings
 from app.container import create_container
 from app.graph import invoke_support_graph
@@ -70,6 +71,31 @@ async def receive_customer_message(message: IncomingMessage, request: Request) -
 @app.post("/webhooks/synthetic", response_model=SupportReply)
 async def synthetic_webhook(message: IncomingMessage, request: Request) -> SupportReply:
     return await receive_customer_message(message, request)
+
+
+@app.post("/webhooks/telegram")
+async def telegram_webhook(
+    update: dict,
+    request: Request,
+    x_telegram_bot_api_secret_token: str | None = Header(default=None),
+) -> dict:
+    settings = get_settings()
+    if (
+        settings.telegram_webhook_secret_token
+        and x_telegram_bot_api_secret_token != settings.telegram_webhook_secret_token
+    ):
+        raise HTTPException(status_code=403, detail="Invalid Telegram webhook secret token")
+
+    message = telegram_update_to_incoming_message(update)
+    if message is None:
+        return {"ok": True, "ignored": True}
+
+    reply = await invoke_support_graph(request.app.state.container.graph, message)
+    telegram_sender = request.app.state.container.telegram_sender
+    if telegram_sender:
+        await telegram_sender.send_message(message.external_chat_id, telegram_reply_text(reply))
+
+    return {"ok": True, "reply": reply.model_dump(mode="json")}
 
 
 @app.get("/conversations/{conversation_id}", response_model=ConversationRecord)

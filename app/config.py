@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.0
     confidence_threshold: float = 0.60
     conversation_history_max_messages: int = Field(default=50, gt=0)
+    telegram_bot_token: str | None = None
+    telegram_webhook_secret_token: str | None = None
     seed_knowledge: bool = True
     knowledge_path: str | None = None
     log_level: str = "INFO"

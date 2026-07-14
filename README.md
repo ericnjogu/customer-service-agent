@@ -11,6 +11,7 @@ and reproducible.
 
 - Customer message ingestion through `POST /messages/customer`.
 - Synthetic webhook compatibility through `POST /webhooks/synthetic`.
+- Telegram customer text-message webhook through `POST /webhooks/telegram`.
 - A LangGraph workflow that persists, retrieves, answers, cites, and marks low-confidence
   answers for future escalation.
 - In-memory adapters for fast development and tests.
@@ -274,6 +275,46 @@ The LLM is instructed to answer only from retrieved KB context and return struct
 with `answer`, `confidence`, and `grounded`. If no documents are retrieved, or if the
 response is not grounded, the graph keeps using the existing low-confidence escalation path.
 
+## Telegram customer webhook
+
+Telegram customer messages are received at:
+
+```text
+POST /webhooks/telegram
+```
+
+The endpoint currently handles text messages. Non-text updates are acknowledged and ignored.
+If `SUPPORT_TELEGRAM_BOT_TOKEN` is configured, the app sends the graph reply back to the
+Telegram chat using `sendMessage`.
+
+Create a Secret for the bot token and webhook secret token:
+
+```bash
+kubectl create secret generic telegram-bot \
+  --namespace customer-support \
+  --from-literal=TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
+  --from-literal=TELEGRAM_WEBHOOK_SECRET_TOKEN="$TELEGRAM_WEBHOOK_SECRET_TOKEN"
+```
+
+Deploy with the Secret:
+
+```bash
+helm upgrade --install cs-local helm/customer-support \
+  --namespace customer-support \
+  --set telegram.existingSecret=telegram-bot
+```
+
+Register the Telegram webhook after the app has a public HTTPS URL:
+
+```bash
+curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
+  -H 'content-type: application/json' \
+  -d '{
+    "url": "https://example.com/webhooks/telegram",
+    "secret_token": "'"$TELEGRAM_WEBHOOK_SECRET_TOKEN"'"
+  }'
+```
+
 
 
 
@@ -293,6 +334,8 @@ Application configuration uses the `SUPPORT_` prefix. LangSmith uses its native
 | `SUPPORT_DATABASE_URL` | unset | PostgreSQL connection string |
 | `SUPPORT_CONFIDENCE_THRESHOLD` | `0.60` | Below this, mark for escalation |
 | `SUPPORT_CONVERSATION_HISTORY_MAX_MESSAGES` | `50` | Safety cap for exact current-conversation messages passed into context |
+| `SUPPORT_TELEGRAM_BOT_TOKEN` | unset | Telegram bot token used to send replies with `sendMessage` |
+| `SUPPORT_TELEGRAM_WEBHOOK_SECRET_TOKEN` | unset | Optional Telegram webhook secret token checked against `X-Telegram-Bot-Api-Secret-Token` |
 | `SUPPORT_SEED_KNOWLEDGE` | `true` | Load startup knowledge |
 | `SUPPORT_KNOWLEDGE_PATH` | unset | Directory containing `.md`/`.txt` KB files; no startup documents are loaded when unset |
 | `SUPPORT_LOG_LEVEL` | `INFO` | Application log level, for example `DEBUG` |

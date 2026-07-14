@@ -1,5 +1,8 @@
 from datetime import datetime, timedelta, timezone
 
+from langchain_core.documents import Document
+
+from app.adapters.memory import RuleBasedHumanRequestDetector
 from app.config import Settings
 from app.container import create_container
 from app.graph import build_prompt_metadata, build_support_graph, invoke_support_graph
@@ -117,6 +120,7 @@ async def test_graph_passes_current_conversation_history_with_safety_cap() -> No
         container.conversations,
         container.retrieval,
         generator,
+        RuleBasedHumanRequestDetector(),
         confidence_threshold=0.60,
         conversation_history_max_messages=2,
         greeting_lapse_minutes=60,
@@ -138,6 +142,52 @@ async def test_graph_passes_current_conversation_history_with_safety_cap() -> No
         "Recorded",
         "Question 3",
     ]
+
+
+async def test_explicit_human_request_sets_human_requested_state() -> None:
+    container = await create_container(Settings(seed_knowledge=False))
+    await container.retrieval.upsert(
+        [
+            Document(
+                page_content="Refund requests can be submitted within 30 days of purchase.",
+                metadata={"source": "kb/refunds.txt"},
+            )
+        ],
+        SEED_KNOWLEDGE_NAMESPACE,
+    )
+    reply = await invoke_support_graph(
+        container.graph,
+        IncomingMessage(
+            event_id="human-request-event",
+            external_chat_id="human-request-chat",
+            external_user_id="human-request-user",
+            text="Can I speak to a human agent about refund requests?",
+        ),
+    )
+
+    assert reply.state == "HUMAN_REQUESTED"
+    assert reply.low_confidence is False
+    assert "Refund requests" in reply.answer
+    assert reply.citations == ["kb/refunds.txt"]
+
+    conversation = await container.conversations.get_by_id(reply.conversation_id)
+    assert conversation.state == "HUMAN_REQUESTED"
+
+
+async def test_frustration_without_human_request_does_not_change_state() -> None:
+    container = await create_container(Settings(seed_knowledge=False))
+    reply = await invoke_support_graph(
+        container.graph,
+        IncomingMessage(
+            event_id="frustration-event",
+            external_chat_id="frustration-chat",
+            external_user_id="frustration-user",
+            text="This answer is not helpful.",
+        ),
+    )
+
+    assert reply.state == "BOT_ACTIVE"
+    assert reply.low_confidence is True
 
 
 def test_prompt_metadata_greets_first_customer_message() -> None:

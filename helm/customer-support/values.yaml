@@ -23,6 +23,9 @@ retrieval:
 answer:
   provider: openai
 
+humanRequestDetector:
+  provider: llm
+
 conversationHistory:
   maxMessages: 50
   greetingLapseMinutes: 60

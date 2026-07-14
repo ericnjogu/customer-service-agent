@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     database_url: str | None = None
     retrieval_provider: str = "memory"
     answer_provider: str = "extractive"
+    human_request_detector_provider: str = "rules"
     llm_model: str = "gpt-4.1-mini"
     openai_api_key: str | None = Field(default=None, validation_alias="OPENAI_API_KEY")
     llm_temperature: float = 0.0

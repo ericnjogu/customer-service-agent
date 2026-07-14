@@ -146,3 +146,24 @@ class ExtractiveAnswerGenerator:
         overlap = len(tokenize(query) & tokenize(answer)) / max(len(tokenize(query)), 1)
         confidence = min(0.95, 0.55 + overlap)
         return answer, confidence
+
+
+class RuleBasedHumanRequestDetector:
+    human_request_phrases = (
+        "human agent",
+        "human support",
+        "real person",
+        "talk to someone",
+        "speak to someone",
+        "support team member",
+        "customer support agent",
+        "manager",
+    )
+
+    async def detect(
+        self,
+        message: IncomingMessage,
+        conversation_history: list[StoredMessage] | None = None,
+    ) -> bool:
+        text = message.text.lower()
+        return any(phrase in text for phrase in self.human_request_phrases)

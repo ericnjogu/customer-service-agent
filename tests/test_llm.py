@@ -2,10 +2,10 @@ import pytest
 from langchain_core.documents import Document
 from langchain_core.messages import AIMessage
 
-from app.adapters.llm import LlmAnswerGenerator
+from app.adapters.llm import LlmAnswerGenerator, LlmHumanRequestDetector
 from app.config import Settings
 from app.container import create_container
-from app.models import ConversationPromptMetadata, StoredMessage
+from app.models import ConversationPromptMetadata, IncomingMessage, StoredMessage
 
 
 class FakeChatModel:
@@ -111,6 +111,42 @@ async def test_llm_answer_generator_does_not_call_model_without_documents() -> N
     assert answer == "I could not find enough information to answer that question."
     assert confidence == 0.0
     assert chat_model.calls == 0
+
+
+async def test_llm_human_request_detector_detects_explicit_request() -> None:
+    chat_model = FakeChatModel('{"explicit_human_request": true}')
+    detector = LlmHumanRequestDetector(chat_model)
+
+    detected = await detector.detect(
+        IncomingMessage(
+            event_id="detect-1",
+            external_chat_id="chat-1",
+            external_user_id="user-1",
+            text="Please connect me to a human agent.",
+        )
+    )
+
+    assert detected is True
+    assert chat_model.calls == 1
+    assert "explicitly asks to speak with a human support person" in (
+        chat_model.last_messages[0].content
+    )
+
+
+async def test_llm_human_request_detector_defaults_false_for_invalid_json() -> None:
+    chat_model = FakeChatModel("not-json")
+    detector = LlmHumanRequestDetector(chat_model)
+
+    detected = await detector.detect(
+        IncomingMessage(
+            event_id="detect-2",
+            external_chat_id="chat-1",
+            external_user_id="user-1",
+            text="This is not helpful.",
+        )
+    )
+
+    assert detected is False
 
 
 async def test_openai_answer_provider_requires_api_key() -> None:

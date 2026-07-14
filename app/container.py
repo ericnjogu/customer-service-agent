@@ -1,11 +1,15 @@
 import logging
 from dataclasses import dataclass
 
-from app.adapters.llm import create_openai_answer_generator
+from app.adapters.llm import (
+    create_openai_answer_generator,
+    create_openai_human_request_detector,
+)
 from app.adapters.memory import (
     ExtractiveAnswerGenerator,
     MemoryConversationRepository,
     MemoryRetrievalStore,
+    RuleBasedHumanRequestDetector,
 )
 from app.adapters.postgres import (
     PgVectorRetrievalStore,
@@ -86,10 +90,30 @@ async def create_container(settings: Settings) -> Container:
     else:
         raise ValueError(f"Unsupported answer provider: {settings.answer_provider}")
 
+    logger.info("human request detector provider '%s'", settings.human_request_detector_provider)
+    if settings.human_request_detector_provider == "rules":
+        human_request_detector = RuleBasedHumanRequestDetector()
+    elif settings.human_request_detector_provider == "llm":
+        if not settings.openai_api_key:
+            raise ValueError(
+                "OPENAI_API_KEY is required when SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER=llm"
+            )
+        human_request_detector = create_openai_human_request_detector(
+            api_key=settings.openai_api_key,
+            model=settings.llm_model,
+            temperature=0.0,
+        )
+    else:
+        raise ValueError(
+            "Unsupported human request detector provider: "
+            f"{settings.human_request_detector_provider}"
+        )
+
     graph = build_support_graph(
         conversations,
         retrieval,
         generator,
+        human_request_detector,
         settings.confidence_threshold,
         settings.conversation_history_max_messages,
         settings.greeting_lapse_minutes,

@@ -11,7 +11,12 @@ from app.models import (
     StoredMessage,
     SupportReply,
 )
-from app.ports import AnswerGenerator, ConversationRepository, RetrievalStore
+from app.ports import (
+    AnswerGenerator,
+    ConversationRepository,
+    HumanRequestDetector,
+    RetrievalStore,
+)
 
 
 class SupportState(TypedDict, total=False):
@@ -24,12 +29,14 @@ class SupportState(TypedDict, total=False):
     confidence: float
     citations: list[str]
     low_confidence: bool
+    human_requested: bool
 
 
 def build_support_graph(
     conversations: ConversationRepository,
     retrieval: RetrievalStore,
     generator: AnswerGenerator,
+    human_request_detector: HumanRequestDetector,
     confidence_threshold: float,
     conversation_history_max_messages: int,
     greeting_lapse_minutes: int,
@@ -44,6 +51,20 @@ def build_support_graph(
                 body=state["message"].text,
             )
         )
+        return {"conversation": conversation}
+
+    async def detect_human_request(state: SupportState) -> dict:
+        human_requested = await human_request_detector.detect(state["message"])
+        return {"human_requested": human_requested}
+
+    async def apply_human_request_state(state: SupportState) -> dict:
+        conversation = state["conversation"]
+        if state.get("human_requested") and conversation.state == "BOT_ACTIVE":
+            conversation = await conversations.update_state(
+                conversation.id,
+                state="HUMAN_REQUESTED",
+                reason="Customer explicitly requested human support",
+            )
         return {"conversation": conversation}
 
     async def load_conversation_history(state: SupportState) -> dict:
@@ -75,7 +96,6 @@ def build_support_graph(
                 "citations": [],
                 "low_confidence": True,
             }
-
         text, confidence = await generator.generate(
             state["message"].text,
             state["documents"],
@@ -104,13 +124,17 @@ def build_support_graph(
 
     workflow = StateGraph(SupportState)
     workflow.add_node("persist_message", persist_message)
+    workflow.add_node("detect_human_request", detect_human_request)
+    workflow.add_node("apply_human_request_state", apply_human_request_state)
     workflow.add_node("load_conversation_history", load_conversation_history)
     workflow.add_node("build_conversation_metadata", build_conversation_metadata)
     workflow.add_node("retrieve", retrieve)
     workflow.add_node("answer", answer)
     workflow.add_node("persist_reply", persist_reply)
     workflow.add_edge(START, "persist_message")
-    workflow.add_edge("persist_message", "load_conversation_history")
+    workflow.add_edge("persist_message", "detect_human_request")
+    workflow.add_edge("detect_human_request", "apply_human_request_state")
+    workflow.add_edge("apply_human_request_state", "load_conversation_history")
     workflow.add_edge("load_conversation_history", "build_conversation_metadata")
     workflow.add_edge("build_conversation_metadata", "retrieve")
     workflow.add_edge("retrieve", "answer")

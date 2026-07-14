@@ -5,7 +5,7 @@ from typing import Any
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.models import ConversationPromptMetadata, StoredMessage
+from app.models import ConversationPromptMetadata, IncomingMessage, StoredMessage
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,16 @@ Return JSON with:
 - answer: string
 - confidence: number from 0 to 1
 - grounded: boolean
+"""
+
+HUMAN_REQUEST_DETECTION_PROMPT = """Determine whether the customer's latest message
+explicitly asks to speak with a human support person.
+Return true only when the customer clearly asks for a human agent, real person, support
+team member, manager, or escalation to a person.
+Return false for low-confidence situations, unanswered questions, complaints,
+frustration, or negative sentiment that do not ask for a person.
+Return JSON only with:
+- explicit_human_request: boolean
 """
 
 
@@ -114,6 +124,39 @@ class LlmAnswerGenerator:
         return answer, max(0.0, min(confidence, 0.95))
 
 
+class LlmHumanRequestDetector:
+    def __init__(self, chat_model: Any) -> None:
+        self.chat_model = chat_model
+
+    async def detect(
+        self,
+        message: IncomingMessage,
+        conversation_history: list[StoredMessage] | None = None,
+    ) -> bool:
+        history = conversation_history or []
+        messages = [
+            SystemMessage(content=HUMAN_REQUEST_DETECTION_PROMPT),
+            HumanMessage(
+                content=(
+                    "Conversation history for the current issue:\n"
+                    f"{format_conversation_history(history)}\n\n"
+                    "Latest customer message:\n"
+                    f"{message.text}"
+                )
+            ),
+        ]
+        response = await self.chat_model.ainvoke(messages)
+        content = str(response.content)
+
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError:
+            logger.warning("LLM human-request detection was not valid JSON; defaulting false")
+            return False
+
+        return bool(payload.get("explicit_human_request", False))
+
+
 def create_openai_answer_generator(
     *,
     api_key: str,
@@ -129,3 +172,20 @@ def create_openai_answer_generator(
         model_kwargs={"response_format": {"type": "json_object"}},
     )
     return LlmAnswerGenerator(chat_model)
+
+
+def create_openai_human_request_detector(
+    *,
+    api_key: str,
+    model: str,
+    temperature: float,
+) -> LlmHumanRequestDetector:
+    from langchain_openai import ChatOpenAI
+
+    chat_model = ChatOpenAI(
+        api_key=api_key,
+        model=model,
+        temperature=temperature,
+        model_kwargs={"response_format": {"type": "json_object"}},
+    )
+    return LlmHumanRequestDetector(chat_model)

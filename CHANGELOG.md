@@ -29,6 +29,10 @@ This project currently uses increment-based milestones instead of semantic versi
   without exposing absolute timestamps.
 - Telegram customer webhook adapter for text messages, with optional webhook secret
   validation and outbound `sendMessage` replies.
+- Human-request detector boundary with local rule-based and OpenAI/LLM-backed
+  implementations.
+- `SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER` / `humanRequestDetector.provider`
+  configuration for choosing `rules` or `llm`.
 
 ### Changed
 
@@ -36,6 +40,8 @@ This project currently uses increment-based milestones instead of semantic versi
   `HUMAN_REQUESTED`, and `HUMAN_ACTIVE`.
 - Low-confidence graph replies now return `low_confidence: true` without changing the
   persisted conversation state.
+- Explicit human-agent requests now move conversations from `BOT_ACTIVE` to
+  `HUMAN_REQUESTED` while the bot continues answering with retrieved context.
 - Answer generation now uses a configurable provider boundary; `extractive` remains the
   default local provider.
 - LLM answer prompts now include current conversation history alongside retrieved KB

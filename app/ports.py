@@ -53,3 +53,11 @@ class AnswerGenerator(Protocol):
         conversation_history: list[StoredMessage] | None = None,
         conversation_metadata: ConversationPromptMetadata | None = None,
     ) -> tuple[str, float]: ...
+
+
+class HumanRequestDetector(Protocol):
+    async def detect(
+        self,
+        message: IncomingMessage,
+        conversation_history: list[StoredMessage] | None = None,
+    ) -> bool: ...

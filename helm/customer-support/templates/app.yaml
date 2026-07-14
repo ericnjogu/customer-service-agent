@@ -60,6 +60,8 @@ spec:
               value: {{ .Values.retrieval.provider | quote }}
             - name: SUPPORT_ANSWER_PROVIDER
               value: {{ .Values.answer.provider | quote }}
+            - name: SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER
+              value: {{ .Values.humanRequestDetector.provider | quote }}
             - name: SUPPORT_CONVERSATION_HISTORY_MAX_MESSAGES
               value: {{ .Values.conversationHistory.maxMessages | quote }}
             - name: SUPPORT_GREETING_LAPSE_MINUTES

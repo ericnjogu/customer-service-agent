@@ -100,6 +100,23 @@ def test_conversation_state_can_be_read_and_updated() -> None:
     assert update_response.json()["state"] == "HUMAN_ACTIVE"
 
 
+def test_explicit_human_request_updates_conversation_state() -> None:
+    with TestClient(app) as client:
+        response = client.post(
+            "/messages/customer",
+            json={
+                "event_id": "api-human-request-1",
+                "external_chat_id": "chat-human-request-1",
+                "external_user_id": "user-human-request-1",
+                "text": "Can I speak to a human agent?",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["state"] == "HUMAN_REQUESTED"
+    assert response.json()["low_confidence"] is True
+
+
 def test_telegram_webhook_receives_customer_message_and_sends_reply(
     tmp_path,
     monkeypatch,

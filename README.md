@@ -19,6 +19,8 @@ and reproducible.
 - Startup knowledge loaded from a mounted directory or ConfigMap.
 - Conversation routing state updates for the handoff foundation.
 - Optional OpenAI/LangChain answer provider behind `SUPPORT_ANSWER_PROVIDER=openai`.
+- Optional LLM-backed human-request detection behind
+  `SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER=llm`.
 - Helm chart validation and API/graph tests.
 
 Telegram/WhatsApp support group creation, admin KB upload UI, conversation memory, and
@@ -194,6 +196,14 @@ operational handoff workflow. The conversation should move to `HUMAN_REQUESTED` 
 the customer explicitly asks for a human agent, and to `HUMAN_ACTIVE` when a human support
 agent accepts or joins the conversation.
 
+The graph detects explicit human-agent requests before answer generation. Local runs use a
+deterministic rule-based detector by default; Kubernetes values default to the LLM detector
+when an OpenAI API key secret is configured.
+
+`HUMAN_REQUESTED` does not stop the bot from answering. It records that a human has been
+requested while the agent continues to use RAG to answer the customer's current and future
+questions until a human actually joins and the state becomes `HUMAN_ACTIVE`.
+
 Example response state:
 
 ```json
@@ -248,6 +258,7 @@ The default answer provider is still deterministic and local:
 
 ```env
 SUPPORT_ANSWER_PROVIDER=extractive
+SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER=rules
 ```
 
 Run the API locally with the OpenAI answer provider:
@@ -338,7 +349,8 @@ Application configuration uses the `SUPPORT_` prefix. LangSmith uses its native
 |---|---|---|
 | `SUPPORT_RETRIEVAL_PROVIDER` | `memory` | `memory` or `pgvector` |
 | `SUPPORT_ANSWER_PROVIDER` | `extractive` | `extractive` or `openai` |
-| `OPENAI_API_KEY` | unset | Required when `SUPPORT_ANSWER_PROVIDER=openai` |
+| `SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER` | `rules` | `rules` or `llm`; `llm` uses OpenAI to detect explicit human-agent requests |
+| `OPENAI_API_KEY` | unset | Required when `SUPPORT_ANSWER_PROVIDER=openai` or `SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER=llm` |
 | `SUPPORT_LLM_MODEL` | `gpt-4.1-mini` | OpenAI chat model used by the LLM answer provider |
 | `SUPPORT_LLM_TEMPERATURE` | `0.0` | LLM sampling temperature |
 | `SUPPORT_DATABASE_URL` | unset | PostgreSQL connection string |
@@ -359,7 +371,7 @@ Application configuration uses the `SUPPORT_` prefix. LangSmith uses its native
 ## Increment 4 boundary
 
 A `low_confidence: true` response indicates low answer confidence but does not persist a
-handoff state. The LLM provider can generate grounded KB answers, but detecting explicit
-human-agent requests, creating/reusing Telegram or WhatsApp support groups, tracking
-internal agent discussion, deciding which agent messages to forward, and forwarding those
-messages to the customer still belong to later increments.
+handoff state. The graph can move a conversation to `HUMAN_REQUESTED` when the customer
+explicitly asks for a human agent, but creating/reusing Telegram or WhatsApp support
+groups, tracking internal agent discussion, deciding which agent messages to forward, and
+forwarding those messages to the customer still belong to later increments.

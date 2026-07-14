@@ -19,12 +19,11 @@ class ConversationRepository(Protocol):
 
     async def get_by_id(self, conversation_id: UUID) -> ConversationRecord | None: ...
 
-    async def update_status(
+    async def update_state(
         self,
         conversation_id: UUID,
         *,
-        status: str | None = None,
-        issue_status: str | None = None,
+        state: str,
         reason: str | None = None,
     ) -> ConversationRecord: ...
 

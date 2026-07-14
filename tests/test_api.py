@@ -66,10 +66,10 @@ def test_customer_message_endpoint_receives_user_question(tmp_path, monkeypatch)
 
     assert response.status_code == 200
     assert response.json()["citations"] == ["kb/password-reset.txt"]
-    assert response.json()["handling_status"] == "BOT_ACTIVE"
+    assert response.json()["state"] == "BOT_ACTIVE"
 
 
-def test_conversation_status_can_be_read_and_updated() -> None:
+def test_conversation_state_can_be_read_and_updated() -> None:
     with TestClient(app) as client:
         webhook_response = client.post(
             "/webhooks/synthetic",
@@ -84,23 +84,20 @@ def test_conversation_status_can_be_read_and_updated() -> None:
 
         get_response = client.get(f"/conversations/{conversation_id}")
         update_response = client.patch(
-            f"/conversations/{conversation_id}/status",
+            f"/conversations/{conversation_id}/state",
             json={
-                "status": "HUMAN_ACTIVE",
-                "issue_status": "IN_PROGRESS",
+                "state": "HUMAN_ACTIVE",
                 "reason": "Human support accepted the handoff",
             },
         )
 
     assert webhook_response.status_code == 200
-    assert webhook_response.json()["handling_status"] == "HANDOFF_PENDING"
-    assert webhook_response.json()["issue_status"] == "ESCALATED"
+    assert webhook_response.json()["low_confidence"] is True
+    assert webhook_response.json()["state"] == "BOT_ACTIVE"
     assert get_response.status_code == 200
-    assert get_response.json()["status"] == "HANDOFF_PENDING"
-    assert get_response.json()["issue_status"] == "ESCALATED"
+    assert get_response.json()["state"] == "BOT_ACTIVE"
     assert update_response.status_code == 200
-    assert update_response.json()["status"] == "HUMAN_ACTIVE"
-    assert update_response.json()["issue_status"] == "IN_PROGRESS"
+    assert update_response.json()["state"] == "HUMAN_ACTIVE"
 
 
 def test_telegram_webhook_receives_customer_message_and_sends_reply(

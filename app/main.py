@@ -10,7 +10,7 @@ from app.container import create_container
 from app.graph import invoke_support_graph
 from app.models import (
     ConversationRecord,
-    ConversationStatusUpdate,
+    ConversationStateUpdate,
     IncomingMessage,
     SupportReply,
 )
@@ -106,20 +106,16 @@ async def get_conversation(conversation_id: UUID, request: Request) -> Conversat
     return conversation
 
 
-@app.patch("/conversations/{conversation_id}/status", response_model=ConversationRecord)
-async def update_conversation_status(
+@app.patch("/conversations/{conversation_id}/state", response_model=ConversationRecord)
+async def update_conversation_state(
     conversation_id: UUID,
-    update: ConversationStatusUpdate,
+    update: ConversationStateUpdate,
     request: Request,
 ) -> ConversationRecord:
-    if update.status is None and update.issue_status is None:
-        raise HTTPException(status_code=400, detail="At least one status field is required")
-
     try:
-        return await request.app.state.container.conversations.update_status(
+        return await request.app.state.container.conversations.update_state(
             conversation_id,
-            status=update.status,
-            issue_status=update.issue_status,
+            state=update.state,
             reason=update.reason,
         )
     except KeyError:

@@ -4,8 +4,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
-HandlingStatus = Literal["BOT_ACTIVE", "HANDOFF_PENDING", "HUMAN_ACTIVE"]
-IssueStatus = Literal["NEW", "IN_PROGRESS", "CLOSED", "ESCALATED", "REOPENED"]
+ConversationState = Literal["BOT_ACTIVE", "HUMAN_REQUESTED", "HUMAN_ACTIVE"]
 
 
 class IncomingMessage(BaseModel):
@@ -23,9 +22,8 @@ class SupportReply(BaseModel):
     answer: str
     confidence: float
     citations: list[str]
-    escalated: bool
-    handling_status: HandlingStatus
-    issue_status: IssueStatus
+    low_confidence: bool
+    state: ConversationState
 
 
 class ConversationRecord(BaseModel):
@@ -33,8 +31,7 @@ class ConversationRecord(BaseModel):
     channel: str
     external_chat_id: str
     external_user_id: str
-    status: HandlingStatus = "BOT_ACTIVE"
-    issue_status: IssueStatus = "NEW"
+    state: ConversationState = "BOT_ACTIVE"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -53,7 +50,6 @@ class ConversationPromptMetadata(BaseModel):
     greeting_reason: str
 
 
-class ConversationStatusUpdate(BaseModel):
-    status: HandlingStatus | None = None
-    issue_status: IssueStatus | None = None
+class ConversationStateUpdate(BaseModel):
+    state: ConversationState
     reason: str | None = Field(default=None, max_length=1_000)

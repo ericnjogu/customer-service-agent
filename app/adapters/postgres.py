@@ -104,8 +104,7 @@ class PostgresConversationRepository:
             VALUES ($1, $2, $3)
             ON CONFLICT (channel, external_chat_id) DO UPDATE
             SET external_user_id = EXCLUDED.external_user_id, updated_at = now()
-            RETURNING id, channel, external_chat_id, external_user_id, status, issue_status,
-                created_at
+            RETURNING id, channel, external_chat_id, external_user_id, state, created_at
             """,
             message.channel,
             message.external_chat_id,
@@ -117,20 +116,18 @@ class PostgresConversationRepository:
         assert self.database.pool
         row = await self.database.pool.fetchrow(
             """
-            SELECT id, channel, external_chat_id, external_user_id, status, issue_status,
-                created_at
+            SELECT id, channel, external_chat_id, external_user_id, state, created_at
             FROM conversations WHERE id = $1
             """,
             conversation_id,
         )
         return ConversationRecord(**dict(row)) if row else None
 
-    async def update_status(
+    async def update_state(
         self,
         conversation_id: UUID,
         *,
-        status: str | None = None,
-        issue_status: str | None = None,
+        state: str,
         reason: str | None = None,
     ) -> ConversationRecord:
         assert self.database.pool
@@ -138,7 +135,7 @@ class PostgresConversationRepository:
             async with connection.transaction():
                 previous = await connection.fetchrow(
                     """
-                    SELECT status, issue_status FROM conversations WHERE id = $1
+                    SELECT state FROM conversations WHERE id = $1
                     FOR UPDATE
                     """,
                     conversation_id,
@@ -149,34 +146,26 @@ class PostgresConversationRepository:
                 row = await connection.fetchrow(
                     """
                     UPDATE conversations
-                    SET status = COALESCE($2, status),
-                        issue_status = COALESCE($3, issue_status),
-                        updated_at = now()
+                    SET state = $2, updated_at = now()
                     WHERE id = $1
-                    RETURNING id, channel, external_chat_id, external_user_id, status,
-                        issue_status, created_at
+                    RETURNING id, channel, external_chat_id, external_user_id, state, created_at
                     """,
                     conversation_id,
-                    status,
-                    issue_status,
+                    state,
                 )
                 await connection.execute(
                     """
-                    INSERT INTO conversation_status_events(
+                    INSERT INTO conversation_state_events(
                         conversation_id,
-                        previous_status,
-                        new_status,
-                        previous_issue_status,
-                        new_issue_status,
+                        previous_state,
+                        new_state,
                         reason
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6)
+                    VALUES ($1, $2, $3, $4)
                     """,
                     conversation_id,
-                    previous["status"],
-                    row["status"],
-                    previous["issue_status"],
-                    row["issue_status"],
+                    previous["state"],
+                    row["state"],
                     reason,
                 )
         return ConversationRecord(**dict(row))
@@ -296,8 +285,8 @@ CREATE TABLE IF NOT EXISTS conversations (
     channel text NOT NULL,
     external_chat_id text NOT NULL,
     external_user_id text NOT NULL,
-    status text NOT NULL DEFAULT 'BOT_ACTIVE',
-    issue_status text NOT NULL DEFAULT 'NEW',
+    state text NOT NULL DEFAULT 'BOT_ACTIVE'
+        CHECK (state IN ('BOT_ACTIVE', 'HUMAN_REQUESTED', 'HUMAN_ACTIVE')),
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE(channel, external_chat_id)
@@ -312,13 +301,11 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS conversation_status_events (
+CREATE TABLE IF NOT EXISTS conversation_state_events (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     conversation_id uuid NOT NULL REFERENCES conversations(id),
-    previous_status text NOT NULL,
-    new_status text NOT NULL,
-    previous_issue_status text NOT NULL,
-    new_issue_status text NOT NULL,
+    previous_state text NOT NULL,
+    new_state text NOT NULL,
     reason text,
     created_at timestamptz NOT NULL DEFAULT now()
 );
@@ -336,7 +323,7 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
 );
 
 ALTER TABLE conversations
-ADD COLUMN IF NOT EXISTS issue_status text NOT NULL DEFAULT 'NEW';
+ADD COLUMN IF NOT EXISTS state text NOT NULL DEFAULT 'BOT_ACTIVE';
 
 ALTER TABLE conversations
 ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();

@@ -67,12 +67,11 @@ class MemoryConversationRepository:
             None,
         )
 
-    async def update_status(
+    async def update_state(
         self,
         conversation_id: UUID,
         *,
-        status: str | None = None,
-        issue_status: str | None = None,
+        state: str,
         reason: str | None = None,
     ) -> ConversationRecord:
         conversation = await self.get_by_id(conversation_id)
@@ -81,8 +80,7 @@ class MemoryConversationRepository:
 
         updated = conversation.model_copy(
             update={
-                "status": status or conversation.status,
-                "issue_status": issue_status or conversation.issue_status,
+                "state": state,
             }
         )
         key = (updated.channel, updated.external_chat_id)

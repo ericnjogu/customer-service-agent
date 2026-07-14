@@ -40,16 +40,15 @@ def test_telegram_update_to_incoming_message_ignores_non_text_message() -> None:
     assert message is None
 
 
-def test_telegram_reply_text_mentions_human_follow_up_when_escalated() -> None:
+def test_telegram_reply_text_mentions_human_follow_up_when_low_confidence() -> None:
     text = telegram_reply_text(
         SupportReply(
             conversation_id="00000000-0000-0000-0000-000000000000",
             answer="I could not answer that.",
             confidence=0.0,
             citations=[],
-            escalated=True,
-            handling_status="HANDOFF_PENDING",
-            issue_status="ESCALATED",
+            low_confidence=True,
+            state="BOT_ACTIVE",
         )
     )
 

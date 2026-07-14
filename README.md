@@ -1,7 +1,7 @@
 # Customer Support Agent
 
 Increment 4 is a locally runnable vertical slice using FastAPI, LangGraph, LangChain
-documents, file-based KB ingestion, issue status tracking, optional LLM-backed answer
+documents, file-based KB ingestion, conversation routing state, optional LLM-backed answer
 generation, and configurable retrieval/answer boundaries. Helm deploys the service with
 PostgreSQL and pgvector. No external LLM key is needed for the default local path: a
 deterministic extractive generator and local hash embeddings make the workflow inspectable
@@ -12,12 +12,12 @@ and reproducible.
 - Customer message ingestion through `POST /messages/customer`.
 - Synthetic webhook compatibility through `POST /webhooks/synthetic`.
 - Telegram customer text-message webhook through `POST /webhooks/telegram`.
-- A LangGraph workflow that persists, retrieves, answers, cites, and marks low-confidence
-  answers for future escalation.
+- A LangGraph workflow that persists, retrieves, answers, cites, and flags low-confidence
+  answers.
 - In-memory adapters for fast development and tests.
 - PostgreSQL conversation persistence and pgvector retrieval in Kubernetes.
 - Startup knowledge loaded from a mounted directory or ConfigMap.
-- Conversation handling status and issue status updates for the handoff foundation.
+- Conversation routing state updates for the handoff foundation.
 - Optional OpenAI/LangChain answer provider behind `SUPPORT_ANSWER_PROVIDER=openai`.
 - Helm chart validation and API/graph tests.
 
@@ -180,21 +180,26 @@ The app reads `.md` and `.txt` files from `/knowledge` by default. ConfigMaps ar
 for these small 4 KB documents, but keep the total ConfigMap size comfortably below
 Kubernetes' 1 MiB object limit.
 
-## Conversation and issue status
+## Conversation routing state
 
-The graph now tracks two related status concepts:
+The graph tracks one routing state for each conversation:
 
 | Field | Values | Purpose |
 |---|---|---|
-| `status` | `BOT_ACTIVE`, `HANDOFF_PENDING`, `HUMAN_ACTIVE` | Who should handle the conversation |
-| `issue_status` | `NEW`, `IN_PROGRESS`, `CLOSED`, `ESCALATED`, `REOPENED` | Support issue lifecycle |
+| `state` | `BOT_ACTIVE`, `HUMAN_REQUESTED`, `HUMAN_ACTIVE` | Who should handle the conversation |
 
-When the graph produces a low-confidence answer, it marks the conversation as:
+Low-confidence answers return `low_confidence: true` in the response, but they do not change
+the persisted conversation state. This keeps the model's uncertainty separate from the
+operational handoff workflow. The conversation should move to `HUMAN_REQUESTED` only when
+the customer explicitly asks for a human agent, and to `HUMAN_ACTIVE` when a human support
+agent accepts or joins the conversation.
+
+Example response state:
 
 ```json
 {
-  "status": "HANDOFF_PENDING",
-  "issue_status": "ESCALATED"
+  "state": "BOT_ACTIVE",
+  "low_confidence": true
 }
 ```
 
@@ -204,14 +209,13 @@ Inspect a conversation:
 curl http://localhost:8000/conversations/<conversation-id>
 ```
 
-Update status, for example when a human agent accepts a handoff:
+Update state, for example when a human agent accepts a handoff:
 
 ```bash
-curl -X PATCH http://localhost:8000/conversations/<conversation-id>/status \
+curl -X PATCH http://localhost:8000/conversations/<conversation-id>/state \
   -H 'content-type: application/json' \
   -d '{
-    "status": "HUMAN_ACTIVE",
-    "issue_status": "IN_PROGRESS",
+    "state": "HUMAN_ACTIVE",
     "reason": "Human support accepted the handoff"
   }'
 ```
@@ -279,7 +283,7 @@ OPENAI_API_KEY="$OPENAI_API_KEY" LANGSMITH_API_KEY="key" scripts/deploy-local.sh
 
 The LLM is instructed to answer only from retrieved KB context and return structured JSON
 with `answer`, `confidence`, and `grounded`. If no documents are retrieved, or if the
-response is not grounded, the graph keeps using the existing low-confidence escalation path.
+response is not grounded, the graph returns a low-confidence reply.
 
 ## Telegram customer webhook
 
@@ -338,7 +342,7 @@ Application configuration uses the `SUPPORT_` prefix. LangSmith uses its native
 | `SUPPORT_LLM_MODEL` | `gpt-4.1-mini` | OpenAI chat model used by the LLM answer provider |
 | `SUPPORT_LLM_TEMPERATURE` | `0.0` | LLM sampling temperature |
 | `SUPPORT_DATABASE_URL` | unset | PostgreSQL connection string |
-| `SUPPORT_CONFIDENCE_THRESHOLD` | `0.60` | Below this, mark for escalation |
+| `SUPPORT_CONFIDENCE_THRESHOLD` | `0.60` | Below this, mark the response as low confidence |
 | `SUPPORT_CONVERSATION_HISTORY_MAX_MESSAGES` | `50` | Safety cap for exact current-conversation messages passed into context |
 | `SUPPORT_GREETING_LAPSE_MINUTES` | `60` | Minutes after the previous customer message before the prompt says to greet again |
 | `SUPPORT_TELEGRAM_BOT_TOKEN` | unset | Telegram bot token used to send replies with `sendMessage` |
@@ -354,7 +358,8 @@ Application configuration uses the `SUPPORT_` prefix. LangSmith uses its native
 
 ## Increment 4 boundary
 
-An `escalated: true` response persists a handoff-pending status. The LLM provider can
-generate grounded KB answers, but creating/reusing Telegram or WhatsApp support groups,
-tracking internal agent discussion, deciding which agent messages to forward, and
-forwarding those messages to the customer still belong to later increments.
+A `low_confidence: true` response indicates low answer confidence but does not persist a
+handoff state. The LLM provider can generate grounded KB answers, but detecting explicit
+human-agent requests, creating/reusing Telegram or WhatsApp support groups, tracking
+internal agent discussion, deciding which agent messages to forward, and forwarding those
+messages to the customer still belong to later increments.

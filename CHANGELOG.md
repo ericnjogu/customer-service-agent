@@ -15,10 +15,8 @@ This project currently uses increment-based milestones instead of semantic versi
 - `SUPPORT_LOG_FORMAT` / `logging.format` configuration using Python logging `{}` style.
 - Logging filter that suppresses noisy Uvicorn access logs for `/healthz` probes.
 - Local deploy helper script for Rancher Desktop Kubernetes rebuilds and rollouts.
-- Conversation `issue_status` tracking with `NEW`, `IN_PROGRESS`, `CLOSED`, `ESCALATED`,
-  and `REOPENED` lifecycle values.
-- Conversation status APIs for reading conversations and updating handling/issue status.
-- Status event persistence in PostgreSQL for conversation status changes.
+- Conversation state API for reading conversations and updating routing state.
+- State event persistence in PostgreSQL for conversation routing changes.
 - Customer-message API endpoint at `POST /messages/customer`.
 - Optional OpenAI/LangChain answer provider behind `SUPPORT_ANSWER_PROVIDER=openai`.
 - Helm values and environment variables for model, temperature, and OpenAI API key secret.
@@ -34,7 +32,10 @@ This project currently uses increment-based milestones instead of semantic versi
 
 ### Changed
 
-- Low-confidence graph replies now persist `HANDOFF_PENDING` and `ESCALATED` status.
+- Collapsed conversation status handling into one routing state: `BOT_ACTIVE`,
+  `HUMAN_REQUESTED`, and `HUMAN_ACTIVE`.
+- Low-confidence graph replies now return `low_confidence: true` without changing the
+  persisted conversation state.
 - Answer generation now uses a configurable provider boundary; `extractive` remains the
   default local provider.
 - LLM answer prompts now include current conversation history alongside retrieved KB
@@ -94,7 +95,7 @@ This project currently uses increment-based milestones instead of semantic versi
 
 - FastAPI service with a synthetic webhook endpoint at `POST /webhooks/synthetic`.
 - LangGraph support workflow that persists incoming messages, retrieves context, answers,
-  cites sources, and marks low-confidence replies for escalation.
+  cites sources, and flags low-confidence replies.
 - In-memory conversation and retrieval adapters for local development and tests.
 - PostgreSQL-backed conversation persistence.
 - pgvector-backed retrieval store with local deterministic embeddings.

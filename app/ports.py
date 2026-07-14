@@ -5,6 +5,7 @@ from uuid import UUID
 from langchain_core.documents import Document
 
 from app.models import (
+    ConversationPromptMetadata,
     ConversationRecord,
     IncomingMessage,
     StoredMessage,
@@ -51,4 +52,5 @@ class AnswerGenerator(Protocol):
         query: str,
         documents: list[Document],
         conversation_history: list[StoredMessage] | None = None,
+        conversation_metadata: ConversationPromptMetadata | None = None,
     ) -> tuple[str, float]: ...

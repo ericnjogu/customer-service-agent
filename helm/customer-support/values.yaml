@@ -25,6 +25,7 @@ answer:
 
 conversationHistory:
   maxMessages: 50
+  greetingLapseMinutes: 60
 
 telegram:
   existingSecret: "telegram-bot"

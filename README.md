@@ -223,8 +223,14 @@ conversation since `conversation.created_at` and passes them into the answer gen
 The history is still bounded by `SUPPORT_CONVERSATION_HISTORY_MAX_MESSAGES` so very long
 open chats do not overfill the LLM context.
 
+The graph also derives compact greeting metadata for the LLM. By default,
+`SUPPORT_GREETING_LAPSE_MINUTES=60`, so the prompt tells the LLM to greet the customer on
+their first message or when the previous customer message was at least 60 minutes ago.
+Absolute timestamps are intentionally omitted from the prompt metadata.
+
 The current prompt context is:
 
+- derived conversation metadata;
 - exact current conversation history;
 - retrieved KB documents;
 - the current customer question.
@@ -334,6 +340,7 @@ Application configuration uses the `SUPPORT_` prefix. LangSmith uses its native
 | `SUPPORT_DATABASE_URL` | unset | PostgreSQL connection string |
 | `SUPPORT_CONFIDENCE_THRESHOLD` | `0.60` | Below this, mark for escalation |
 | `SUPPORT_CONVERSATION_HISTORY_MAX_MESSAGES` | `50` | Safety cap for exact current-conversation messages passed into context |
+| `SUPPORT_GREETING_LAPSE_MINUTES` | `60` | Minutes after the previous customer message before the prompt says to greet again |
 | `SUPPORT_TELEGRAM_BOT_TOKEN` | unset | Telegram bot token used to send replies with `sendMessage` |
 | `SUPPORT_TELEGRAM_WEBHOOK_SECRET_TOKEN` | unset | Optional Telegram webhook secret token checked against `X-Telegram-Bot-Api-Secret-Token` |
 | `SUPPORT_SEED_KNOWLEDGE` | `true` | Load startup knowledge |

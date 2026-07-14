@@ -62,6 +62,8 @@ spec:
               value: {{ .Values.answer.provider | quote }}
             - name: SUPPORT_CONVERSATION_HISTORY_MAX_MESSAGES
               value: {{ .Values.conversationHistory.maxMessages | quote }}
+            - name: SUPPORT_GREETING_LAPSE_MINUTES
+              value: {{ .Values.conversationHistory.greetingLapseMinutes | quote }}
             {{- if .Values.telegram.existingSecret }}
             - name: SUPPORT_TELEGRAM_BOT_TOKEN
               valueFrom:

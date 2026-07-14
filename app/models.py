@@ -46,6 +46,13 @@ class StoredMessage(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class ConversationPromptMetadata(BaseModel):
+    is_first_customer_message: bool
+    minutes_since_last_customer_message: int | None = None
+    should_greet_customer: bool
+    greeting_reason: str
+
+
 class ConversationStatusUpdate(BaseModel):
     status: HandlingStatus | None = None
     issue_status: IssueStatus | None = None

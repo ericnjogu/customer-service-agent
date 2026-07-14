@@ -4,7 +4,12 @@ from uuid import UUID
 
 from langchain_core.documents import Document
 
-from app.models import ConversationRecord, IncomingMessage, StoredMessage
+from app.models import (
+    ConversationPromptMetadata,
+    ConversationRecord,
+    IncomingMessage,
+    StoredMessage,
+)
 
 STOP_WORDS = {
     "a",
@@ -134,6 +139,7 @@ class ExtractiveAnswerGenerator:
         query: str,
         documents: list[Document],
         conversation_history: list[StoredMessage] | None = None,
+        conversation_metadata: ConversationPromptMetadata | None = None,
     ) -> tuple[str, float]:
         if not documents:
             return "I could not find enough information to answer that safely.", 0.0

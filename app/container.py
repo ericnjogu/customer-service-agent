@@ -92,6 +92,7 @@ async def create_container(settings: Settings) -> Container:
         generator,
         settings.confidence_threshold,
         settings.conversation_history_max_messages,
+        settings.greeting_lapse_minutes,
     )
     telegram_sender = (
         TelegramBotClient(settings.telegram_bot_token)

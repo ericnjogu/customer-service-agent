@@ -27,6 +27,8 @@ This project currently uses increment-based milestones instead of semantic versi
   support.
 - Exact current-conversation history context, bounded by conversation start time and a
   configurable message safety cap.
+- Derived greeting metadata for LLM prompts, using a configurable 60-minute default lapse
+  without exposing absolute timestamps.
 - Telegram customer webhook adapter for text messages, with optional webhook secret
   validation and outbound `sendMessage` replies.
 
@@ -37,6 +39,8 @@ This project currently uses increment-based milestones instead of semantic versi
   default local provider.
 - LLM answer prompts now include current conversation history alongside retrieved KB
   documents.
+- LLM answer prompts now include compact greeting metadata so the model can avoid repeated
+  greetings during active conversations.
 - `httpx` is now an application dependency because Telegram reply delivery uses outbound
   HTTP calls at runtime.
 - Removed hard-coded demo seed documents; startup KB seeding now only loads explicitly

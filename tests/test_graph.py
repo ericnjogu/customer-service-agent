@@ -1,21 +1,26 @@
+from datetime import datetime, timedelta, timezone
+
 from app.config import Settings
 from app.container import create_container
-from app.graph import build_support_graph, invoke_support_graph
+from app.graph import build_prompt_metadata, build_support_graph, invoke_support_graph
 from app.knowledge import SEED_KNOWLEDGE_NAMESPACE
-from app.models import IncomingMessage, StoredMessage
+from app.models import ConversationPromptMetadata, IncomingMessage, StoredMessage
 
 
 class RecordingAnswerGenerator:
     def __init__(self) -> None:
         self.histories: list[list[StoredMessage]] = []
+        self.metadata: list[ConversationPromptMetadata | None] = []
 
     async def generate(
         self,
         query: str,
         documents,
         conversation_history: list[StoredMessage] | None = None,
+        conversation_metadata: ConversationPromptMetadata | None = None,
     ) -> tuple[str, float]:
         self.histories.append(conversation_history or [])
+        self.metadata.append(conversation_metadata)
         return "Recorded", 0.95
 
 
@@ -118,6 +123,7 @@ async def test_graph_passes_current_conversation_history_with_safety_cap() -> No
         generator,
         confidence_threshold=0.60,
         conversation_history_max_messages=2,
+        greeting_lapse_minutes=60,
     )
 
     for index in range(4):
@@ -136,3 +142,77 @@ async def test_graph_passes_current_conversation_history_with_safety_cap() -> No
         "Recorded",
         "Question 3",
     ]
+
+
+def test_prompt_metadata_greets_first_customer_message() -> None:
+    metadata = build_prompt_metadata(
+        IncomingMessage(
+            event_id="first",
+            external_chat_id="chat-1",
+            external_user_id="user-1",
+            text="Hello",
+        ),
+        [],
+        greeting_lapse_minutes=60,
+    )
+
+    assert metadata.is_first_customer_message is True
+    assert metadata.minutes_since_last_customer_message is None
+    assert metadata.should_greet_customer is True
+    assert metadata.greeting_reason == "first customer message in this conversation"
+
+
+def test_prompt_metadata_avoids_repeated_greeting_during_active_conversation() -> None:
+    now = datetime(2026, 7, 14, 10, 0, tzinfo=timezone.utc)
+    metadata = build_prompt_metadata(
+        IncomingMessage(
+            event_id="current",
+            external_chat_id="chat-1",
+            external_user_id="user-1",
+            text="One more question",
+            received_at=now,
+        ),
+        [
+            StoredMessage(
+                conversation_id="00000000-0000-0000-0000-000000000000",
+                event_id="previous",
+                sender_type="CUSTOMER",
+                body="Hello",
+                created_at=now - timedelta(minutes=59),
+            )
+        ],
+        greeting_lapse_minutes=60,
+    )
+
+    assert metadata.is_first_customer_message is False
+    assert metadata.minutes_since_last_customer_message == 59
+    assert metadata.should_greet_customer is False
+    assert metadata.greeting_reason == "active conversation; avoid repeated greeting"
+
+
+def test_prompt_metadata_greets_after_configured_lapse() -> None:
+    now = datetime(2026, 7, 14, 10, 0, tzinfo=timezone.utc)
+    metadata = build_prompt_metadata(
+        IncomingMessage(
+            event_id="current",
+            external_chat_id="chat-1",
+            external_user_id="user-1",
+            text="Are you there?",
+            received_at=now,
+        ),
+        [
+            StoredMessage(
+                conversation_id="00000000-0000-0000-0000-000000000000",
+                event_id="previous",
+                sender_type="CUSTOMER",
+                body="Hello",
+                created_at=now - timedelta(minutes=60),
+            )
+        ],
+        greeting_lapse_minutes=60,
+    )
+
+    assert metadata.is_first_customer_message is False
+    assert metadata.minutes_since_last_customer_message == 60
+    assert metadata.should_greet_customer is True
+    assert metadata.greeting_reason == "last customer message was 60 minutes ago"

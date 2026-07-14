@@ -5,16 +5,20 @@ from typing import Any
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.models import StoredMessage
+from app.models import ConversationPromptMetadata, StoredMessage
 
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are a customer support assistant.
 Answer only from the provided knowledge base context.
 Be courteous and greet the customer if this is their first question. Welcome them back
-if it has been a while since their most recent post.
-If the context is insufficient, say that you do not have enough information and ask them to 
-send a message to the management using social media pages.
+if it has been a significant time since their most recent post.
+Use conversation metadata to decide whether to greet the customer. Do not repeatedly greet
+the customer during an active back-and-forth.
+If the context is insufficient, say that you do not have enough information 
+and ask if they would like to contact a support team member.
+If they ask for a human agent or support team member or management, send them the
+contact information in the knowledge base.
 Return JSON with:
 - answer: string
 - confidence: number from 0 to 1
@@ -43,6 +47,25 @@ def format_conversation_history(messages: list[StoredMessage]) -> str:
     )
 
 
+def format_conversation_metadata(metadata: ConversationPromptMetadata | None) -> str:
+    if metadata is None:
+        return "No conversation metadata is available."
+
+    minutes = (
+        str(metadata.minutes_since_last_customer_message)
+        if metadata.minutes_since_last_customer_message is not None
+        else "none"
+    )
+    return "\n".join(
+        [
+            f"is_first_customer_message: {str(metadata.is_first_customer_message).lower()}",
+            f"minutes_since_last_customer_message: {minutes}",
+            f"should_greet_customer: {str(metadata.should_greet_customer).lower()}",
+            f"greeting_reason: {metadata.greeting_reason}",
+        ]
+    )
+
+
 class LlmAnswerGenerator:
     def __init__(self, chat_model: Any) -> None:
         self.chat_model = chat_model
@@ -52,6 +75,7 @@ class LlmAnswerGenerator:
         query: str,
         documents: list[Document],
         conversation_history: list[StoredMessage] | None = None,
+        conversation_metadata: ConversationPromptMetadata | None = None,
     ) -> tuple[str, float]:
         if not documents:
             return "I could not find enough information to answer that question.", 0.0
@@ -61,6 +85,8 @@ class LlmAnswerGenerator:
             SystemMessage(content=SYSTEM_PROMPT),
             HumanMessage(
                 content=(
+                    "Conversation metadata:\n"
+                    f"{format_conversation_metadata(conversation_metadata)}\n\n"
                     "Conversation history for the current issue:\n"
                     f"{format_conversation_history(history)}\n\n"
                     "Knowledge base context:\n"

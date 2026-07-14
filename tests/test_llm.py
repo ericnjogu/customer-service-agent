@@ -5,7 +5,7 @@ from langchain_core.messages import AIMessage
 from app.adapters.llm import LlmAnswerGenerator
 from app.config import Settings
 from app.container import create_container
-from app.models import StoredMessage
+from app.models import ConversationPromptMetadata, StoredMessage
 
 
 class FakeChatModel:
@@ -73,6 +73,33 @@ async def test_llm_answer_generator_includes_conversation_history() -> None:
     prompt = chat_model.last_messages[1].content
     assert "Conversation history for the current issue" in prompt
     assert "CUSTOMER: I need a refund." in prompt
+
+
+async def test_llm_answer_generator_includes_greeting_metadata_without_timestamps() -> None:
+    chat_model = FakeChatModel(
+        '{"answer": "Refunds are available within 30 days.", "confidence": 0.82, "grounded": true}'
+    )
+    generator = LlmAnswerGenerator(chat_model)
+
+    await generator.generate(
+        "Can I still get one?",
+        [Document(page_content="Refunds are available within 30 days.")],
+        conversation_metadata=ConversationPromptMetadata(
+            is_first_customer_message=False,
+            minutes_since_last_customer_message=60,
+            should_greet_customer=True,
+            greeting_reason="last customer message was 60 minutes ago",
+        ),
+    )
+
+    prompt = chat_model.last_messages[1].content
+    assert "Conversation metadata" in prompt
+    assert "is_first_customer_message: false" in prompt
+    assert "minutes_since_last_customer_message: 60" in prompt
+    assert "should_greet_customer: true" in prompt
+    assert "greeting_reason: last customer message was 60 minutes ago" in prompt
+    assert "current_time" not in prompt
+    assert "last_customer_message_at" not in prompt
 
 
 async def test_llm_answer_generator_does_not_call_model_without_documents() -> None:

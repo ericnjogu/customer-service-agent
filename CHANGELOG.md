@@ -33,6 +33,12 @@ This project currently uses increment-based milestones instead of semantic versi
   implementations.
 - `SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER` / `humanRequestDetector.provider`
   configuration for choosing `rules` or `llm`.
+- Embedding provider boundary with local hash embeddings and OpenAI semantic embeddings.
+- `SUPPORT_EMBEDDING_PROVIDER`, `SUPPORT_EMBEDDING_MODEL`, and
+  `SUPPORT_EMBEDDING_DIMENSIONS` configuration.
+- Helm values for OpenAI `text-embedding-3-small` embeddings with 1536 dimensions.
+- Seed KB chunking via LangChain `RecursiveCharacterTextSplitter`, configured with
+  `SUPPORT_KNOWLEDGE_CHUNK_SIZE` and `SUPPORT_KNOWLEDGE_CHUNK_OVERLAP`.
 
 ### Changed
 
@@ -52,6 +58,12 @@ This project currently uses increment-based milestones instead of semantic versi
   HTTP calls at runtime.
 - Removed hard-coded demo seed documents; startup KB seeding now only loads explicitly
   configured files.
+- pgvector KB upserts now use `content_hash` to skip unchanged documents before computing
+  embeddings.
+- pgvector KB storage now stores one vector row per chunk using stable chunk ids instead
+  of one vector row per source file.
+- Support reply citations now return chunk ids when available, falling back to source only
+  for documents without chunk metadata.
 
 ### Fixed
 
@@ -59,6 +71,8 @@ This project currently uses increment-based milestones instead of semantic versi
   such as `..2026_*`, preventing duplicate file ingestion.
 - pgvector search now accepts JSONB metadata returned by the driver as either a mapping or
   JSON string, preventing customer-message retrieval crashes.
+- Local MVP token embeddings now normalize simple plural variants such as `socials` and
+  `handles`, improving deterministic retrieval for small KB documents.
 
 ### Deferred
 
@@ -82,7 +96,7 @@ This project currently uses increment-based milestones instead of semantic versi
 
 ### Fixed
 
-- pgvector KB ingestion is idempotent by upserting on `(namespace, source)`.
+- pgvector KB ingestion is idempotent by upserting on `(namespace, chunk_id)`.
 - Existing duplicate KB rows are deduplicated during schema initialization before the
   unique index is created.
 - KB rows now track `created_at` and `updated_at`, with `updated_at` refreshed when a

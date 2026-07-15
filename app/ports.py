@@ -45,6 +45,15 @@ class RetrievalStore(Protocol):
     async def search(self, query: str, namespace: str, limit: int = 4) -> list[Document]: ...
 
 
+class EmbeddingProvider(Protocol):
+    @property
+    def dimensions(self) -> int: ...
+
+    async def embed_query(self, text: str) -> list[float]: ...
+
+    async def embed_documents(self, texts: list[str]) -> list[list[float]]: ...
+
+
 class AnswerGenerator(Protocol):
     async def generate(
         self,

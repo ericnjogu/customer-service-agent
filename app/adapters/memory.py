@@ -35,8 +35,15 @@ STOP_WORDS = {
 }
 
 
+def normalize_token(token: str) -> str:
+    if len(token) > 3 and token.endswith("s"):
+        return token[:-1]
+    return token
+
+
 def tokenize(text: str) -> set[str]:
-    return set(re.findall(r"[a-z0-9]+", text.lower())) - STOP_WORDS
+    tokens = re.findall(r"[a-z0-9]+", text.lower())
+    return {normalize_token(token) for token in tokens} - STOP_WORDS
 
 
 class MemoryConversationRepository:

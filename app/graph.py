@@ -102,7 +102,10 @@ def build_support_graph(
             state.get("conversation_history", []),
             state.get("conversation_metadata"),
         )
-        citations = [str(item.metadata.get("source", "unknown")) for item in state["documents"]]
+        citations = [
+            str(item.metadata.get("chunk_id") or item.metadata.get("source", "unknown"))
+            for item in state["documents"]
+        ]
         return {
             "answer": text,
             "confidence": confidence,

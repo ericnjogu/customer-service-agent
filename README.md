@@ -19,12 +19,13 @@ and reproducible.
 - Startup knowledge loaded from a mounted directory or ConfigMap.
 - Conversation routing state updates for the handoff foundation.
 - Optional OpenAI/LangChain answer provider behind `SUPPORT_ANSWER_PROVIDER=openai`.
+- Optional OpenAI semantic embeddings behind `SUPPORT_EMBEDDING_PROVIDER=openai`.
 - Optional LLM-backed human-request detection behind
   `SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER=llm`.
 - Helm chart validation and API/graph tests.
 
-Telegram/WhatsApp support group creation, admin KB upload UI, conversation memory, and
-production embedding providers are intentionally reserved for later increments.
+Telegram/WhatsApp support group creation, admin KB upload UI, and conversation memory are
+intentionally reserved for later increments.
 
 ## Run in the IDE
 
@@ -349,8 +350,11 @@ Application configuration uses the `SUPPORT_` prefix. LangSmith uses its native
 |---|---|---|
 | `SUPPORT_RETRIEVAL_PROVIDER` | `memory` | `memory` or `pgvector` |
 | `SUPPORT_ANSWER_PROVIDER` | `extractive` | `extractive` or `openai` |
+| `SUPPORT_EMBEDDING_PROVIDER` | `local` | `local` or `openai`; Helm defaults to `openai` for pgvector |
+| `SUPPORT_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding model when `SUPPORT_EMBEDDING_PROVIDER=openai` |
+| `SUPPORT_EMBEDDING_DIMENSIONS` | `64` | pgvector embedding size; Helm defaults to `1536` for OpenAI embeddings |
 | `SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER` | `rules` | `rules` or `llm`; `llm` uses OpenAI to detect explicit human-agent requests |
-| `OPENAI_API_KEY` | unset | Required when `SUPPORT_ANSWER_PROVIDER=openai` or `SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER=llm` |
+| `OPENAI_API_KEY` | unset | Required when `SUPPORT_ANSWER_PROVIDER=openai`, `SUPPORT_EMBEDDING_PROVIDER=openai`, or `SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER=llm` |
 | `SUPPORT_LLM_MODEL` | `gpt-4.1-mini` | OpenAI chat model used by the LLM answer provider |
 | `SUPPORT_LLM_TEMPERATURE` | `0.0` | LLM sampling temperature |
 | `SUPPORT_DATABASE_URL` | unset | PostgreSQL connection string |
@@ -361,12 +365,22 @@ Application configuration uses the `SUPPORT_` prefix. LangSmith uses its native
 | `SUPPORT_TELEGRAM_WEBHOOK_SECRET_TOKEN` | unset | Optional Telegram webhook secret token checked against `X-Telegram-Bot-Api-Secret-Token` |
 | `SUPPORT_SEED_KNOWLEDGE` | `true` | Load startup knowledge |
 | `SUPPORT_KNOWLEDGE_PATH` | unset | Directory containing `.md`/`.txt` KB files; no startup documents are loaded when unset |
+| `SUPPORT_KNOWLEDGE_CHUNK_SIZE` | `1200` | Character target size for seed KB chunks before embedding |
+| `SUPPORT_KNOWLEDGE_CHUNK_OVERLAP` | `200` | Character overlap between adjacent seed KB chunks |
 | `SUPPORT_LOG_LEVEL` | `INFO` | Application log level, for example `DEBUG` |
 | `SUPPORT_LOG_FORMAT` | `{asctime} - {levelname}:{name}:{message}` | Python logging format using `{}` style |
 | `LANGSMITH_TRACING` | `true` | Enable LangSmith tracing |
 | `LANGSMITH_TRACING_V2` | `true` | Enable LangSmith tracing v2 |
 | `LANGSMITH_ENDPOINT` | `https://eu.api.smith.langchain.com` | LangSmith endpoint |
 | `LANGSMITH_PROJECT` | `customer-support` | LangSmith project name |
+
+Changing `SUPPORT_EMBEDDING_DIMENSIONS` changes the required pgvector column type. Use a
+fresh database, recreate the `knowledge_documents` table, or reindex the KB when moving
+between local 64-dimensional embeddings and OpenAI 1536-dimensional embeddings.
+Seed KB files are chunked before embedding, so pgvector stores one row per chunk using a
+stable `chunk_id` such as `kb/menu.txt#0000`.
+API response citations return these chunk ids, not just source file paths, so callers can
+trace an answer to the exact retrieved chunk.
 
 ## Increment 4 boundary
 

@@ -41,7 +41,7 @@ def test_synthetic_webhook_vertical_slice(tmp_path, monkeypatch) -> None:
         )
 
     assert response.status_code == 200
-    assert response.json()["citations"] == ["kb/refunds.txt"]
+    assert response.json()["citations"] == ["kb/refunds.txt#0000"]
 
 
 def test_customer_message_endpoint_receives_user_question(tmp_path, monkeypatch) -> None:
@@ -65,7 +65,7 @@ def test_customer_message_endpoint_receives_user_question(tmp_path, monkeypatch)
         )
 
     assert response.status_code == 200
-    assert response.json()["citations"] == ["kb/password-reset.txt"]
+    assert response.json()["citations"] == ["kb/password-reset.txt#0000"]
     assert response.json()["state"] == "BOT_ACTIVE"
 
 
@@ -147,7 +147,7 @@ def test_telegram_webhook_receives_customer_message_and_sends_reply(
 
     assert response.status_code == 200
     assert response.json()["ok"] is True
-    assert response.json()["reply"]["citations"] == ["kb/refunds.txt"]
+    assert response.json()["reply"]["citations"] == ["kb/refunds.txt#0000"]
     assert sender.sent_messages == [
         ("3003", "Refund requests can be submitted within 30 days of purchase.")
     ]

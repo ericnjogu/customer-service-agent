@@ -1,8 +1,5 @@
-import hashlib
 import json
 import logging
-import math
-import re
 from datetime import datetime
 from uuid import UUID
 
@@ -14,46 +11,15 @@ from app.models import (
     IncomingMessage,
     StoredMessage,
 )
+from app.ports import EmbeddingProvider
 
-EMBEDDING_DIMENSIONS = 64
 logger = logging.getLogger(__name__)
-STOP_WORDS = {
-    "a",
-    "an",
-    "and",
-    "are",
-    "can",
-    "do",
-    "for",
-    "how",
-    "i",
-    "in",
-    "is",
-    "it",
-    "my",
-    "of",
-    "on",
-    "the",
-    "to",
-    "what",
-    "you",
-    "your",
-}
 
 
-def embedding_tokens(text: str) -> set[str]:
-    return set(re.findall(r"[a-z0-9]+", text.lower())) - STOP_WORDS
+def content_hash(text: str) -> str:
+    import hashlib
 
-
-def local_embedding(text: str) -> list[float]:
-    """Deterministic, dependency-free token embedding for the local MVP only."""
-    vector = [0.0] * EMBEDDING_DIMENSIONS
-    for token in embedding_tokens(text):
-        digest = hashlib.sha256(token.encode()).digest()
-        index = int.from_bytes(digest[:2], "big") % EMBEDDING_DIMENSIONS
-        vector[index] += 1.0
-    norm = math.sqrt(sum(value * value for value in vector)) or 1.0
-    return [value / norm for value in vector]
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 def is_zero_vector(values: list[float]) -> bool:
@@ -75,18 +41,40 @@ def decode_metadata(value: object) -> dict:
 
 
 class PostgresDatabase:
-    def __init__(self, database_url: str) -> None:
+    def __init__(self, database_url: str, embedding_dimensions: int = 64) -> None:
         self.database_url = database_url
+        self.embedding_dimensions = embedding_dimensions
         self.pool: asyncpg.Pool | None = None
 
     async def initialize(self) -> None:
         self.pool = await asyncpg.create_pool(self.database_url)
         async with self.pool.acquire() as connection:
-            await connection.execute(SCHEMA)
+            await connection.execute(schema(self.embedding_dimensions))
+            await self._validate_embedding_dimensions(connection)
 
     async def close(self) -> None:
         if self.pool:
             await self.pool.close()
+
+    async def _validate_embedding_dimensions(self, connection: asyncpg.Connection) -> None:
+        embedding_type = await connection.fetchval(
+            """
+            SELECT format_type(attribute.atttypid, attribute.atttypmod)
+            FROM pg_attribute attribute
+            JOIN pg_class relation ON relation.oid = attribute.attrelid
+            WHERE relation.relname = 'knowledge_documents'
+              AND attribute.attname = 'embedding'
+              AND NOT attribute.attisdropped
+            """
+        )
+        expected = f"vector({self.embedding_dimensions})"
+        if embedding_type != expected:
+            raise ValueError(
+                "knowledge_documents.embedding has type "
+                f"{embedding_type}, but configured embedding dimensions require {expected}. "
+                "Use a fresh database, recreate the knowledge_documents table, or reindex "
+                "the KB after changing SUPPORT_EMBEDDING_DIMENSIONS."
+            )
 
 
 class PostgresConversationRepository:
@@ -208,8 +196,9 @@ class PostgresConversationRepository:
 
 
 class PgVectorRetrievalStore:
-    def __init__(self, database: PostgresDatabase) -> None:
+    def __init__(self, database: PostgresDatabase, embeddings: EmbeddingProvider) -> None:
         self.database = database
+        self.embeddings = embeddings
 
     async def initialize(self) -> None:
         return None
@@ -222,33 +211,111 @@ class PgVectorRetrievalStore:
             namespace,
         )
         async with self.database.pool.acquire() as connection:
+            pending: list[tuple[Document, str, str]] = []
+            incoming_chunk_ids_by_source: dict[str, set[str]] = {}
             for document in documents:
                 source = str(document.metadata.get("source", "unknown"))
-                logger.info(
-                    "Upserting pgvector knowledge document namespace=%s source=%s content_chars=%d",
-                    namespace,
-                    source,
-                    len(document.page_content),
-                )
-                await connection.execute(
+                chunk_id = str(document.metadata.get("chunk_id", source))
+                incoming_chunk_ids_by_source.setdefault(source, set()).add(chunk_id)
+                document_hash = content_hash(document.page_content)
+                existing_hash = await connection.fetchval(
                     """
-                    INSERT INTO knowledge_documents(namespace, source, content, metadata, embedding)
-                    VALUES ($1, $2, $3, $4::jsonb, $5::vector)
-                    ON CONFLICT (namespace, source) DO UPDATE
-                    SET content = EXCLUDED.content, metadata = EXCLUDED.metadata,
-                        embedding = EXCLUDED.embedding, updated_at = now()
+                    SELECT content_hash FROM knowledge_documents
+                    WHERE namespace = $1 AND chunk_id = $2
                     """,
                     namespace,
+                    chunk_id,
+                )
+                if existing_hash == document_hash:
+                    logger.info(
+                        "Skipping unchanged pgvector knowledge chunk namespace=%s chunk_id=%s",
+                        namespace,
+                        chunk_id,
+                    )
+                    continue
+                logger.info(
+                    "Preparing pgvector knowledge chunk namespace=%s chunk_id=%s content_chars=%d",
+                    namespace,
+                    chunk_id,
+                    len(document.page_content),
+                )
+                pending.append((document, chunk_id, document_hash))
+
+            if not pending:
+                logger.info("No changed pgvector knowledge documents for namespace=%s", namespace)
+                await self._delete_removed_chunks(
+                    connection,
+                    namespace,
+                    incoming_chunk_ids_by_source,
+                )
+                return
+
+            embeddings = await self.embeddings.embed_documents(
+                [document.page_content for document, _, _ in pending]
+            )
+            for (document, chunk_id, document_hash), embedding in zip(
+                pending,
+                embeddings,
+                strict=True,
+            ):
+                source = str(document.metadata.get("source", "unknown"))
+                await connection.execute(
+                    """
+                    INSERT INTO knowledge_documents(
+                        namespace,
+                        chunk_id,
+                        source,
+                        content,
+                        content_hash,
+                        metadata,
+                        embedding
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::vector)
+                    ON CONFLICT (namespace, chunk_id) DO UPDATE
+                    SET content = EXCLUDED.content,
+                        source = EXCLUDED.source,
+                        content_hash = EXCLUDED.content_hash,
+                        metadata = EXCLUDED.metadata,
+                        embedding = EXCLUDED.embedding,
+                        updated_at = now()
+                    """,
+                    namespace,
+                    chunk_id,
                     source,
                     document.page_content,
+                    document_hash,
                     json.dumps(document.metadata),
-                    vector_literal(local_embedding(document.page_content)),
+                    vector_literal(embedding),
                 )
+            await self._delete_removed_chunks(
+                connection,
+                namespace,
+                incoming_chunk_ids_by_source,
+            )
         logger.info("Finished pgvector knowledge upsert for namespace=%s", namespace)
+
+    async def _delete_removed_chunks(
+        self,
+        connection: asyncpg.Connection,
+        namespace: str,
+        incoming_chunk_ids_by_source: dict[str, set[str]],
+    ) -> None:
+        for source, chunk_ids in incoming_chunk_ids_by_source.items():
+            await connection.execute(
+                """
+                DELETE FROM knowledge_documents
+                WHERE namespace = $1
+                  AND source = $2
+                  AND NOT (chunk_id = ANY($3::text[]))
+                """,
+                namespace,
+                source,
+                sorted(chunk_ids),
+            )
 
     async def search(self, query: str, namespace: str, limit: int = 4) -> list[Document]:
         assert self.database.pool
-        query_embedding = local_embedding(query)
+        query_embedding = await self.embeddings.embed_query(query)
         if is_zero_vector(query_embedding):
             logger.debug(
                 "Skipping pgvector search for namespace=%s because query has no embedding tokens",
@@ -276,7 +343,8 @@ class PgVectorRetrievalStore:
         ]
 
 
-SCHEMA = f"""
+def schema(embedding_dimensions: int) -> str:
+    return f"""
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
@@ -313,13 +381,15 @@ CREATE TABLE IF NOT EXISTS conversation_state_events (
 CREATE TABLE IF NOT EXISTS knowledge_documents (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     namespace text NOT NULL,
+    chunk_id text NOT NULL,
     source text NOT NULL,
     content text NOT NULL,
+    content_hash text,
     metadata jsonb NOT NULL DEFAULT '{{}}',
-    embedding vector({EMBEDDING_DIMENSIONS}) NOT NULL,
+    embedding vector({embedding_dimensions}) NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
-    UNIQUE(namespace, source)
+    UNIQUE(namespace, chunk_id)
 );
 
 ALTER TABLE conversations
@@ -335,17 +405,35 @@ ALTER TABLE messages
 ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
 
 ALTER TABLE knowledge_documents
+ADD COLUMN IF NOT EXISTS chunk_id text;
+
+UPDATE knowledge_documents
+SET chunk_id = source
+WHERE chunk_id IS NULL;
+
+ALTER TABLE knowledge_documents
+ALTER COLUMN chunk_id SET NOT NULL;
+
+ALTER TABLE knowledge_documents
+ADD COLUMN IF NOT EXISTS content_hash text;
+
+ALTER TABLE knowledge_documents
 ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
 
 ALTER TABLE knowledge_documents
 ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
 
+ALTER TABLE knowledge_documents
+DROP CONSTRAINT IF EXISTS knowledge_documents_namespace_source_key;
+
+DROP INDEX IF EXISTS knowledge_documents_namespace_source_idx;
+
 DELETE FROM knowledge_documents older
 USING knowledge_documents newer
 WHERE older.namespace = newer.namespace
-  AND older.source = newer.source
+  AND older.chunk_id = newer.chunk_id
   AND older.ctid < newer.ctid;
 
-CREATE UNIQUE INDEX IF NOT EXISTS knowledge_documents_namespace_source_idx
-ON knowledge_documents(namespace, source);
+CREATE UNIQUE INDEX IF NOT EXISTS knowledge_documents_namespace_chunk_id_idx
+ON knowledge_documents(namespace, chunk_id);
 """

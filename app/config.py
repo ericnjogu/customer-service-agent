@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     database_url: str | None = None
     retrieval_provider: str = "memory"
     answer_provider: str = "extractive"
+    embedding_provider: str = "local"
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimensions: int = Field(default=64, gt=0)
     human_request_detector_provider: str = "rules"
     llm_model: str = "gpt-4.1-mini"
     openai_api_key: str | None = Field(default=None, validation_alias="OPENAI_API_KEY")
@@ -22,6 +25,8 @@ class Settings(BaseSettings):
     telegram_webhook_secret_token: str | None = None
     seed_knowledge: bool = True
     knowledge_path: str | None = None
+    knowledge_chunk_size: int = Field(default=1_200, gt=0)
+    knowledge_chunk_overlap: int = Field(default=200, ge=0)
     log_level: str = "INFO"
     log_format: str = "{asctime} - {levelname}:{name}:{message}"
 

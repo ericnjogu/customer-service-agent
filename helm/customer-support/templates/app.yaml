@@ -60,6 +60,12 @@ spec:
               value: {{ .Values.retrieval.provider | quote }}
             - name: SUPPORT_ANSWER_PROVIDER
               value: {{ .Values.answer.provider | quote }}
+            - name: SUPPORT_EMBEDDING_PROVIDER
+              value: {{ .Values.embedding.provider | quote }}
+            - name: SUPPORT_EMBEDDING_MODEL
+              value: {{ .Values.embedding.model | quote }}
+            - name: SUPPORT_EMBEDDING_DIMENSIONS
+              value: {{ .Values.embedding.dimensions | quote }}
             - name: SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER
               value: {{ .Values.humanRequestDetector.provider | quote }}
             - name: SUPPORT_CONVERSATION_HISTORY_MAX_MESSAGES
@@ -110,6 +116,10 @@ spec:
             {{- end }}
             - name: SUPPORT_SEED_KNOWLEDGE
               value: {{ .Values.knowledge.seedOnStartup | quote }}
+            - name: SUPPORT_KNOWLEDGE_CHUNK_SIZE
+              value: {{ .Values.knowledge.chunkSize | quote }}
+            - name: SUPPORT_KNOWLEDGE_CHUNK_OVERLAP
+              value: {{ .Values.knowledge.chunkOverlap | quote }}
             {{- if .Values.knowledge.existingConfigMap }}
             - name: SUPPORT_KNOWLEDGE_PATH
               value: {{ .Values.knowledge.mountPath | quote }}

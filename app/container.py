@@ -1,6 +1,7 @@
 import logging
 from dataclasses import dataclass
 
+from app.adapters.embeddings import LocalHashEmbeddingProvider, OpenAIEmbeddingProvider
 from app.adapters.llm import (
     create_openai_answer_generator,
     create_openai_human_request_detector,
@@ -39,19 +40,41 @@ class Container:
 
 async def create_container(settings: Settings) -> Container:
     database = None
+    if settings.knowledge_chunk_overlap >= settings.knowledge_chunk_size:
+        raise ValueError("SUPPORT_KNOWLEDGE_CHUNK_OVERLAP must be smaller than chunk size")
     logger.info(
-        "Creating app container with retrieval_provider=%s seed_knowledge=%s knowledge_path=%s",
+        "Creating app container with retrieval_provider=%s embedding_provider=%s "
+        "embedding_dimensions=%s seed_knowledge=%s knowledge_path=%s",
         settings.retrieval_provider,
+        settings.embedding_provider,
+        settings.embedding_dimensions,
         settings.seed_knowledge,
         settings.knowledge_path or "<unset>",
     )
+
+    if settings.embedding_provider == "local":
+        embeddings = LocalHashEmbeddingProvider(settings.embedding_dimensions)
+    elif settings.embedding_provider == "openai":
+        if not settings.openai_api_key:
+            raise ValueError("OPENAI_API_KEY is required when SUPPORT_EMBEDDING_PROVIDER=openai")
+        embeddings = OpenAIEmbeddingProvider(
+            api_key=settings.openai_api_key,
+            model=settings.embedding_model,
+            dimensions=settings.embedding_dimensions,
+        )
+    else:
+        raise ValueError(f"Unsupported embedding provider: {settings.embedding_provider}")
+
     if settings.retrieval_provider == "pgvector":
         if not settings.database_url:
             raise ValueError("SUPPORT_DATABASE_URL is required when using pgvector")
-        database = PostgresDatabase(settings.database_url)
+        database = PostgresDatabase(
+            settings.database_url,
+            embedding_dimensions=embeddings.dimensions,
+        )
         await database.initialize()
         conversations = PostgresConversationRepository(database)
-        retrieval = PgVectorRetrievalStore(database)
+        retrieval = PgVectorRetrievalStore(database, embeddings)
     elif settings.retrieval_provider == "memory":
         conversations = MemoryConversationRepository()
         retrieval = MemoryRetrievalStore()
@@ -61,9 +84,13 @@ async def create_container(settings: Settings) -> Container:
     await conversations.initialize()
     await retrieval.initialize()
     if settings.seed_knowledge:
-        documents = load_knowledge_documents(settings.knowledge_path)
+        documents = load_knowledge_documents(
+            settings.knowledge_path,
+            chunk_size=settings.knowledge_chunk_size,
+            chunk_overlap=settings.knowledge_chunk_overlap,
+        )
         logger.info(
-            "Loaded %d seed knowledge document(s) for namespace=%s sources=%s",
+            "Loaded %d seed knowledge chunk(s) for namespace=%s sources=%s",
             len(documents),
             SEED_KNOWLEDGE_NAMESPACE,
             [str(document.metadata.get("source", "unknown")) for document in documents],

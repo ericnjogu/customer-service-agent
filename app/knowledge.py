@@ -2,14 +2,45 @@ import logging
 from pathlib import Path
 
 from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 SEED_KNOWLEDGE_NAMESPACE = "seed-knowledge"
 logger = logging.getLogger(__name__)
 
 SUPPORTED_KNOWLEDGE_EXTENSIONS = {".md", ".txt"}
+DEFAULT_CHUNK_SIZE = 1_200
+DEFAULT_CHUNK_OVERLAP = 200
 
 
-def load_knowledge_documents(knowledge_path: str | None) -> list[Document]:
+def chunk_text(
+    text: str,
+    *,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
+) -> list[str]:
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be greater than 0")
+    if chunk_overlap < 0:
+        raise ValueError("chunk_overlap must not be negative")
+    if chunk_overlap >= chunk_size:
+        raise ValueError("chunk_overlap must be smaller than chunk_size")
+
+    text = text.strip()
+    if not text:
+        return []
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+    )
+    return [chunk.strip() for chunk in splitter.split_text(text) if chunk.strip()]
+
+
+def load_knowledge_documents(
+    knowledge_path: str | None,
+    *,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
+) -> list[Document]:
     if not knowledge_path:
         logger.info("SUPPORT_KNOWLEDGE_PATH is unset; no seed knowledge documents will be loaded")
         return []
@@ -44,15 +75,21 @@ def load_knowledge_documents(knowledge_path: str | None) -> list[Document]:
             relative_path,
             len(content.encode("utf-8")),
         )
-        documents.append(
-            Document(
-                page_content=content,
-                metadata={
-                    "source": f"kb/{relative_path}",
-                    "filename": path.name,
-                },
+        chunks = chunk_text(content, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        for chunk_index, chunk in enumerate(chunks):
+            source = f"kb/{relative_path}"
+            documents.append(
+                Document(
+                    page_content=chunk,
+                    metadata={
+                        "source": source,
+                        "chunk_id": f"{source}#{chunk_index:04d}",
+                        "chunk_index": chunk_index,
+                        "chunk_count": len(chunks),
+                        "filename": path.name,
+                    },
+                )
             )
-        )
 
     if skipped_paths:
         logger.info(

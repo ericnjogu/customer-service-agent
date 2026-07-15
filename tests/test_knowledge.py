@@ -1,4 +1,6 @@
-from app.knowledge import load_knowledge_documents
+import pytest
+
+from app.knowledge import chunk_text, load_knowledge_documents
 
 
 def test_load_knowledge_documents_returns_empty_list_without_configured_path() -> None:
@@ -25,3 +27,39 @@ def test_load_knowledge_documents_ignores_kubernetes_configmap_backing_dirs(tmp_
         "Visible drinks file",
         "Visible menu file",
     ]
+    assert [document.metadata["chunk_id"] for document in documents] == [
+        "kb/drinks.txt#0000",
+        "kb/menu-gpt-4.txt#0000",
+    ]
+
+
+def test_load_knowledge_documents_splits_large_files_into_chunks(tmp_path) -> None:
+    knowledge_dir = tmp_path / "knowledge"
+    knowledge_dir.mkdir()
+    (knowledge_dir / "policy.txt").write_text(
+        "alpha beta gamma delta epsilon zeta eta theta iota kappa",
+        encoding="utf-8",
+    )
+
+    documents = load_knowledge_documents(
+        str(knowledge_dir),
+        chunk_size=20,
+        chunk_overlap=5,
+    )
+
+    assert len(documents) > 1
+    assert {document.metadata["source"] for document in documents} == {"kb/policy.txt"}
+    assert [document.metadata["chunk_index"] for document in documents] == list(
+        range(len(documents))
+    )
+    assert [document.metadata["chunk_count"] for document in documents] == [len(documents)] * len(
+        documents
+    )
+    assert [document.metadata["chunk_id"] for document in documents] == [
+        f"kb/policy.txt#{index:04d}" for index in range(len(documents))
+    ]
+
+
+def test_chunk_text_rejects_overlap_greater_than_chunk_size() -> None:
+    with pytest.raises(ValueError, match="chunk_overlap"):
+        chunk_text("hello", chunk_size=10, chunk_overlap=10)

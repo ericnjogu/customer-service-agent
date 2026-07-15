@@ -154,6 +154,11 @@ async def test_openai_answer_provider_requires_api_key() -> None:
         await create_container(Settings(answer_provider="openai"))
 
 
+async def test_openai_embedding_provider_requires_api_key() -> None:
+    with pytest.raises(ValueError, match="OPENAI_API_KEY"):
+        await create_container(Settings(embedding_provider="openai"))
+
+
 def test_settings_read_openai_api_key_without_support_prefix(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("SUPPORT_OPENAI_API_KEY", "ignored-key")

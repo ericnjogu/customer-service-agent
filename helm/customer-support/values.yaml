@@ -23,6 +23,11 @@ retrieval:
 answer:
   provider: openai
 
+embedding:
+  provider: openai
+  model: text-embedding-3-small
+  dimensions: 1536
+
 humanRequestDetector:
   provider: llm
 
@@ -45,6 +50,8 @@ knowledge:
   existingConfigMap: "seed-knowledge"
   mountPath: /knowledge
   seedOnStartup: true
+  chunkSize: 1200
+  chunkOverlap: 200
 
 logging:
   level: INFO

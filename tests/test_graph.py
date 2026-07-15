@@ -47,7 +47,7 @@ async def test_grounded_question_returns_citation(tmp_path) -> None:
     )
 
     assert reply.low_confidence is False
-    assert reply.citations == ["kb/password-reset.txt"]
+    assert reply.citations == ["kb/password-reset.txt#0000"]
     assert "Settings" in reply.answer
     assert reply.state == "BOT_ACTIVE"
 
@@ -93,7 +93,7 @@ async def test_loads_knowledge_from_directory(tmp_path) -> None:
     )
 
     assert reply.low_confidence is False
-    assert reply.citations == ["kb/shipping.md"]
+    assert reply.citations == ["kb/shipping.md#0000"]
     assert "Shipping address changes" in reply.answer
     assert reply.state == "BOT_ACTIVE"
 
@@ -150,7 +150,7 @@ async def test_explicit_human_request_sets_human_requested_state() -> None:
         [
             Document(
                 page_content="Refund requests can be submitted within 30 days of purchase.",
-                metadata={"source": "kb/refunds.txt"},
+                metadata={"source": "kb/refunds.txt", "chunk_id": "kb/refunds.txt#0000"},
             )
         ],
         SEED_KNOWLEDGE_NAMESPACE,
@@ -168,7 +168,7 @@ async def test_explicit_human_request_sets_human_requested_state() -> None:
     assert reply.state == "HUMAN_REQUESTED"
     assert reply.low_confidence is False
     assert "Refund requests" in reply.answer
-    assert reply.citations == ["kb/refunds.txt"]
+    assert reply.citations == ["kb/refunds.txt#0000"]
 
     conversation = await container.conversations.get_by_id(reply.conversation_id)
     assert conversation.state == "HUMAN_REQUESTED"
@@ -188,6 +188,31 @@ async def test_frustration_without_human_request_does_not_change_state() -> None
 
     assert reply.state == "BOT_ACTIVE"
     assert reply.low_confidence is True
+
+
+async def test_citations_fall_back_to_source_without_chunk_id() -> None:
+    container = await create_container(Settings(seed_knowledge=False))
+    await container.retrieval.upsert(
+        [
+            Document(
+                page_content="Shipping address changes are allowed before packing.",
+                metadata={"source": "kb/shipping.md"},
+            )
+        ],
+        SEED_KNOWLEDGE_NAMESPACE,
+    )
+
+    reply = await invoke_support_graph(
+        container.graph,
+        IncomingMessage(
+            event_id="source-fallback-event",
+            external_chat_id="source-fallback-chat",
+            external_user_id="source-fallback-user",
+            text="Can I change my shipping address?",
+        ),
+    )
+
+    assert reply.citations == ["kb/shipping.md"]
 
 
 def test_prompt_metadata_greets_first_customer_message() -> None:

@@ -54,6 +54,8 @@ This project currently uses increment-based milestones instead of semantic versi
   documents.
 - LLM answer prompts now include compact greeting metadata so the model can avoid repeated
   greetings during active conversations.
+- LLM answer prompts now instruct the model to prefer newer relevant KB chunks when
+  retrieved chunks overlap or conflict.
 - `httpx` is now an application dependency because Telegram reply delivery uses outbound
   HTTP calls at runtime.
 - Removed hard-coded demo seed documents; startup KB seeding now only loads explicitly
@@ -64,6 +66,8 @@ This project currently uses increment-based milestones instead of semantic versi
   of one vector row per source file.
 - Support reply citations now return chunk ids when available, falling back to source only
   for documents without chunk metadata.
+- Retrieved KB chunks passed to the LLM now include chunk id, source, and pgvector
+  creation timestamp metadata.
 
 ### Fixed
 

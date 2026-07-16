@@ -1,7 +1,9 @@
+import inspect
+
 import pytest
 
 from app.adapters.embeddings import LocalHashEmbeddingProvider
-from app.adapters.postgres import decode_metadata, schema
+from app.adapters.postgres import PgVectorRetrievalStore, decode_metadata, schema
 
 
 def dot(left: list[float], right: list[float]) -> float:
@@ -40,3 +42,10 @@ def test_pgvector_schema_uses_chunk_id_uniqueness() -> None:
     assert "UNIQUE(namespace, chunk_id)" in ddl
     assert "UNIQUE(namespace, source)" not in ddl
     assert "knowledge_documents_namespace_chunk_id_idx" in ddl
+
+
+def test_pgvector_search_selects_chunk_creation_timestamp() -> None:
+    source = inspect.getsource(PgVectorRetrievalStore.search)
+
+    assert "SELECT content, metadata, created_at" in source
+    assert '"created_at": row["created_at"].isoformat()' in source

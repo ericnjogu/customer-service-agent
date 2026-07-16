@@ -11,6 +11,10 @@ logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are a customer support assistant.
 Answer only from the provided knowledge base context.
+Each retrieved knowledge chunk includes a created_at timestamp. If multiple relevant
+chunks overlap or conflict, prefer the chunk with the newer created_at timestamp. Do not
+use a newer chunk merely because it is newer; it must still be relevant to the customer's
+question.
 Use conversation metadata to decide whether to greet the customer. Do not repeatedly greet
 the customer during an active back-and-forth. 
 Welcome them back if it has been a significant time since their most recent post.
@@ -42,7 +46,12 @@ def format_context(documents: list[Document]) -> str:
     chunks = []
     for index, document in enumerate(documents, start=1):
         source = str(document.metadata.get("source", "unknown"))
-        chunks.append(f"[{index}] source={source}\n{document.page_content}")
+        chunk_id = str(document.metadata.get("chunk_id") or source)
+        created_at = str(document.metadata.get("created_at", "unknown"))
+        chunks.append(
+            f"[{index}] chunk_id={chunk_id} source={source} created_at={created_at}\n"
+            f"{document.page_content}"
+        )
     return "\n\n".join(chunks)
 
 

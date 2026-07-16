@@ -381,6 +381,10 @@ Seed KB files are chunked before embedding, so pgvector stores one row per chunk
 stable `chunk_id` such as `kb/menu.txt#0000`.
 API response citations return these chunk ids, not just source file paths, so callers can
 trace an answer to the exact retrieved chunk.
+Retrieved chunks passed to the LLM include `chunk_id`, `source`, and the pgvector
+`created_at` timestamp for that chunk.
+The LLM prompt instructs the model to prefer newer `created_at` chunks only when multiple
+relevant chunks overlap or conflict; retrieval ranking remains semantic-only.
 
 ## Increment 4 boundary
 

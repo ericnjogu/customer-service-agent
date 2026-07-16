@@ -325,7 +325,7 @@ class PgVectorRetrievalStore:
 
         rows = await self.database.pool.fetch(
             """
-            SELECT content, metadata, 1 - (embedding <=> $1::vector) AS score
+            SELECT content, metadata, created_at, 1 - (embedding <=> $1::vector) AS score
             FROM knowledge_documents WHERE namespace = $2
             ORDER BY embedding <=> $1::vector LIMIT $3
             """,
@@ -336,7 +336,11 @@ class PgVectorRetrievalStore:
         return [
             Document(
                 page_content=row["content"],
-                metadata={**decode_metadata(row["metadata"]), "score": row["score"]},
+                metadata={
+                    **decode_metadata(row["metadata"]),
+                    "created_at": row["created_at"].isoformat(),
+                    "score": row["score"],
+                },
             )
             for row in rows
             if row["score"] > 0

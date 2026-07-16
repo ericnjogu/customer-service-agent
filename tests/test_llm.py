@@ -36,6 +36,22 @@ async def test_llm_answer_generator_returns_grounded_confidence() -> None:
     assert chat_model.calls == 1
 
 
+async def test_llm_answer_generator_instructs_model_to_prefer_newer_conflicting_chunks() -> None:
+    chat_model = FakeChatModel(
+        '{"answer": "Refunds are available within 30 days.", "confidence": 0.82, "grounded": true}'
+    )
+    generator = LlmAnswerGenerator(chat_model)
+
+    await generator.generate(
+        "What is the refund policy?",
+        [Document(page_content="Refunds are available within 30 days.")],
+    )
+
+    system_prompt = chat_model.last_messages[0].content
+    assert "prefer the chunk with the newer created_at timestamp" in system_prompt
+    assert "it must still be relevant" in system_prompt
+
+
 async def test_llm_answer_generator_caps_ungrounded_confidence() -> None:
     chat_model = FakeChatModel(
         '{"answer": "I do not have enough information.", "confidence": 0.9, "grounded": false}'
@@ -73,6 +89,33 @@ async def test_llm_answer_generator_includes_conversation_history() -> None:
     prompt = chat_model.last_messages[1].content
     assert "Conversation history for the current issue" in prompt
     assert "CUSTOMER: I need a refund." in prompt
+
+
+async def test_llm_answer_generator_includes_chunk_metadata() -> None:
+    chat_model = FakeChatModel(
+        '{"answer": "Refunds are available within 30 days.", "confidence": 0.82, "grounded": true}'
+    )
+    generator = LlmAnswerGenerator(chat_model)
+
+    await generator.generate(
+        "What is the refund policy?",
+        [
+            Document(
+                page_content="Refunds are available within 30 days.",
+                metadata={
+                    "source": "kb/refunds.txt",
+                    "chunk_id": "kb/refunds.txt#0000",
+                    "created_at": "2026-07-16T10:00:00+00:00",
+                },
+            )
+        ],
+    )
+
+    prompt = chat_model.last_messages[1].content
+    assert "Knowledge base context" in prompt
+    assert "chunk_id=kb/refunds.txt#0000" in prompt
+    assert "source=kb/refunds.txt" in prompt
+    assert "created_at=2026-07-16T10:00:00+00:00" in prompt
 
 
 async def test_llm_answer_generator_includes_greeting_metadata_without_timestamps() -> None:

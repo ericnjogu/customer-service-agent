@@ -52,6 +52,48 @@ async def test_llm_answer_generator_instructs_model_to_prefer_newer_conflicting_
     assert "it must still be relevant" in system_prompt
 
 
+async def test_llm_answer_generator_instructs_model_to_reject_out_of_scope_questions() -> None:
+    chat_model = FakeChatModel(
+        '{"answer": "I am here to help with questions about this business.", '
+        '"confidence": 0, "grounded": false}'
+    )
+    generator = LlmAnswerGenerator(chat_model)
+
+    answer, confidence = await generator.generate(
+        "Tell me a riddle.",
+        [Document(page_content="Maxys Lounge serves food and drinks.")],
+    )
+
+    system_prompt = chat_model.last_messages[0].content
+    assert "Do not answer general-purpose questions" in system_prompt
+    assert "math problems" in system_prompt
+    assert "out-of-scope questions" in system_prompt
+    assert answer == "I am here to help with questions about this business."
+    assert confidence == 0
+
+
+async def test_llm_answer_generator_instructs_model_to_reply_in_customer_language() -> None:
+    chat_model = FakeChatModel(
+        '{"answer": "Tunaomba ufike kabla ya saa mbili usiku.", '
+        '"confidence": 0.82, "grounded": true}'
+    )
+    generator = LlmAnswerGenerator(chat_model)
+
+    await generator.generate(
+        "Mnafunga saa ngapi?",
+        [Document(page_content="Maxys Lounge closes at 8 PM.")],
+    )
+
+    system_prompt = chat_model.last_messages[0].content
+    prompt = chat_model.last_messages[1].content
+    assert "Reply in the same language the customer uses" in system_prompt
+    assert "language is unclear, reply in English" in system_prompt
+    assert "Translate or summarize the grounded answer" in system_prompt
+    assert "Response language instruction" in prompt
+    assert "Reply in the same language as the customer question below" in prompt
+    assert "If the knowledge base uses a different language" in prompt
+
+
 async def test_llm_answer_generator_caps_ungrounded_confidence() -> None:
     chat_model = FakeChatModel(
         '{"answer": "I do not have enough information.", "confidence": 0.9, "grounded": false}'

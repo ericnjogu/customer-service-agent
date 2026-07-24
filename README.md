@@ -337,9 +337,45 @@ curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
   }'
 ```
 
+## WhatsApp customer webhook
 
+WhatsApp customer messages are received at:
 
+```text
+GET /webhooks/whatsapp
+POST /webhooks/whatsapp
+```
 
+The `GET` endpoint verifies the Meta WhatsApp webhook using
+`SUPPORT_WHATSAPP_VERIFY_TOKEN`. The `POST` endpoint currently handles customer text
+messages from the WhatsApp Cloud API payload. Non-text updates are acknowledged and
+ignored. If `SUPPORT_WHATSAPP_ACCESS_TOKEN` and `SUPPORT_WHATSAPP_PHONE_NUMBER_ID` are
+configured, the app sends the graph reply back to the customer using the WhatsApp Cloud
+API `messages` endpoint.
+
+Create a Secret for the WhatsApp Cloud API values:
+
+```bash
+kubectl create secret generic whatsapp-cloud \
+  --namespace customer-support \
+  --from-literal=WHATSAPP_ACCESS_TOKEN="$WHATSAPP_ACCESS_TOKEN" \
+  --from-literal=WHATSAPP_PHONE_NUMBER_ID="$WHATSAPP_PHONE_NUMBER_ID" \
+  --from-literal=WHATSAPP_VERIFY_TOKEN="$WHATSAPP_VERIFY_TOKEN"
+```
+
+Deploy with the Secret:
+
+```bash
+helm upgrade --install cs-local helm/customer-support \
+  --namespace customer-support \
+  --set whatsapp.existingSecret=whatsapp-cloud
+```
+
+Register the WhatsApp webhook in Meta's app dashboard after the app has a public HTTPS URL:
+
+```text
+https://example.com/webhooks/whatsapp
+```
 
 ## Configuration
 
@@ -363,6 +399,10 @@ Application configuration uses the `SUPPORT_` prefix. LangSmith uses its native
 | `SUPPORT_GREETING_LAPSE_MINUTES` | `60` | Minutes after the previous customer message before the prompt says to greet again |
 | `SUPPORT_TELEGRAM_BOT_TOKEN` | unset | Telegram bot token used to send replies with `sendMessage` |
 | `SUPPORT_TELEGRAM_WEBHOOK_SECRET_TOKEN` | unset | Optional Telegram webhook secret token checked against `X-Telegram-Bot-Api-Secret-Token` |
+| `SUPPORT_WHATSAPP_ACCESS_TOKEN` | unset | WhatsApp Cloud API access token used to send replies |
+| `SUPPORT_WHATSAPP_PHONE_NUMBER_ID` | unset | WhatsApp Cloud API phone number id used for outbound messages |
+| `SUPPORT_WHATSAPP_VERIFY_TOKEN` | unset | WhatsApp webhook verification token checked during Meta webhook setup |
+| `SUPPORT_WHATSAPP_GRAPH_API_VERSION` | `v20.0` | Meta Graph API version used for WhatsApp outbound messages |
 | `SUPPORT_SEED_KNOWLEDGE` | `true` | Load startup knowledge |
 | `SUPPORT_KNOWLEDGE_PATH` | unset | Directory containing `.md`/`.txt` KB files; no startup documents are loaded when unset |
 | `SUPPORT_KNOWLEDGE_CHUNK_SIZE` | `1200` | Character target size for seed KB chunks before embedding |

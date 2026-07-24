@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     greeting_lapse_minutes: int = Field(default=60, gt=0)
     telegram_bot_token: str | None = None
     telegram_webhook_secret_token: str | None = None
+    whatsapp_access_token: str | None = None
+    whatsapp_phone_number_id: str | None = None
+    whatsapp_verify_token: str | None = None
+    whatsapp_graph_api_version: str = "v20.0"
     seed_knowledge: bool = True
     knowledge_path: str | None = None
     knowledge_chunk_size: int = Field(default=1_200, gt=0)

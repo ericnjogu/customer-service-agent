@@ -40,6 +40,13 @@ telegram:
   botTokenSecretKey: TELEGRAM_BOT_TOKEN
   webhookSecretTokenSecretKey: TELEGRAM_WEBHOOK_SECRET_TOKEN
 
+whatsapp:
+  existingSecret: whatsapp-cloud
+  accessTokenSecretKey: WHATSAPP_ACCESS_TOKEN
+  phoneNumberIdSecretKey: WHATSAPP_PHONE_NUMBER_ID
+  verifyTokenSecretKey: WHATSAPP_VERIFY_TOKEN
+  graphApiVersion: v20.0
+
 llm:
   model: gpt-4.1-mini
   temperature: "0"

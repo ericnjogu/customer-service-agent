@@ -2,9 +2,10 @@ import logging
 from contextlib import asynccontextmanager
 from uuid import UUID
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 
 from app.adapters.telegram import telegram_reply_text, telegram_update_to_incoming_message
+from app.adapters.whatsapp import whatsapp_reply_text, whatsapp_update_to_incoming_messages
 from app.config import get_settings
 from app.container import create_container
 from app.graph import invoke_support_graph
@@ -96,6 +97,41 @@ async def telegram_webhook(
         await telegram_sender.send_message(message.external_chat_id, telegram_reply_text(reply))
 
     return {"ok": True, "reply": reply.model_dump(mode="json")}
+
+
+@app.get("/webhooks/whatsapp")
+async def verify_whatsapp_webhook(
+    hub_mode: str | None = Query(default=None, alias="hub.mode"),
+    hub_challenge: str | None = Query(default=None, alias="hub.challenge"),
+    hub_verify_token: str | None = Query(default=None, alias="hub.verify_token"),
+) -> Response:
+    settings = get_settings()
+    if (
+        hub_mode == "subscribe"
+        and hub_challenge
+        and settings.whatsapp_verify_token
+        and hub_verify_token == settings.whatsapp_verify_token
+    ):
+        return Response(content=hub_challenge, media_type="text/plain")
+
+    raise HTTPException(status_code=403, detail="Invalid WhatsApp webhook verification token")
+
+
+@app.post("/webhooks/whatsapp")
+async def whatsapp_webhook(update: dict, request: Request) -> dict:
+    messages = whatsapp_update_to_incoming_messages(update)
+    if not messages:
+        return {"ok": True, "ignored": True}
+
+    replies = []
+    whatsapp_sender = request.app.state.container.whatsapp_sender
+    for message in messages:
+        reply = await invoke_support_graph(request.app.state.container.graph, message)
+        if whatsapp_sender:
+            await whatsapp_sender.send_message(message.external_chat_id, whatsapp_reply_text(reply))
+        replies.append(reply.model_dump(mode="json"))
+
+    return {"ok": True, "replies": replies}
 
 
 @app.get("/conversations/{conversation_id}", response_model=ConversationRecord)

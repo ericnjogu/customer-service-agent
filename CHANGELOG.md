@@ -29,6 +29,8 @@ This project currently uses increment-based milestones instead of semantic versi
   without exposing absolute timestamps.
 - Telegram customer webhook adapter for text messages, with optional webhook secret
   validation and outbound `sendMessage` replies.
+- WhatsApp Cloud API customer webhook adapter for text messages, with Meta webhook
+  verification and outbound text replies.
 - Human-request detector boundary with local rule-based and OpenAI/LLM-backed
   implementations.
 - `SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER` / `humanRequestDetector.provider`

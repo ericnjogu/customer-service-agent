@@ -18,6 +18,7 @@ from app.adapters.postgres import (
     PostgresDatabase,
 )
 from app.adapters.telegram import TelegramBotClient, TelegramSender
+from app.adapters.whatsapp import WhatsAppCloudClient, WhatsAppSender
 from app.config import Settings
 from app.graph import build_support_graph
 from app.knowledge import SEED_KNOWLEDGE_NAMESPACE, load_knowledge_documents
@@ -31,6 +32,7 @@ class Container:
     retrieval: object
     graph: object
     telegram_sender: TelegramSender | None = None
+    whatsapp_sender: WhatsAppSender | None = None
     database: PostgresDatabase | None = None
 
     async def close(self) -> None:
@@ -150,4 +152,20 @@ async def create_container(settings: Settings) -> Container:
         if settings.telegram_bot_token
         else None
     )
-    return Container(conversations, retrieval, graph, telegram_sender, database)
+    whatsapp_sender = (
+        WhatsAppCloudClient(
+            settings.whatsapp_access_token,
+            settings.whatsapp_phone_number_id,
+            settings.whatsapp_graph_api_version,
+        )
+        if settings.whatsapp_access_token and settings.whatsapp_phone_number_id
+        else None
+    )
+    return Container(
+        conversations=conversations,
+        retrieval=retrieval,
+        graph=graph,
+        telegram_sender=telegram_sender,
+        whatsapp_sender=whatsapp_sender,
+        database=database,
+    )

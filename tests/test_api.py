@@ -13,6 +13,14 @@ class FakeTelegramSender:
         self.sent_messages.append((chat_id, text))
 
 
+class FakeWhatsAppSender:
+    def __init__(self) -> None:
+        self.sent_messages: list[tuple[str, str]] = []
+
+    async def send_message(self, to: str, text: str) -> None:
+        self.sent_messages.append((to, text))
+
+
 @pytest.fixture(autouse=True)
 def clear_settings_cache():
     get_settings.cache_clear()
@@ -178,6 +186,122 @@ def test_telegram_webhook_ignores_non_text_updates() -> None:
                     "from": {"id": 4004},
                     "photo": [{"file_id": "photo-id"}],
                 },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "ignored": True}
+
+
+def test_whatsapp_webhook_verification_accepts_matching_verify_token(monkeypatch) -> None:
+    monkeypatch.setenv("SUPPORT_WHATSAPP_VERIFY_TOKEN", "expected-token")
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/webhooks/whatsapp",
+            params={
+                "hub.mode": "subscribe",
+                "hub.challenge": "challenge-value",
+                "hub.verify_token": "expected-token",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.text == "challenge-value"
+
+
+def test_whatsapp_webhook_verification_rejects_invalid_verify_token(monkeypatch) -> None:
+    monkeypatch.setenv("SUPPORT_WHATSAPP_VERIFY_TOKEN", "expected-token")
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/webhooks/whatsapp",
+            params={
+                "hub.mode": "subscribe",
+                "hub.challenge": "challenge-value",
+                "hub.verify_token": "wrong-token",
+            },
+        )
+
+    assert response.status_code == 403
+
+
+def test_whatsapp_webhook_receives_customer_message_and_sends_reply(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    knowledge_dir = tmp_path / "knowledge"
+    knowledge_dir.mkdir()
+    (knowledge_dir / "refunds.txt").write_text(
+        "Refund requests can be submitted within 30 days of purchase.",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SUPPORT_KNOWLEDGE_PATH", str(knowledge_dir))
+
+    sender = FakeWhatsAppSender()
+    with TestClient(app) as client:
+        client.app.state.container.whatsapp_sender = sender
+        response = client.post(
+            "/webhooks/whatsapp",
+            json={
+                "entry": [
+                    {
+                        "changes": [
+                            {
+                                "value": {
+                                    "contacts": [
+                                        {
+                                            "wa_id": "254700000001",
+                                            "profile": {"name": "Ada"},
+                                        }
+                                    ],
+                                    "messages": [
+                                        {
+                                            "from": "254700000001",
+                                            "id": "wamid.1001",
+                                            "type": "text",
+                                            "text": {"body": "What is the refund policy?"},
+                                        }
+                                    ],
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert response.json()["replies"][0]["citations"] == ["kb/refunds.txt#0000"]
+    assert sender.sent_messages == [
+        ("254700000001", "Refund requests can be submitted within 30 days of purchase.")
+    ]
+
+
+def test_whatsapp_webhook_ignores_non_text_updates() -> None:
+    with TestClient(app) as client:
+        response = client.post(
+            "/webhooks/whatsapp",
+            json={
+                "entry": [
+                    {
+                        "changes": [
+                            {
+                                "value": {
+                                    "messages": [
+                                        {
+                                            "from": "254700000001",
+                                            "id": "wamid.1001",
+                                            "type": "image",
+                                            "image": {"id": "media-id"},
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                ]
             },
         )
 

@@ -84,6 +84,25 @@ spec:
                   name: {{ .Values.telegram.existingSecret | quote }}
                   key: {{ .Values.telegram.webhookSecretTokenSecretKey | quote }}
             {{- end }}
+            {{- if .Values.whatsapp.existingSecret }}
+            - name: SUPPORT_WHATSAPP_ACCESS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.whatsapp.existingSecret | quote }}
+                  key: {{ .Values.whatsapp.accessTokenSecretKey | quote }}
+            - name: SUPPORT_WHATSAPP_PHONE_NUMBER_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.whatsapp.existingSecret | quote }}
+                  key: {{ .Values.whatsapp.phoneNumberIdSecretKey | quote }}
+            - name: SUPPORT_WHATSAPP_VERIFY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.whatsapp.existingSecret | quote }}
+                  key: {{ .Values.whatsapp.verifyTokenSecretKey | quote }}
+            {{- end }}
+            - name: SUPPORT_WHATSAPP_GRAPH_API_VERSION
+              value: {{ .Values.whatsapp.graphApiVersion | quote }}
             - name: SUPPORT_LLM_MODEL
               value: {{ .Values.llm.model | quote }}
             - name: SUPPORT_LLM_TEMPERATURE

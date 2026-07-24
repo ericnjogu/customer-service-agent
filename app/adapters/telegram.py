@@ -67,9 +67,4 @@ def format_sender_name(sender: dict) -> str | None:
 
 
 def telegram_reply_text(reply: SupportReply) -> str:
-    if reply.low_confidence:
-        return (
-            f"{reply.answer}\n\n"
-            "I am not fully confident in this answer, so human support may follow up."
-        )
     return reply.answer

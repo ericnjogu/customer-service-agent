@@ -40,7 +40,7 @@ def test_telegram_update_to_incoming_message_ignores_non_text_message() -> None:
     assert message is None
 
 
-def test_telegram_reply_text_mentions_human_follow_up_when_low_confidence() -> None:
+def test_telegram_reply_text_omits_low_confidence_human_follow_up() -> None:
     text = telegram_reply_text(
         SupportReply(
             conversation_id="00000000-0000-0000-0000-000000000000",
@@ -52,5 +52,4 @@ def test_telegram_reply_text_mentions_human_follow_up_when_low_confidence() -> N
         )
     )
 
-    assert "I could not answer that." in text
-    assert "human support" in text
+    assert text == "I could not answer that."

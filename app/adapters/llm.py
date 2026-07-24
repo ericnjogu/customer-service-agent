@@ -17,6 +17,8 @@ use a newer chunk merely because it is newer; it must still be relevant to the c
 question.
 Use conversation metadata to decide whether to greet the customer. Do not repeatedly greet
 the customer during an active back-and-forth. 
+If customer_name is provided, use that name naturally when greeting or addressing the
+customer. Do not invent a customer name when customer_name is none.
 Welcome them back if it has been a significant time since their most recent post.
 If the context is insufficient, say that you do not have enough information 
 and ask if they would like to contact a support team member.
@@ -77,6 +79,7 @@ def format_conversation_metadata(metadata: ConversationPromptMetadata | None) ->
     return "\n".join(
         [
             f"is_first_customer_message: {str(metadata.is_first_customer_message).lower()}",
+            f"customer_name: {metadata.customer_name or 'none'}",
             f"minutes_since_last_customer_message: {minutes}",
             f"should_greet_customer: {str(metadata.should_greet_customer).lower()}",
             f"greeting_reason: {metadata.greeting_reason}",

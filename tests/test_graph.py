@@ -228,9 +228,26 @@ def test_prompt_metadata_greets_first_customer_message() -> None:
     )
 
     assert metadata.is_first_customer_message is True
+    assert metadata.customer_name is None
     assert metadata.minutes_since_last_customer_message is None
     assert metadata.should_greet_customer is True
     assert metadata.greeting_reason == "first customer message in this conversation"
+
+
+def test_prompt_metadata_uses_first_sender_name() -> None:
+    metadata = build_prompt_metadata(
+        IncomingMessage(
+            event_id="first",
+            external_chat_id="chat-1",
+            external_user_id="user-1",
+            sender_name="Ada Lovelace",
+            text="Hello",
+        ),
+        [],
+        greeting_lapse_minutes=60,
+    )
+
+    assert metadata.customer_name == "Ada"
 
 
 def test_prompt_metadata_avoids_repeated_greeting_during_active_conversation() -> None:

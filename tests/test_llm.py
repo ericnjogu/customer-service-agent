@@ -129,6 +129,7 @@ async def test_llm_answer_generator_includes_greeting_metadata_without_timestamp
         [Document(page_content="Refunds are available within 30 days.")],
         conversation_metadata=ConversationPromptMetadata(
             is_first_customer_message=False,
+            customer_name="Ada",
             minutes_since_last_customer_message=60,
             should_greet_customer=True,
             greeting_reason="last customer message was 60 minutes ago",
@@ -138,11 +139,37 @@ async def test_llm_answer_generator_includes_greeting_metadata_without_timestamp
     prompt = chat_model.last_messages[1].content
     assert "Conversation metadata" in prompt
     assert "is_first_customer_message: false" in prompt
+    assert "customer_name: Ada" in prompt
     assert "minutes_since_last_customer_message: 60" in prompt
     assert "should_greet_customer: true" in prompt
     assert "greeting_reason: last customer message was 60 minutes ago" in prompt
     assert "current_time" not in prompt
     assert "last_customer_message_at" not in prompt
+
+
+async def test_llm_answer_generator_instructs_model_to_use_customer_name() -> None:
+    chat_model = FakeChatModel(
+        '{"answer": "Hi Ada, refunds are available within 30 days.", '
+        '"confidence": 0.82, "grounded": true}'
+    )
+    generator = LlmAnswerGenerator(chat_model)
+
+    await generator.generate(
+        "What is the refund policy?",
+        [Document(page_content="Refunds are available within 30 days.")],
+        conversation_metadata=ConversationPromptMetadata(
+            is_first_customer_message=True,
+            customer_name="Ada",
+            should_greet_customer=True,
+            greeting_reason="first customer message in this conversation",
+        ),
+    )
+
+    system_prompt = chat_model.last_messages[0].content
+    prompt = chat_model.last_messages[1].content
+    assert "If customer_name is provided" in system_prompt
+    assert "Do not invent a customer name" in system_prompt
+    assert "customer_name: Ada" in prompt
 
 
 async def test_llm_answer_generator_does_not_call_model_without_documents() -> None:

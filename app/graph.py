@@ -163,6 +163,7 @@ def build_prompt_metadata(
     if previous_customer_message is None:
         return ConversationPromptMetadata(
             is_first_customer_message=True,
+            customer_name=customer_first_name(current_message.sender_name),
             should_greet_customer=True,
             greeting_reason="first customer message in this conversation",
         )
@@ -184,10 +185,19 @@ def build_prompt_metadata(
     )
     return ConversationPromptMetadata(
         is_first_customer_message=False,
+        customer_name=customer_first_name(current_message.sender_name),
         minutes_since_last_customer_message=minutes_since_last_customer_message,
         should_greet_customer=should_greet_customer,
         greeting_reason=greeting_reason,
     )
+
+
+def customer_first_name(sender_name: str | None) -> str | None:
+    if not sender_name:
+        return None
+
+    parts = sender_name.strip().split()
+    return parts[0] if parts else None
 
 
 async def invoke_support_graph(graph, message: IncomingMessage) -> SupportReply:

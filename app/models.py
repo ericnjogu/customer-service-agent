@@ -45,6 +45,7 @@ class StoredMessage(BaseModel):
 
 class ConversationPromptMetadata(BaseModel):
     is_first_customer_message: bool
+    customer_name: str | None = None
     minutes_since_last_customer_message: int | None = None
     should_greet_customer: bool
     greeting_reason: str

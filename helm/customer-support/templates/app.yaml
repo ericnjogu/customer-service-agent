@@ -43,7 +43,7 @@ spec:
             - >-
               until pg_isready
               --host={{ include "customer-support.fullname" . }}-postgres
-              --port=5432
+              --port={{ .Values.postgres.port }}
               --username={{ .Values.postgres.username }}
               --dbname={{ .Values.postgres.database }};
               do echo "Waiting for PostgreSQL"; sleep 2; done

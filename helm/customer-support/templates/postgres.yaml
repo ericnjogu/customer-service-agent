@@ -11,7 +11,7 @@ spec:
     app.kubernetes.io/instance: {{ .Release.Name }}
   ports:
     - name: postgres
-      port: 5432
+      port: {{ .Values.postgres.port }}
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -35,8 +35,11 @@ spec:
       containers:
         - name: postgres
           image: {{ .Values.postgres.image | quote }}
+          args:
+            - -c
+            - port={{ .Values.postgres.port }}
           ports:
-            - containerPort: 5432
+            - containerPort: {{ .Values.postgres.port }}
           env:
             - name: POSTGRES_DB
               value: {{ .Values.postgres.database | quote }}
@@ -49,7 +52,7 @@ spec:
                   key: password
           readinessProbe:
             exec:
-              command: ["pg_isready", "-U", {{ .Values.postgres.username | quote }}]
+              command: ["pg_isready", "-U", {{ .Values.postgres.username | quote }}, "-p", {{ .Values.postgres.port | quote }}]
             initialDelaySeconds: 5
             periodSeconds: 5
           volumeMounts:
@@ -64,4 +67,3 @@ spec:
           requests:
             storage: {{ .Values.postgres.storage }}
 {{- end }}
-

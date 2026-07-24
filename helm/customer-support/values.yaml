@@ -12,6 +12,7 @@ service:
 postgres:
   enabled: true
   image: pgvector/pgvector:pg16
+  port: 5432
   database: support
   username: support
   password: local-only-password

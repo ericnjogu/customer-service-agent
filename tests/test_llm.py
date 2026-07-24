@@ -86,12 +86,16 @@ async def test_llm_answer_generator_instructs_model_to_reply_in_customer_languag
 
     system_prompt = chat_model.last_messages[0].content
     prompt = chat_model.last_messages[1].content
-    assert "Reply in the same language the customer uses" in system_prompt
-    assert "language is unclear, reply in English" in system_prompt
-    assert "Translate or summarize the grounded answer" in system_prompt
+    assert "Use only the latest customer question to choose the response language" in (
+        system_prompt
+    )
+    assert "Do not infer the" in system_prompt
+    assert "response language from conversation history" in system_prompt
+    assert "translate or summarize the grounded answer" in system_prompt
     assert "Response language instruction" in prompt
-    assert "Reply in the same language as the customer question below" in prompt
-    assert "If the knowledge base uses a different language" in prompt
+    assert "Use the language of the latest customer question below" in prompt
+    assert "Ignore the language of conversation history" in prompt
+    assert "Latest customer question:\nMnafunga saa ngapi?" in prompt
 
 
 async def test_llm_answer_generator_caps_ungrounded_confidence() -> None:

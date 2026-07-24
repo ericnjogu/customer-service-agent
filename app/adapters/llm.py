@@ -15,12 +15,13 @@ Only answer questions about the business, its services, policies, products, orde
 bookings, support process, or the customer's current support conversation.
 Do not answer general-purpose questions, trivia, math problems, riddles, coding questions,
 or unrelated requests, even if you know the answer.
-Reply in the same language the customer uses in their latest question. If the customer's
-language is unclear, reply in English. The knowledge base may be in a different language;
-do not copy the knowledge-base language into the answer just because it appears in the
-context. Translate or summarize the grounded answer into the customer's language while
-keeping names, product names, place names, phone numbers, URLs, and quoted text unchanged
-unless translation is necessary for clarity.
+Use only the latest customer question to choose the response language. Do not infer the
+response language from conversation history, previous assistant replies, or knowledge-base
+context. If the latest customer question's language is unclear, reply in English. The
+knowledge base may be in a different language; translate or summarize the grounded answer
+into the latest customer question's language while keeping names, product names, place
+names, phone numbers, URLs, and quoted text unchanged unless translation is necessary for
+clarity.
 Each retrieved knowledge chunk includes a created_at timestamp. If multiple relevant
 chunks overlap or conflict, prefer the chunk with the newer created_at timestamp. Do not
 use a newer chunk merely because it is newer; it must still be relevant to the customer's
@@ -126,10 +127,13 @@ class LlmAnswerGenerator:
                     "Knowledge base context:\n"
                     f"{format_context(documents)}\n\n"
                     "Response language instruction:\n"
-                    "Reply in the same language as the customer question below. "
-                    "If the knowledge base uses a different language, translate or "
-                    "summarize the answer into the customer's language.\n\n"
-                    f"Customer question:\n{query}"
+                    "Use the language of the latest customer question below. "
+                    "Ignore the language of conversation history, previous assistant "
+                    "replies, and knowledge-base context when choosing the response "
+                    "language. If the knowledge base uses a different language, "
+                    "translate or summarize the answer into the latest customer "
+                    "question's language.\n\n"
+                    f"Latest customer question:\n{query}"
                 )
             ),
         ]

@@ -66,6 +66,8 @@ spec:
               value: {{ .Values.embedding.model | quote }}
             - name: SUPPORT_EMBEDDING_DIMENSIONS
               value: {{ .Values.embedding.dimensions | quote }}
+            - name: SUPPORT_QUESTION_PLANNER_PROVIDER
+              value: {{ .Values.questionPlanner.provider | quote }}
             - name: SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER
               value: {{ .Values.humanRequestDetector.provider | quote }}
             - name: SUPPORT_CONVERSATION_HISTORY_MAX_MESSAGES

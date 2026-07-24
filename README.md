@@ -20,6 +20,8 @@ and reproducible.
 - Conversation routing state updates for the handoff foundation.
 - Optional OpenAI/LangChain answer provider behind `SUPPORT_ANSWER_PROVIDER=openai`.
 - Optional OpenAI semantic embeddings behind `SUPPORT_EMBEDDING_PROVIDER=openai`.
+- Optional question planner behind `SUPPORT_QUESTION_PLANNER_PROVIDER=llm` that routes
+  out-of-scope questions and decides whether conversation history is needed.
 - Optional LLM-backed human-request detection behind
   `SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER=llm`.
 - Helm chart validation and API/graph tests.
@@ -233,10 +235,19 @@ curl -X PATCH http://localhost:8000/conversations/<conversation-id>/state \
 
 ## Conversation history context
 
-For each incoming customer message, the graph loads the exact messages for the current
-conversation since `conversation.created_at` and passes them into the answer generator.
-The history is still bounded by `SUPPORT_CONVERSATION_HISTORY_MAX_MESSAGES` so very long
-open chats do not overfill the LLM context.
+For each incoming customer message, the graph first runs a question planner. The planner
+receives the latest customer message, the optional sender name, and compact greeting
+metadata derived from the minute delta since the previous customer message. It does not
+receive full conversation history at this stage. The planner decides whether the question
+is in scope for customer support and whether conversation history is needed. If a question
+is out of scope, the graph uses the planner's `explanation` as the customer-facing reply
+and does not call the answer-generation LLM. If the question is standalone, such as a
+location or menu question, the graph skips loading history and answers from KB context
+only. If the question depends on earlier messages, the graph loads exact messages for the
+current conversation since `conversation.created_at`.
+
+Loaded history is bounded by `SUPPORT_CONVERSATION_HISTORY_MAX_MESSAGES` so very long open
+chats do not overfill the LLM context.
 
 The graph also derives compact greeting metadata for the LLM. By default,
 `SUPPORT_GREETING_LAPSE_MINUTES=60`, so the prompt tells the LLM to greet the customer on
@@ -246,7 +257,7 @@ Absolute timestamps are intentionally omitted from the prompt metadata.
 The current prompt context is:
 
 - derived conversation metadata;
-- exact current conversation history;
+- exact current conversation history, when the planner requests it;
 - retrieved KB documents;
 - the current customer question.
 
@@ -259,6 +270,7 @@ The default answer provider is still deterministic and local:
 
 ```env
 SUPPORT_ANSWER_PROVIDER=extractive
+SUPPORT_QUESTION_PLANNER_PROVIDER=rules
 SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER=rules
 ```
 
@@ -389,8 +401,9 @@ Application configuration uses the `SUPPORT_` prefix. LangSmith uses its native
 | `SUPPORT_EMBEDDING_PROVIDER` | `local` | `local` or `openai`; Helm defaults to `openai` for pgvector |
 | `SUPPORT_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding model when `SUPPORT_EMBEDDING_PROVIDER=openai` |
 | `SUPPORT_EMBEDDING_DIMENSIONS` | `64` | pgvector embedding size; Helm defaults to `1536` for OpenAI embeddings |
+| `SUPPORT_QUESTION_PLANNER_PROVIDER` | `rules` | `rules` or `llm`; planner receives only the latest customer message and decides scope/history routing |
 | `SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER` | `rules` | `rules` or `llm`; `llm` uses OpenAI to detect explicit human-agent requests |
-| `OPENAI_API_KEY` | unset | Required when `SUPPORT_ANSWER_PROVIDER=openai`, `SUPPORT_EMBEDDING_PROVIDER=openai`, or `SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER=llm` |
+| `OPENAI_API_KEY` | unset | Required when `SUPPORT_ANSWER_PROVIDER=openai`, `SUPPORT_EMBEDDING_PROVIDER=openai`, `SUPPORT_QUESTION_PLANNER_PROVIDER=llm`, or `SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER=llm` |
 | `SUPPORT_LLM_MODEL` | `gpt-4.1-mini` | OpenAI chat model used by the LLM answer provider |
 | `SUPPORT_LLM_TEMPERATURE` | `0.0` | LLM sampling temperature |
 | `SUPPORT_DATABASE_URL` | unset | PostgreSQL connection string |

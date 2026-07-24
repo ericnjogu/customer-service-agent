@@ -194,6 +194,32 @@ class PostgresConversationRepository:
         )
         return [StoredMessage(**dict(row)) for row in reversed(rows)]
 
+    async def minutes_since_previous_customer_message(
+        self,
+        conversation_id: UUID,
+        current_event_id: str,
+        current_received_at: datetime,
+    ) -> int | None:
+        assert self.database.pool
+        row = await self.database.pool.fetchrow(
+            """
+            SELECT GREATEST(
+                0,
+                FLOOR(EXTRACT(EPOCH FROM ($3::timestamptz - created_at)) / 60)::int
+            ) AS minutes
+            FROM messages
+            WHERE conversation_id = $1
+              AND sender_type = 'CUSTOMER'
+              AND event_id <> $2
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            conversation_id,
+            current_event_id,
+            current_received_at,
+        )
+        return int(row["minutes"]) if row else None
+
 
 class PgVectorRetrievalStore:
     def __init__(self, database: PostgresDatabase, embeddings: EmbeddingProvider) -> None:

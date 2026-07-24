@@ -29,6 +29,9 @@ embedding:
   model: text-embedding-3-small
   dimensions: 1536
 
+questionPlanner:
+  provider: llm
+
 humanRequestDetector:
   provider: llm
 

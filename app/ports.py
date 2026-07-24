@@ -8,6 +8,7 @@ from app.models import (
     ConversationPromptMetadata,
     ConversationRecord,
     IncomingMessage,
+    QuestionPlan,
     StoredMessage,
 )
 
@@ -35,6 +36,13 @@ class ConversationRepository(Protocol):
         since: datetime,
         limit: int,
     ) -> list[StoredMessage]: ...
+
+    async def minutes_since_previous_customer_message(
+        self,
+        conversation_id: UUID,
+        current_event_id: str,
+        current_received_at: datetime,
+    ) -> int | None: ...
 
 
 class RetrievalStore(Protocol):
@@ -70,3 +78,11 @@ class HumanRequestDetector(Protocol):
         message: IncomingMessage,
         conversation_history: list[StoredMessage] | None = None,
     ) -> bool: ...
+
+
+class QuestionPlanner(Protocol):
+    async def plan(
+        self,
+        message: IncomingMessage,
+        conversation_metadata: ConversationPromptMetadata | None = None,
+    ) -> QuestionPlan: ...

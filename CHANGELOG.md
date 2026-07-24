@@ -33,6 +33,11 @@ This project currently uses increment-based milestones instead of semantic versi
   verification and outbound text replies.
 - Human-request detector boundary with local rule-based and OpenAI/LLM-backed
   implementations.
+- Question planner boundary with local rule-based and OpenAI/LLM-backed implementations
+  for deciding whether the latest message is in scope and whether conversation history
+  is needed.
+- `SUPPORT_QUESTION_PLANNER_PROVIDER` / `questionPlanner.provider` configuration for
+  choosing `rules` or `llm`.
 - `SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER` / `humanRequestDetector.provider`
   configuration for choosing `rules` or `llm`.
 - Embedding provider boundary with local hash embeddings and OpenAI semantic embeddings.
@@ -58,6 +63,12 @@ This project currently uses increment-based milestones instead of semantic versi
   greetings during active conversations.
 - LLM answer prompts now instruct the model to prefer newer relevant KB chunks when
   retrieved chunks overlap or conflict.
+- The support graph now plans each question before retrieval/answering, skips KB retrieval
+  for out-of-scope questions, uses the planner explanation as the customer-facing reply,
+  and skips conversation history for standalone in-scope questions.
+- The question planner prompt now receives compact greeting metadata from the previous
+  customer-message time delta so out-of-scope replies can avoid repeated greetings during
+  active conversations.
 - `httpx` is now an application dependency because Telegram reply delivery uses outbound
   HTTP calls at runtime.
 - Removed hard-coded demo seed documents; startup KB seeding now only loads explicitly

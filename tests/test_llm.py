@@ -2,7 +2,7 @@ import pytest
 from langchain_core.documents import Document
 from langchain_core.messages import AIMessage
 
-from app.adapters.llm import LlmAnswerGenerator, LlmHumanRequestDetector
+from app.adapters.llm import LlmAnswerGenerator, LlmHumanRequestDetector, LlmQuestionPlanner
 from app.config import Settings
 from app.container import create_container
 from app.models import ConversationPromptMetadata, IncomingMessage, StoredMessage
@@ -265,9 +265,104 @@ async def test_llm_human_request_detector_defaults_false_for_invalid_json() -> N
     assert detected is False
 
 
+async def test_llm_question_planner_returns_structured_plan() -> None:
+    chat_model = FakeChatModel(
+        '{"in_scope": true, "needs_conversation_history": false, '
+        '"explanation": "standalone location question"}'
+    )
+    planner = LlmQuestionPlanner(chat_model)
+
+    plan = await planner.plan(
+        IncomingMessage(
+            event_id="plan-1",
+            external_chat_id="chat-1",
+            external_user_id="user-1",
+            sender_name="Ada Lovelace",
+            text="Where are you located?",
+        ),
+        ConversationPromptMetadata(
+            is_first_customer_message=False,
+            customer_name="Ada",
+            minutes_since_last_customer_message=3,
+            should_greet_customer=False,
+            greeting_reason="active conversation; avoid repeated greeting",
+        ),
+    )
+
+    assert plan.in_scope is True
+    assert plan.needs_conversation_history is False
+    assert plan.explanation == "standalone location question"
+    assert "Decide using only the latest customer message" in (
+        chat_model.last_messages[0].content
+    )
+    assert "explanation is the" in chat_model.last_messages[0].content
+    assert "exact response the customer" in chat_model.last_messages[0].content
+    assert "language is unknown or" in chat_model.last_messages[0].content
+    assert "write the explanation in English" in chat_model.last_messages[0].content
+    assert "sender_name: Ada Lovelace" in chat_model.last_messages[1].content
+    assert "should_greet_customer: false" in chat_model.last_messages[1].content
+    assert "greeting_reason: active conversation; avoid repeated greeting" in (
+        chat_model.last_messages[1].content
+    )
+
+
+async def test_llm_question_planner_prompt_keeps_contextual_followups_in_scope() -> None:
+    chat_model = FakeChatModel(
+        '{"in_scope": true, "needs_conversation_history": true, '
+        '"explanation": "current conversation follow-up"}'
+    )
+    planner = LlmQuestionPlanner(chat_model)
+
+    plan = await planner.plan(
+        IncomingMessage(
+            event_id="plan-contextual",
+            external_chat_id="chat-1",
+            external_user_id="user-1",
+            text="Why did you speak Spanish?",
+        ),
+        ConversationPromptMetadata(
+            is_first_customer_message=False,
+            customer_name=None,
+            minutes_since_last_customer_message=1,
+            should_greet_customer=False,
+            greeting_reason="active conversation; avoid repeated greeting",
+        ),
+    )
+
+    system_prompt = chat_model.last_messages[0].content
+    assert plan.in_scope is True
+    assert plan.needs_conversation_history is True
+    assert '"Why did you speak that language?"' in system_prompt
+    assert "Do not tell the customer that their message" in system_prompt
+    assert "depends on previous messages" in system_prompt
+
+
+async def test_llm_question_planner_uses_safe_defaults_for_invalid_json() -> None:
+    chat_model = FakeChatModel("not-json")
+    planner = LlmQuestionPlanner(chat_model)
+
+    plan = await planner.plan(
+        IncomingMessage(
+            event_id="plan-2",
+            external_chat_id="chat-1",
+            external_user_id="user-1",
+            text="Can I still get that offer?",
+        )
+    )
+
+    assert plan.in_scope is True
+    assert plan.needs_conversation_history is True
+    assert plan.explanation == "planner returned invalid JSON"
+
+
 async def test_openai_answer_provider_requires_api_key() -> None:
     with pytest.raises(ValueError, match="OPENAI_API_KEY"):
         await create_container(Settings(answer_provider="openai"))
+
+
+async def test_openai_question_planner_provider_requires_api_key() -> None:
+    with pytest.raises(ValueError, match="OPENAI_API_KEY"):
+        await create_container(Settings(question_planner_provider="llm"))
 
 
 async def test_openai_embedding_provider_requires_api_key() -> None:

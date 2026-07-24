@@ -2,18 +2,19 @@ from datetime import datetime, timedelta, timezone
 
 from langchain_core.documents import Document
 
-from app.adapters.memory import RuleBasedHumanRequestDetector
+from app.adapters.memory import RuleBasedHumanRequestDetector, RuleBasedQuestionPlanner
 from app.config import Settings
 from app.container import create_container
 from app.graph import build_prompt_metadata, build_support_graph, invoke_support_graph
 from app.knowledge import SEED_KNOWLEDGE_NAMESPACE
-from app.models import ConversationPromptMetadata, IncomingMessage, StoredMessage
+from app.models import ConversationPromptMetadata, IncomingMessage, QuestionPlan, StoredMessage
 
 
 class RecordingAnswerGenerator:
     def __init__(self) -> None:
         self.histories: list[list[StoredMessage]] = []
         self.metadata: list[ConversationPromptMetadata | None] = []
+        self.calls = 0
 
     async def generate(
         self,
@@ -22,9 +23,26 @@ class RecordingAnswerGenerator:
         conversation_history: list[StoredMessage] | None = None,
         conversation_metadata: ConversationPromptMetadata | None = None,
     ) -> tuple[str, float]:
+        self.calls += 1
         self.histories.append(conversation_history or [])
         self.metadata.append(conversation_metadata)
         return "Recorded", 0.95
+
+
+class StaticQuestionPlanner:
+    def __init__(self, plan: QuestionPlan) -> None:
+        self.plan_value = plan
+        self.calls = 0
+        self.metadata: list[ConversationPromptMetadata | None] = []
+
+    async def plan(
+        self,
+        message: IncomingMessage,
+        conversation_metadata: ConversationPromptMetadata | None = None,
+    ) -> QuestionPlan:
+        self.calls += 1
+        self.metadata.append(conversation_metadata)
+        return self.plan_value
 
 
 async def test_grounded_question_returns_citation(tmp_path) -> None:
@@ -120,6 +138,7 @@ async def test_graph_passes_current_conversation_history_with_safety_cap() -> No
         container.conversations,
         container.retrieval,
         generator,
+        RuleBasedQuestionPlanner(),
         RuleBasedHumanRequestDetector(),
         confidence_threshold=0.60,
         conversation_history_max_messages=2,
@@ -133,15 +152,161 @@ async def test_graph_passes_current_conversation_history_with_safety_cap() -> No
                 event_id=f"history-event-{index}",
                 external_chat_id="history-chat",
                 external_user_id="history-user",
-                text=f"Question {index}",
+                text=f"Can I still get that answer {index}?",
             ),
         )
 
     final_history = generator.histories[-1]
     assert [message.body for message in final_history] == [
         "Recorded",
-        "Question 3",
+        "Can I still get that answer 3?",
     ]
+
+
+async def test_graph_uses_question_plan_explanation_for_out_of_scope_reply() -> None:
+    container = await create_container(Settings(seed_knowledge=False))
+    generator = RecordingAnswerGenerator()
+    planner = StaticQuestionPlanner(
+        QuestionPlan(
+            in_scope=False,
+            needs_conversation_history=False,
+            explanation="Hi Ada, I can help with questions about Maxys Lounge.",
+        )
+    )
+    graph = build_support_graph(
+        container.conversations,
+        container.retrieval,
+        generator,
+        planner,
+        RuleBasedHumanRequestDetector(),
+        confidence_threshold=0.60,
+        conversation_history_max_messages=2,
+        greeting_lapse_minutes=60,
+    )
+
+    reply = await invoke_support_graph(
+        graph,
+        IncomingMessage(
+            event_id="out-of-scope-event",
+            external_chat_id="out-of-scope-chat",
+            external_user_id="out-of-scope-user",
+            sender_name="Ada Lovelace",
+            text="1+1?",
+        ),
+    )
+
+    assert planner.calls == 1
+    assert generator.calls == 0
+    assert reply.answer == "Hi Ada, I can help with questions about Maxys Lounge."
+    assert reply.confidence == 0
+    assert reply.low_confidence is True
+    assert reply.citations == []
+
+
+async def test_graph_passes_no_greet_metadata_to_planner_for_active_conversation() -> None:
+    container = await create_container(Settings(seed_knowledge=False))
+    generator = RecordingAnswerGenerator()
+    planner = StaticQuestionPlanner(
+        QuestionPlan(
+            in_scope=False,
+            needs_conversation_history=False,
+            explanation="I can help with questions about Maxys Lounge.",
+        )
+    )
+    graph = build_support_graph(
+        container.conversations,
+        container.retrieval,
+        generator,
+        planner,
+        RuleBasedHumanRequestDetector(),
+        confidence_threshold=0.60,
+        conversation_history_max_messages=2,
+        greeting_lapse_minutes=60,
+    )
+
+    await invoke_support_graph(
+        graph,
+        IncomingMessage(
+            event_id="active-out-of-scope-1",
+            external_chat_id="active-out-of-scope-chat",
+            external_user_id="active-out-of-scope-user",
+            sender_name="Ada Lovelace",
+            text="1+1?",
+        ),
+    )
+    reply = await invoke_support_graph(
+        graph,
+        IncomingMessage(
+            event_id="active-out-of-scope-2",
+            external_chat_id="active-out-of-scope-chat",
+            external_user_id="active-out-of-scope-user",
+            sender_name="Ada Lovelace",
+            text="2+2?",
+        ),
+    )
+
+    assert planner.metadata[-1] is not None
+    assert planner.metadata[-1].should_greet_customer is False
+    assert planner.metadata[-1].greeting_reason == "active conversation; avoid repeated greeting"
+    assert reply.answer == "I can help with questions about Maxys Lounge."
+
+
+async def test_graph_skips_conversation_history_for_standalone_question() -> None:
+    container = await create_container(Settings(seed_knowledge=False))
+    await container.retrieval.upsert(
+        [
+            Document(
+                page_content="Maxys Lounge is located on River Road.",
+                metadata={"source": "kb/location.txt", "chunk_id": "kb/location.txt#0000"},
+            )
+        ],
+        SEED_KNOWLEDGE_NAMESPACE,
+    )
+    generator = RecordingAnswerGenerator()
+    planner = StaticQuestionPlanner(
+        QuestionPlan(
+            in_scope=True,
+            needs_conversation_history=False,
+            explanation="standalone location question",
+        )
+    )
+    graph = build_support_graph(
+        container.conversations,
+        container.retrieval,
+        generator,
+        planner,
+        RuleBasedHumanRequestDetector(),
+        confidence_threshold=0.60,
+        conversation_history_max_messages=10,
+        greeting_lapse_minutes=60,
+    )
+
+    await invoke_support_graph(
+        graph,
+        IncomingMessage(
+            event_id="previous-history-event",
+            external_chat_id="standalone-chat",
+            external_user_id="standalone-user",
+            text="Can I still get that?",
+        ),
+    )
+    await invoke_support_graph(
+        graph,
+        IncomingMessage(
+            event_id="standalone-location-event",
+            external_chat_id="standalone-chat",
+            external_user_id="standalone-user",
+            text="Where are you located?",
+        ),
+    )
+
+    assert generator.histories[-1] == []
+    assert generator.metadata[-1] is not None
+    assert generator.metadata[-1].should_greet_customer is False
+    assert (
+        generator.metadata[-1].greeting_reason
+        == "active conversation; avoid repeated greeting"
+    )
 
 
 async def test_explicit_human_request_sets_human_requested_state() -> None:

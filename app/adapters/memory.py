@@ -8,6 +8,7 @@ from app.models import (
     ConversationPromptMetadata,
     ConversationRecord,
     IncomingMessage,
+    QuestionPlan,
     StoredMessage,
 )
 
@@ -116,6 +117,34 @@ class MemoryConversationRepository:
         )
         return messages[-limit:]
 
+    async def minutes_since_previous_customer_message(
+        self,
+        conversation_id: UUID,
+        current_event_id: str,
+        current_received_at: datetime,
+    ) -> int | None:
+        previous_customer_message = max(
+            (
+                message
+                for message in self.messages.values()
+                if message.conversation_id == conversation_id
+                and message.sender_type == "CUSTOMER"
+                and message.event_id != current_event_id
+            ),
+            key=lambda message: message.created_at,
+            default=None,
+        )
+        if previous_customer_message is None:
+            return None
+
+        return max(
+            0,
+            int(
+                (current_received_at - previous_customer_message.created_at).total_seconds()
+                // 60
+            ),
+        )
+
 
 class MemoryRetrievalStore:
     def __init__(self) -> None:
@@ -154,7 +183,6 @@ class ExtractiveAnswerGenerator:
         confidence = min(0.95, 0.55 + overlap)
         return answer, confidence
 
-
 class RuleBasedHumanRequestDetector:
     human_request_phrases = (
         "human agent",
@@ -174,3 +202,55 @@ class RuleBasedHumanRequestDetector:
     ) -> bool:
         text = message.text.lower()
         return any(phrase in text for phrase in self.human_request_phrases)
+
+
+class RuleBasedQuestionPlanner:
+    out_of_scope_phrases = (
+        "tell me a riddle",
+        "write code",
+        "solve this",
+        "calculate",
+    )
+    history_cues = (
+        "that",
+        "this",
+        "those",
+        "it",
+        "again",
+        "previous",
+        "earlier",
+        "still",
+        "same",
+    )
+
+    async def plan(
+        self,
+        message: IncomingMessage,
+        conversation_metadata: ConversationPromptMetadata | None = None,
+    ) -> QuestionPlan:
+        text = message.text.lower().strip()
+        if self._is_arithmetic_question(text) or any(
+            phrase in text for phrase in self.out_of_scope_phrases
+        ):
+            return QuestionPlan(
+                in_scope=False,
+                needs_conversation_history=False,
+                explanation=(
+                    "I can help with questions about this business, its services, "
+                    "orders, bookings, policies, or support."
+                ),
+            )
+
+        return QuestionPlan(
+            in_scope=True,
+            needs_conversation_history=any(cue in tokenize(text) for cue in self.history_cues),
+            explanation="local heuristic planner",
+        )
+
+    def _is_arithmetic_question(self, text: str) -> bool:
+        arithmetic_expression = r"[\d\s.,()+\-*/x×÷=%?]+"
+        if re.fullmatch(arithmetic_expression, text):
+            return bool(re.search(r"\d", text) and re.search(r"[+\-*/x×÷=%]", text))
+
+        math_prefix = r"(what\s+is|what's|calculate|compute|solve)"
+        return bool(re.fullmatch(rf"{math_prefix}\s+{arithmetic_expression}", text))

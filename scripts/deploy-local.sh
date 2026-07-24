@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+print_exit_timestamp() {
+  local status=$?
+  echo "deploy-local.sh finished at $(date '+%Y-%m-%d %H:%M:%S %Z') with exit status ${status}"
+}
+
+trap print_exit_timestamp EXIT
+
 RELEASE_NAME="${RELEASE_NAME:-cs-local}"
 NAMESPACE="${NAMESPACE:-customer-support}"
 CHART_PATH="${CHART_PATH:-helm/customer-support}"

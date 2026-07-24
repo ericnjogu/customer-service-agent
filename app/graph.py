@@ -8,6 +8,7 @@ from app.models import (
     ConversationPromptMetadata,
     ConversationRecord,
     IncomingMessage,
+    QuestionPlan,
     StoredMessage,
     SupportReply,
 )
@@ -15,6 +16,7 @@ from app.ports import (
     AnswerGenerator,
     ConversationRepository,
     HumanRequestDetector,
+    QuestionPlanner,
     RetrievalStore,
 )
 
@@ -22,6 +24,7 @@ from app.ports import (
 class SupportState(TypedDict, total=False):
     message: IncomingMessage
     conversation: ConversationRecord
+    question_plan: QuestionPlan
     conversation_history: list[StoredMessage]
     conversation_metadata: ConversationPromptMetadata
     documents: list[Document]
@@ -36,6 +39,7 @@ def build_support_graph(
     conversations: ConversationRepository,
     retrieval: RetrievalStore,
     generator: AnswerGenerator,
+    question_planner: QuestionPlanner,
     human_request_detector: HumanRequestDetector,
     confidence_threshold: float,
     conversation_history_max_messages: int,
@@ -52,6 +56,22 @@ def build_support_graph(
             )
         )
         return {"conversation": conversation}
+
+    async def plan_question(state: SupportState) -> dict:
+        minutes_since_last_customer_message = (
+            await conversations.minutes_since_previous_customer_message(
+                state["conversation"].id,
+                state["message"].event_id,
+                state["message"].received_at,
+            )
+        )
+        metadata = build_prompt_metadata_from_last_customer_delta(
+            state["message"],
+            minutes_since_last_customer_message,
+            greeting_lapse_minutes,
+        )
+        plan = await question_planner.plan(state["message"], metadata)
+        return {"question_plan": plan, "conversation_metadata": metadata}
 
     async def detect_human_request(state: SupportState) -> dict:
         human_requested = await human_request_detector.detect(state["message"])
@@ -76,17 +96,47 @@ def build_support_graph(
         )
         return {"conversation_history": history}
 
+    async def skip_conversation_history(state: SupportState) -> dict:
+        return {"conversation_history": []}
+
     async def build_conversation_metadata(state: SupportState) -> dict:
-        metadata = build_prompt_metadata(
-            state["message"],
-            state.get("conversation_history", []),
-            greeting_lapse_minutes,
-        )
+        if "conversation_metadata" in state:
+            return {"conversation_metadata": state["conversation_metadata"]}
+
+        history = state.get("conversation_history", [])
+        if history:
+            metadata = build_prompt_metadata(
+                state["message"],
+                history,
+                greeting_lapse_minutes,
+            )
+        else:
+            metadata = build_prompt_metadata_without_history(
+                state["message"],
+                should_greet_customer=False,
+                greeting_reason="conversation history was not needed for this standalone question",
+            )
         return {"conversation_metadata": metadata}
 
     async def retrieve(state: SupportState) -> dict:
         documents = await retrieval.search(state["message"].text, SEED_KNOWLEDGE_NAMESPACE)
         return {"documents": documents}
+
+    async def answer_out_of_scope(state: SupportState) -> dict:
+        metadata = state.get("conversation_metadata") or build_prompt_metadata_without_history(
+            state["message"],
+            should_greet_customer=False,
+        )
+        text = format_out_of_scope_answer(state["question_plan"].explanation)
+        return {
+            "answer": text,
+            "confidence": 0.0,
+            "citations": [],
+            "low_confidence": True,
+            "documents": [],
+            "conversation_history": [],
+            "conversation_metadata": metadata,
+        }
 
     async def answer(state: SupportState) -> dict:
         if state["conversation"].state == "HUMAN_ACTIVE":
@@ -113,6 +163,16 @@ def build_support_graph(
             "low_confidence": confidence < confidence_threshold,
         }
 
+    def route_after_plan(state: SupportState) -> str:
+        return "in_scope" if state["question_plan"].in_scope else "out_of_scope"
+
+    def route_history(state: SupportState) -> str:
+        return (
+            "load_history"
+            if state["question_plan"].needs_conversation_history
+            else "skip_history"
+        )
+
     async def persist_reply(state: SupportState) -> dict:
         conversation = state["conversation"]
         await conversations.save_message(
@@ -127,20 +187,34 @@ def build_support_graph(
 
     workflow = StateGraph(SupportState)
     workflow.add_node("persist_message", persist_message)
+    workflow.add_node("plan_question", plan_question)
     workflow.add_node("detect_human_request", detect_human_request)
     workflow.add_node("apply_human_request_state", apply_human_request_state)
     workflow.add_node("load_conversation_history", load_conversation_history)
+    workflow.add_node("skip_conversation_history", skip_conversation_history)
     workflow.add_node("build_conversation_metadata", build_conversation_metadata)
     workflow.add_node("retrieve", retrieve)
+    workflow.add_node("answer_out_of_scope", answer_out_of_scope)
     workflow.add_node("answer", answer)
     workflow.add_node("persist_reply", persist_reply)
     workflow.add_edge(START, "persist_message")
-    workflow.add_edge("persist_message", "detect_human_request")
+    workflow.add_edge("persist_message", "plan_question")
+    workflow.add_conditional_edges(
+        "plan_question",
+        route_after_plan,
+        {"in_scope": "detect_human_request", "out_of_scope": "answer_out_of_scope"},
+    )
     workflow.add_edge("detect_human_request", "apply_human_request_state")
-    workflow.add_edge("apply_human_request_state", "load_conversation_history")
+    workflow.add_conditional_edges(
+        "apply_human_request_state",
+        route_history,
+        {"load_history": "load_conversation_history", "skip_history": "skip_conversation_history"},
+    )
     workflow.add_edge("load_conversation_history", "build_conversation_metadata")
+    workflow.add_edge("skip_conversation_history", "build_conversation_metadata")
     workflow.add_edge("build_conversation_metadata", "retrieve")
     workflow.add_edge("retrieve", "answer")
+    workflow.add_edge("answer_out_of_scope", "persist_reply")
     workflow.add_edge("answer", "persist_reply")
     workflow.add_edge("persist_reply", END)
     return workflow.compile()
@@ -187,6 +261,52 @@ def build_prompt_metadata(
         is_first_customer_message=False,
         customer_name=customer_first_name(current_message.sender_name),
         minutes_since_last_customer_message=minutes_since_last_customer_message,
+        should_greet_customer=should_greet_customer,
+        greeting_reason=greeting_reason,
+    )
+
+
+def build_prompt_metadata_from_last_customer_delta(
+    current_message: IncomingMessage,
+    minutes_since_last_customer_message: int | None,
+    greeting_lapse_minutes: int,
+) -> ConversationPromptMetadata:
+    if minutes_since_last_customer_message is None:
+        return ConversationPromptMetadata(
+            is_first_customer_message=True,
+            customer_name=customer_first_name(current_message.sender_name),
+            should_greet_customer=True,
+            greeting_reason="first customer message in this conversation",
+        )
+
+    should_greet_customer = minutes_since_last_customer_message >= greeting_lapse_minutes
+    greeting_reason = (
+        f"last customer message was {minutes_since_last_customer_message} minutes ago"
+        if should_greet_customer
+        else "active conversation; avoid repeated greeting"
+    )
+    return ConversationPromptMetadata(
+        is_first_customer_message=False,
+        customer_name=customer_first_name(current_message.sender_name),
+        minutes_since_last_customer_message=minutes_since_last_customer_message,
+        should_greet_customer=should_greet_customer,
+        greeting_reason=greeting_reason,
+    )
+
+
+def format_out_of_scope_answer(explanation: str | None) -> str:
+    return explanation or "I could not route that request safely."
+
+
+def build_prompt_metadata_without_history(
+    current_message: IncomingMessage,
+    *,
+    should_greet_customer: bool,
+    greeting_reason: str | None = None,
+) -> ConversationPromptMetadata:
+    return ConversationPromptMetadata(
+        is_first_customer_message=should_greet_customer,
+        customer_name=customer_first_name(current_message.sender_name),
         should_greet_customer=should_greet_customer,
         greeting_reason=greeting_reason,
     )

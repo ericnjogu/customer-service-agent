@@ -48,7 +48,13 @@ class ConversationPromptMetadata(BaseModel):
     customer_name: str | None = None
     minutes_since_last_customer_message: int | None = None
     should_greet_customer: bool
-    greeting_reason: str
+    greeting_reason: str | None = None
+
+
+class QuestionPlan(BaseModel):
+    in_scope: bool = True
+    needs_conversation_history: bool = True
+    explanation: str | None = None
 
 
 class ConversationStateUpdate(BaseModel):

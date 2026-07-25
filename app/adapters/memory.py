@@ -222,6 +222,16 @@ class RuleBasedQuestionPlanner:
         "still",
         "same",
     )
+    conversation_history_phrases = (
+        "first message",
+        "what message",
+        "what time",
+        "when did i",
+        "what did i ask",
+        "what did you say",
+        "earlier",
+        "before",
+    )
 
     async def plan(
         self,
@@ -243,7 +253,10 @@ class RuleBasedQuestionPlanner:
 
         return QuestionPlan(
             in_scope=True,
-            needs_conversation_history=any(cue in tokenize(text) for cue in self.history_cues),
+            needs_conversation_history=(
+                any(cue in tokenize(text) for cue in self.history_cues)
+                or any(phrase in text for phrase in self.conversation_history_phrases)
+            ),
             explanation="local heuristic planner",
         )
 

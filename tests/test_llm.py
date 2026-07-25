@@ -1,8 +1,15 @@
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from langchain_core.documents import Document
 from langchain_core.messages import AIMessage
 
-from app.adapters.llm import LlmAnswerGenerator, LlmHumanRequestDetector, LlmQuestionPlanner
+from app.adapters.llm import (
+    LlmAnswerGenerator,
+    LlmHumanRequestDetector,
+    LlmQuestionPlanner,
+    format_age,
+)
 from app.config import Settings
 from app.container import create_container
 from app.models import ConversationPromptMetadata, IncomingMessage, StoredMessage
@@ -18,6 +25,15 @@ class FakeChatModel:
         self.calls += 1
         self.last_messages = messages
         return AIMessage(content=self.content)
+
+
+def test_format_age_uses_readable_units() -> None:
+    now = datetime(2026, 7, 25, 13, 34, tzinfo=timezone.utc)
+
+    assert format_age(now - timedelta(minutes=1), now) == "1 minute ago"
+    assert format_age(now - timedelta(minutes=26), now) == "26 minutes ago"
+    assert format_age(now - timedelta(hours=2), now) == "2 hours ago"
+    assert format_age(now - timedelta(days=2), now) == "2 days ago"
 
 
 async def test_llm_answer_generator_returns_grounded_confidence() -> None:
@@ -128,13 +144,75 @@ async def test_llm_answer_generator_includes_conversation_history() -> None:
                 event_id="history-1",
                 sender_type="CUSTOMER",
                 body="I need a refund.",
+                created_at=datetime(2026, 7, 25, 13, 8, tzinfo=timezone.utc),
             )
         ],
     )
 
     prompt = chat_model.last_messages[1].content
     assert "Conversation history for the current issue" in prompt
-    assert "CUSTOMER: I need a refund." in prompt
+    assert "Format: one message per line as" in prompt
+    assert "<created_at ISO-8601 timestamp> (<age relative to newest message>)" in prompt
+    assert "<sender_type>: <message body>" in prompt
+    assert "Order: oldest message first, newest message last." in prompt
+    assert "CUSTOMER is the customer" in prompt
+    assert "BOT is this assistant" in prompt
+    assert "Use created_at for exact message times" in prompt
+    assert "Use the relative age only as a readable summary" in prompt
+    assert "Use the first CUSTOMER entry" in prompt
+    assert "Messages:" in prompt
+    assert "2026-07-25T13:08:00+00:00 (0 minutes ago) CUSTOMER: I need a refund." in prompt
+
+
+async def test_llm_answer_generator_allows_history_only_answers() -> None:
+    chat_model = FakeChatModel(
+        '{"answer": "Your first message was sent at 2026-07-25T13:08:00+00:00.", '
+        '"confidence": 0.82, "grounded": true}'
+    )
+    generator = LlmAnswerGenerator(chat_model)
+
+    answer, confidence = await generator.generate(
+        "When did I first send you a message?",
+        [],
+        conversation_history=[
+            StoredMessage(
+                conversation_id="00000000-0000-0000-0000-000000000000",
+                event_id="history-1",
+                sender_type="CUSTOMER",
+                body="4*8?",
+                created_at=datetime(2026, 7, 25, 13, 8, tzinfo=timezone.utc),
+            ),
+            StoredMessage(
+                conversation_id="00000000-0000-0000-0000-000000000000",
+                event_id="history-2",
+                sender_type="CUSTOMER",
+                body="When did I first send you a message?",
+                created_at=datetime(2026, 7, 25, 13, 34, tzinfo=timezone.utc),
+            )
+        ],
+        conversation_metadata=ConversationPromptMetadata(
+            is_first_customer_message=False,
+            customer_name=None,
+            minutes_since_last_customer_message=26,
+            should_greet_customer=False,
+            greeting_reason="active conversation; avoid repeated greeting",
+        ),
+    )
+
+    system_prompt = chat_model.last_messages[0].content
+    prompt = chat_model.last_messages[1].content
+    assert answer == "Your first message was sent at 2026-07-25T13:08:00+00:00."
+    assert confidence == 0.82
+    assert chat_model.calls == 1
+    assert "answer" in system_prompt
+    assert "only from those conversation-history entries" in system_prompt
+    assert "Do not infer exact times from conversation" in system_prompt
+    assert "minutes_since_last_customer_message: 26" in prompt
+    assert "2026-07-25T13:08:00+00:00 (26 minutes ago) CUSTOMER: 4*8?" in prompt
+    assert (
+        "2026-07-25T13:34:00+00:00 (0 minutes ago) CUSTOMER: "
+        "When did I first send you a message?"
+    ) in prompt
 
 
 async def test_llm_answer_generator_includes_chunk_metadata() -> None:
@@ -335,6 +413,8 @@ async def test_llm_question_planner_prompt_keeps_contextual_followups_in_scope()
     assert '"Why did you speak that language?"' in system_prompt
     assert "Do not tell the customer that their message" in system_prompt
     assert "depends on previous messages" in system_prompt
+    assert "when did I first send you a message?" in system_prompt
+    assert "what time" in system_prompt
 
 
 async def test_llm_question_planner_uses_safe_defaults_for_invalid_json() -> None:

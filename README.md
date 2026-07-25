@@ -257,9 +257,18 @@ Absolute timestamps are intentionally omitted from the prompt metadata.
 The current prompt context is:
 
 - derived conversation metadata;
-- exact current conversation history, when the planner requests it;
+- exact current conversation history with message `created_at` timestamps and readable
+  relative ages, when the planner requests it;
 - retrieved KB documents;
 - the current customer question.
+
+Conversation metadata is used only for greeting decisions. For questions such as "when
+did I first send a message?", the answer prompt instructs the LLM to use the timestamped
+conversation-history entries rather than the greeting metadata.
+The conversation history block also describes its line format, chronological order, and
+sender types so the LLM can identify the first customer message and use `created_at`
+values for exact times. Relative ages such as `26 minutes ago` or `2 days ago` are
+included as readability hints, but the exact timestamp remains the source of truth.
 
 Raw messages remain the source of truth. Summarized conversation memory is intentionally
 reserved for a later increment.

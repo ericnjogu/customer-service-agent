@@ -69,6 +69,13 @@ This project currently uses increment-based milestones instead of semantic versi
 - The question planner prompt now receives compact greeting metadata from the previous
   customer-message time delta so out-of-scope replies can avoid repeated greetings during
   active conversations.
+- Conversation-history prompt entries now include message `created_at` timestamps, and
+  answer prompts instruct the LLM not to use greeting metadata as evidence for exact
+  message times.
+- Conversation-history prompt blocks now describe their line format, chronological order,
+  sender types, and how to identify the first customer message.
+- Conversation-history prompt entries now include a readable relative age alongside the
+  exact `created_at` timestamp.
 - `httpx` is now an application dependency because Telegram reply delivery uses outbound
   HTTP calls at runtime.
 - Removed hard-coded demo seed documents; startup KB seeding now only loads explicitly

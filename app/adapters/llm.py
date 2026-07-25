@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import datetime
 from typing import Any
 
 from langchain_core.documents import Document
@@ -26,6 +27,11 @@ Each retrieved knowledge chunk includes a created_at timestamp. If multiple rele
 chunks overlap or conflict, prefer the chunk with the newer created_at timestamp. Do not
 use a newer chunk merely because it is newer; it must still be relevant to the customer's
 question.
+Conversation history entries include created_at timestamps. For questions about when a
+message was sent, what the first message was, or other conversation-history facts, answer
+only from those conversation-history entries. Do not infer exact times from conversation
+metadata such as minutes_since_last_customer_message; that metadata is only for greeting
+decisions.
 Use conversation metadata to decide whether to greet the customer. Do not repeatedly greet
 the customer during an active back-and-forth. 
 If customer_name is provided, use that name naturally when greeting or addressing the
@@ -74,6 +80,9 @@ references to previous offers, orders, recommendations, or unresolved support de
 Return needs_conversation_history=true for short or contextual current-conversation
 follow-ups such as "Why?", "Why say so?", "I don't understand", or questions about why
 the assistant answered in a certain way or language.
+Return needs_conversation_history=true for questions asking about the conversation itself,
+such as "when did I first send you a message?", "what was my first message?", "what time
+was that message sent?", "what did I ask earlier?", or "what did you say before?".
 Return false for standalone questions such as location, opening hours, menu items,
 contact information, policies, or prices.
 
@@ -120,10 +129,42 @@ def format_conversation_history(messages: list[StoredMessage]) -> str:
     if not messages:
         return "No prior conversation history is available."
 
-    return "\n".join(
+    reference_time = max(message.created_at for message in messages)
+    entries = "\n".join(
+        f"{message.created_at.isoformat()} ({format_age(message.created_at, reference_time)}) "
         f"{message.sender_type}: {message.body}"
         for message in messages
     )
+    return (
+        "Format: one message per line as "
+        "<created_at ISO-8601 timestamp> (<age relative to newest message>) "
+        "<sender_type>: <message body>.\n"
+        "Order: oldest message first, newest message last.\n"
+        "sender_type values: CUSTOMER is the customer, BOT is this assistant, "
+        "AGENT is a human support agent, SYSTEM is an internal system event.\n"
+        "Use created_at for exact message times. Use the relative age only as a readable "
+        "summary of how long before the newest message each entry was sent. Use the first "
+        "CUSTOMER entry for the customer's first available message in this conversation.\n"
+        f"Messages:\n{entries}"
+    )
+
+
+def format_age(older_time: datetime, newer_time: datetime) -> str:
+    minutes = max(0, int((newer_time - older_time).total_seconds() // 60))
+    if minutes < 60:
+        return pluralize(minutes, "minute") + " ago"
+
+    hours = minutes // 60
+    if hours < 24:
+        return pluralize(hours, "hour") + " ago"
+
+    days = hours // 24
+    return pluralize(days, "day") + " ago"
+
+
+def pluralize(value: int, unit: str) -> str:
+    suffix = "" if value == 1 else "s"
+    return f"{value} {unit}{suffix}"
 
 
 def format_conversation_metadata(metadata: ConversationPromptMetadata | None) -> str:
@@ -157,10 +198,10 @@ class LlmAnswerGenerator:
         conversation_history: list[StoredMessage] | None = None,
         conversation_metadata: ConversationPromptMetadata | None = None,
     ) -> tuple[str, float]:
-        if not documents:
+        history = conversation_history or []
+        if not documents and not history:
             return "I could not find enough information to answer that question.", 0.0
 
-        history = conversation_history or []
         messages = [
             SystemMessage(content=SYSTEM_PROMPT),
             HumanMessage(

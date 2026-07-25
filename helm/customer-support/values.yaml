@@ -36,7 +36,7 @@ humanRequestDetector:
   provider: llm
 
 conversationHistory:
-  maxMessages: 50
+  maxMessages: 100
   greetingLapseMinutes: 60
 
 telegram:

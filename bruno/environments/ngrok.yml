@@ -1,4 +1,0 @@
-name: ngrok
-variables:
-  - name: host
-    value: chitchat-unhitched-wriggly.ngrok-free.dev

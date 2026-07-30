@@ -1,0 +1,47 @@
+info:
+  name: 01 create tenant
+  type: http
+  seq: 1
+
+http:
+  method: post
+  url: http://{{host}}/tenants
+  headers:
+    - name: content-type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "display_name": "{{tenant_display_name}}",
+        "selected_plan": "{{tenant_selected_plan}}"
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        const body = res.body;
+        const slugify = (value) => String(value || "")
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "") || "default";
+
+        if (res.status === 201 && body.slug) {
+          bru.setVar("tenant_lookup_slug", body.slug);
+        } else if (res.status === 409) {
+          bru.setVar("tenant_lookup_slug", slugify(bru.getVar("tenant_slug") || bru.getVar("tenant_display_name")));
+        }
+
+settings:
+  encodeUrl: false
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+
+docs: |-
+  Creates an app tenant and stores only the generated slug for the next lookup step.
+  If the slug already exists, the API returns 409 Conflict so onboarding cannot
+  accidentally attach a different user to an existing tenant.

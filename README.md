@@ -1,7 +1,7 @@
 # Customer Support Agent
 
 Increment 4 is a locally runnable vertical slice using FastAPI, LangGraph, LangChain
-documents, file-based KB ingestion, conversation routing state, optional LLM-backed answer
+documents, tenant KB ingestion, conversation routing state, optional LLM-backed answer
 generation, and configurable retrieval/answer boundaries. Helm deploys the service with
 PostgreSQL and pgvector. No external LLM key is needed for the default local path: a
 deterministic extractive generator and local hash embeddings make the workflow inspectable
@@ -17,6 +17,8 @@ and reproducible.
 - In-memory adapters for fast development and tests.
 - PostgreSQL conversation persistence and pgvector retrieval in Kubernetes.
 - Startup knowledge loaded from a mounted directory or ConfigMap.
+- Async per-tenant PDF KB ingestion through `POST /tenants/{tenant_id}/knowledge/pdf`,
+  Redis, a worker process, and S3-compatible object storage/MinIO.
 - Conversation routing state updates for the handoff foundation.
 - Optional OpenAI/LangChain answer provider behind `SUPPORT_ANSWER_PROVIDER=openai`.
 - Optional OpenAI semantic embeddings behind `SUPPORT_EMBEDDING_PROVIDER=openai`.
@@ -26,8 +28,9 @@ and reproducible.
   `SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER=llm`.
 - Helm chart validation and API/graph tests.
 
-Telegram/WhatsApp support group creation, admin KB upload UI, and conversation memory are
-intentionally reserved for later increments.
+Telegram/WhatsApp support group creation, admin KB upload UI/dashboard, non-PDF KB upload
+types, OCR/image PDF extraction, and conversation memory are intentionally reserved for
+later increments.
 
 ## Run in the IDE
 
@@ -44,6 +47,7 @@ Try the vertical slice:
 curl -X POST http://localhost:8000/messages/customer \
   -H 'content-type: application/json' \
   -d '{
+    "tenant_id": "default",
     "event_id": "demo-1",
     "external_chat_id": "chat-1",
     "external_user_id": "user-1",
@@ -139,7 +143,117 @@ recipe; `nerdctl`, rather than Docker, builds it for Kubernetes.
 The default password in `values.yaml` is deliberately local-only. Override it outside local
 development and use a secret manager in production.
 
+### Ingest tenant KB PDFs through the API
+
+The forward path for tenant KB setup is an API endpoint that can be called by the SaaS
+admin today and protected for tenant owner/admin users later:
+
+```bash
+curl -X POST http://localhost:8000/tenants/maxys/knowledge/pdf \
+  -F "file=@./Maxys Lounge Menu v1.pdf;type=application/pdf"
+```
+
+The endpoint stores the uploaded PDF in the configured S3-compatible object store
+(MinIO in local Helm), creates a durable ingestion job, enqueues the job id on Redis, and
+returns `202 Accepted` immediately:
+
+```json
+{
+  "job_id": "kbi_...",
+  "tenant_id": "maxys",
+  "status": "PENDING",
+  "filename": "Maxys-Lounge-Menu-v1.pdf",
+  "content_type": "application/pdf",
+  "object_bucket": "customer-support-knowledge",
+  "object_key": "tenants/maxys/knowledge/kbi_.../Maxys-Lounge-Menu-v1.pdf",
+  "object_etag": "..."
+}
+```
+
+The worker process consumes the Redis queue, downloads the PDF from MinIO, extracts/OCRs
+text, chunks it with `SUPPORT_KNOWLEDGE_CHUNK_SIZE` and
+`SUPPORT_KNOWLEDGE_CHUNK_OVERLAP`, embeds the chunks, and writes them to the tenant's
+configured vector namespace. Poll job status with:
+
+```bash
+curl http://localhost:8000/tenants/maxys/knowledge/ingestions/kbi_...
+```
+
+Successful jobs include page/chunk counts and chunk ids. Each stored chunk has metadata
+linking it back to the uploaded object: `ingestion_job_id`, `object_bucket`,
+`object_key`, and `object_etag`.
+
+When uploading from Bruno or another API client, the upload response only confirms that
+the job was queued. Follow the worker logs to watch the long-running ingestion finish:
+
+```bash
+kubectl logs -n customer-support deployment/cs-local-customer-support-worker -f
+```
+
+The worker logs show job dequeue, object download, PDF text extraction, OCR fallback,
+page chunking, vector upsert, and final `SUCCEEDED`/`FAILED` status. API pod logs show
+upload receipt, object storage, job creation, and queueing:
+
+```bash
+kubectl logs -n customer-support deployment/cs-local-customer-support-app -f
+```
+
+By default, the endpoint extracts embedded PDF text only. For scanned/image PDFs, enable
+the vision OCR fallback:
+
+```bash
+SUPPORT_KNOWLEDGE_PDF_OCR_PROVIDER=openai \
+OPENAI_API_KEY="$OPENAI_API_KEY" \
+uv run uvicorn app.main:app --reload
+```
+
+In Helm:
+
+```bash
+helm upgrade --install cs-local helm/customer-support \
+  --namespace customer-support \
+  --set knowledge.pdfOcr.provider=openai
+```
+
+When OCR is enabled, pages without embedded text are rendered to PNG in-process with
+PyMuPDF and sent to the configured vision-capable LLM. This replaces the manual
+`pdftoppm`/image-resize/OCR workflow used during exploration, while keeping the same
+tenant ingestion endpoint. Pages that already contain embedded text are not sent for OCR.
+
+Run a local worker process against the same configured Redis/object store with:
+
+```bash
+uv run python -m app.worker
+```
+
+Local Helm uses MinIO AIStor for the bundled S3-compatible object store. AIStor requires a
+license for S3 operations. Keep the license out of the repository and create a Kubernetes
+Secret from your downloaded license file:
+
+```bash
+kubectl create secret generic cs-local-aistor-license \
+  --namespace customer-support \
+  --from-file=minio.license=/path/to/minio.license \
+  --dry-run=client \
+  -o yaml | kubectl apply -f -
+```
+
+Then reference it during deploy:
+
+```bash
+helm upgrade --install cs-local helm/customer-support \
+  --namespace customer-support \
+  --set minio.license.existingSecret=cs-local-aistor-license
+```
+
+For throwaway local experiments only, the chart also supports
+`--set-file minio.license.value=/path/to/minio.license`, but the Secret-based form keeps
+the license out of shell history and generated values.
+
 ### Mount local KB files through a ConfigMap
+
+ConfigMaps remain available as an optional local/bootstrap path, but the API ingestion path
+above is closer to the future admin self-service flow.
 
 Keep the actual KB files outside the repository, for example:
 
@@ -273,6 +387,211 @@ included as readability hints, but the exact timestamp remains the source of tru
 Raw messages remain the source of truth. Summarized conversation memory is intentionally
 reserved for a later increment.
 
+## Tenant foundation
+
+The local MVP is still configured as a single running app, but inbound messages now carry
+a `tenant_id`. When no tenant is supplied, the app uses `SUPPORT_DEFAULT_TENANT_ID`
+(`tenant.defaultId` in Helm), which defaults to `default`.
+
+Tenant isolation currently covers:
+
+- tenant records with immutable generated `tenant_id` values and mutable readable slugs;
+- conversations, scoped by `(tenant_id, channel, external_chat_id)`;
+- message idempotency, scoped by `(tenant_id, event_id)`;
+- seed KB retrieval namespaces, using `seed-knowledge` for the default tenant and
+  `<tenant_id>:seed-knowledge` for other tenants;
+- tenant prompt configuration for answer and planner instructions;
+- LLM project metadata per tenant;
+- LangSmith trace metadata per tenant, written into one deployment-level LangSmith
+  project;
+- one shared vector collection/index with per-tenant namespaces;
+- opt-in tenant features, which can later be enforced by a prepaid credit balance;
+  basic RAG and human handover are treated as inbuilt capabilities rather than opt-in
+  features;
+- selected onboarding plan reference, recorded as audit/control-plane context but not
+  re-applied at runtime.
+
+### Bruno tenant onboarding flow
+
+The `bruno/onboarding` folder contains an ordered onboarding flow:
+
+1. create the app tenant;
+2. read the tenant back by slug and populate Bruno runtime variables;
+3. create/update the tenant Telegram Kubernetes Secret;
+4. register the tenant Telegram webhook;
+5. create an OpenAI project with the OpenAI Admin API;
+6. create/upsert the deployment-level LangSmith tracing project;
+7. create the tenant config from the returned tenant/provider values;
+8. read back the tenant config.
+
+Before running it, select a Bruno environment and set these variables:
+
+- `openai_admin_key`: OpenAI Admin API key for an organization owner;
+- `langsmith_api_key`: LangSmith API key;
+- `langsmith_workspace_id`: LangSmith workspace id targeted by the API key;
+- `deployment_langsmith_project`: deployment-level LangSmith trace project, for example
+  `customer-service-local`;
+- `tenant_display_name`: business/customer display name;
+- `tenant_enabled_features_json`: JSON array such as `["telegram","whatsapp"]`.
+- `telegram_bot_token`: tenant Telegram bot token;
+- `telegram_webhook_secret_token`: tenant Telegram webhook secret token;
+- `telegram_webhook_base_url`: public HTTPS base URL for this app, without a trailing
+  slash;
+- `k8s_proxy_url`: local Kubernetes API proxy URL, for example
+  `http://127.0.0.1:8001`;
+- `k8s_namespace`: Kubernetes namespace where tenant Telegram Secrets should be created.
+
+Before running the Kubernetes Secret request, start a local proxy:
+
+```bash
+kubectl proxy --port=8001 --address=127.0.0.1
+```
+
+The requests use Bruno runtime variables to pass values between steps. Tenant creation
+stores only the generated slug for the explicit lookup step. The slug lookup stores
+`tenant_id`, `tenant_slug`, `llm_project_name`, `langsmith_project`, and the slug-based
+vector namespace. The Telegram Secret request stores `tenant_telegram_secret_name`; the
+provider creation responses then store `llm_project_id`. LangSmith traces are written to
+the deployment-level `LANGSMITH_PROJECT`, while `langsmith_project` remains tenant
+metadata for filtering/audit.
+
+Create a tenant record with:
+
+```bash
+curl -X POST http://localhost:8000/tenants \
+  -H 'content-type: application/json' \
+  -d '{
+    "display_name": "Acme Lounge",
+    "selected_plan": "sme"
+  }'
+```
+
+The response includes an immutable generated tenant id such as `tnt_...`, a readable slug
+such as `acme-lounge`, and no tenant config. Tenant config is created later with
+`PUT /tenants/{tenant_id}/config`, after provider project names are known. Use the
+generated `tenant_id` for chat routing, tenant config, and KB ingestion. The slug is for
+display/search/URLs and may later be changed independently.
+
+Tenant creation fails closed on duplicate slugs. If a matching derived or explicit slug
+already exists, `POST /tenants` returns `409 Conflict` instead of returning someone
+else's tenant id. Use the explicit lookup endpoint when you intentionally want an existing
+tenant:
+
+```bash
+curl http://localhost:8000/tenants/by-slug/acme-lounge
+```
+
+Read the tenant record with:
+
+```bash
+curl http://localhost:8000/tenants/tnt_abc123...
+```
+
+For synthetic/API calls, include `tenant_id` in the JSON body or send
+`X-Support-Tenant-Id`. For Telegram and WhatsApp webhook posts, pass `tenant_id` as a
+query parameter, for example `/webhooks/telegram?tenant_id=acme`, or send
+`X-Support-Tenant-Id`.
+
+Tenant prompt configuration is managed through:
+
+```bash
+curl -X PUT http://localhost:8000/tenants/tnt_abc123.../config \
+  -H 'content-type: application/json' \
+  -d '{
+    "selected_plan": "sme",
+    "enabled_features": ["telegram", "whatsapp"],
+    "answer_prompt_instructions": "Use Acme Lounge'\''s warm, concise brand voice.",
+    "planner_prompt_instructions": "Questions about table bookings and private events are in scope.",
+    "llm_project_id": "proj_acme",
+    "llm_project_name": "customer-service-acme",
+    "langsmith_project": "customer-service-acme",
+    "llm_provider": "langchain-compatible",
+    "llm_model": "deepseek-chat",
+    "llm_base_url": "https://api.deepseek.com",
+    "vector_provider": "pgvector",
+    "vector_isolation_mode": "shared_collection",
+    "vector_collection": "customer-support",
+    "vector_namespace": "acme:seed-knowledge",
+    "telegram_secret_name": "tenant-acme-telegram",
+    "whatsapp_secret_name": "tenant-acme-whatsapp"
+  }'
+```
+
+Read it back with:
+
+```bash
+curl http://localhost:8000/tenants/tnt_abc123.../config
+```
+
+Admin users, tenant memberships, authentication, and role checks are intentionally not part
+of this increment. They will be added together with the tenant owner/admin ingestion flow,
+so the same KB ingestion service can be protected by Keycloak/social-login-backed admin
+authorization later.
+
+These instructions are prompt overlays. The shared base prompts still apply and tenant
+instructions must not override global safety, routing, grounding, or language rules.
+Tenant config requests are handled by the tenant API router and validate known plans,
+features, LLM providers, vector providers, vector isolation modes, and absolute HTTP(S)
+LLM base URLs before persistence.
+
+Tenant plans are reference templates for onboarding/deployment decisions. The initial Helm
+values include `tenant.plans.sme` and `tenant.plans.enterprise` with suggested defaults
+for features, vector-index mode, and hosting model. After onboarding, runtime behavior
+comes from the resolved tenant fields such as `enabled_features`, `vector_collection`, and
+`vector_namespace`; changing `selected_plan` later does not automatically re-apply a
+template.
+
+Tenant config reads use a read-through cache. Local Helm defaults to Redis so multiple app
+replicas can share cached tenant config values. Updating a tenant through the tenant config
+API refreshes the Redis entry, and the cache TTL provides a safety net for out-of-band
+database changes. Tenant config cache keys use this pattern:
+`tenant-config:<tenant_id>`.
+
+Provider project/index fields are tenant control-plane metadata:
+
+- OpenAI uses one shared provider API key, with project metadata stored per tenant for
+  onboarding/client construction.
+- The `llm_project_id` and `llm_project_name` field names are intentionally kept stable
+  even when the tenant uses another LangChain-compatible provider. For providers that use
+  a different grouping term, map the provider's nearest equivalent into these fields; for
+  example, a workspace, account scope, deployment group, billing project, or tenant-owned
+  provider project. The bot treats these values as metadata and trace/client-construction
+  hints, not as OpenAI-specific concepts.
+- LangSmith traces are written to the deployment-level `LANGSMITH_PROJECT` and tagged
+  with tenant metadata. The tenant config's `langsmith_project` value is retained as
+  metadata/filtering context, not as the runtime trace destination.
+- Vector storage is modeled generically using `vector_provider`,
+  `vector_isolation_mode`, `vector_collection`, and `vector_namespace`. Local Helm
+  configures the default collection with `SUPPORT_VECTOR_COLLECTION`; Pinecone can map
+  collection to index and namespace to namespace, while Qdrant can map collection to
+  collection and namespace/tenant to payload filters or a dedicated collection.
+- Telegram credentials can be resolved from one Secret reference per tenant. Secret values
+  are not stored in Postgres; `telegram_secret_name` points at the Kubernetes Secret used
+  for that tenant's bot token and webhook secret token. If no tenant Secret is configured,
+  the app falls back to the global Telegram env/Helm Secret values.
+- WhatsApp credentials are currently modeled as one Secret reference per tenant, but the
+  runtime still uses the global WhatsApp env/Helm Secret values until tenant-specific
+  WhatsApp resolution is wired.
+
+Telegram tenant Secret keys:
+
+```text
+TELEGRAM_BOT_TOKEN
+TELEGRAM_WEBHOOK_SECRET_TOKEN
+```
+
+WhatsApp tenant Secret keys:
+
+```text
+WHATSAPP_ACCESS_TOKEN
+WHATSAPP_PHONE_NUMBER_ID
+WHATSAPP_VERIFY_TOKEN
+WHATSAPP_GRAPH_API_VERSION
+```
+
+Feature enforcement, prepaid credit checks, support backend selection, admin KB ingestion,
+provider project creation jobs, and usage tracking are reserved for later increments.
+
 ## Optional LLM answer provider
 
 The default answer provider is still deterministic and local:
@@ -327,8 +646,11 @@ POST /webhooks/telegram
 ```
 
 The endpoint currently handles text messages. Non-text updates are acknowledged and ignored.
-If `SUPPORT_TELEGRAM_BOT_TOKEN` is configured, the app sends the graph reply back to the
-Telegram chat using `sendMessage`.
+If a tenant config has `telegram_secret_name`, the app reads that Kubernetes Secret,
+validates the incoming `X-Telegram-Bot-Api-Secret-Token` against the tenant-specific
+`TELEGRAM_WEBHOOK_SECRET_TOKEN`, and sends the reply with the tenant-specific
+`TELEGRAM_BOT_TOKEN`. If no tenant Secret is configured, the app falls back to
+`SUPPORT_TELEGRAM_BOT_TOKEN` and `SUPPORT_TELEGRAM_WEBHOOK_SECRET_TOKEN`.
 
 Create a Secret for the bot token and webhook secret token:
 
@@ -346,6 +668,27 @@ helm upgrade --install cs-local helm/customer-support \
   --namespace customer-support \
   --set telegram.existingSecret=telegram-bot
 ```
+
+For tenant-specific Telegram credentials, create a Secret with the same keys and store its
+name in the tenant config. The Bruno onboarding flow can create this Secret through
+`kubectl proxy`; manually, it looks like:
+
+```bash
+kubectl create secret generic tenant-maxys-lounge-telegram \
+  --namespace customer-support \
+  --from-literal=TELEGRAM_BOT_TOKEN="$TENANT_TELEGRAM_BOT_TOKEN" \
+  --from-literal=TELEGRAM_WEBHOOK_SECRET_TOKEN="$TENANT_TELEGRAM_WEBHOOK_SECRET_TOKEN"
+```
+
+```json
+{
+  "telegram_secret_name": "tenant-maxys-lounge-telegram"
+}
+```
+
+Local Helm enables `telegram.credentialProvider=kubernetes`, so the app ServiceAccount is
+allowed to read tenant Telegram Secrets in its namespace. Use
+`telegram.credentialProvider=static` for env-only local runs.
 
 Register the Telegram webhook after the app has a public HTTPS URL:
 
@@ -405,12 +748,13 @@ Application configuration uses the `SUPPORT_` prefix. LangSmith uses its native
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `SUPPORT_DEFAULT_TENANT_ID` | `default` | Tenant id used when an inbound message does not explicitly provide one |
 | `SUPPORT_RETRIEVAL_PROVIDER` | `memory` | `memory` or `pgvector` |
 | `SUPPORT_ANSWER_PROVIDER` | `extractive` | `extractive` or `openai` |
 | `SUPPORT_EMBEDDING_PROVIDER` | `local` | `local` or `openai`; Helm defaults to `openai` for pgvector |
 | `SUPPORT_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding model when `SUPPORT_EMBEDDING_PROVIDER=openai` |
 | `SUPPORT_EMBEDDING_DIMENSIONS` | `64` | pgvector embedding size; Helm defaults to `1536` for OpenAI embeddings |
-| `SUPPORT_QUESTION_PLANNER_PROVIDER` | `rules` | `rules` or `llm`; planner receives only the latest customer message and decides scope/history routing |
+| `SUPPORT_QUESTION_PLANNER_PROVIDER` | `rules` | `rules` or `llm`; planner receives the latest customer message plus compact greeting metadata and decides scope/history routing |
 | `SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER` | `rules` | `rules` or `llm`; `llm` uses OpenAI to detect explicit human-agent requests |
 | `OPENAI_API_KEY` | unset | Required when `SUPPORT_ANSWER_PROVIDER=openai`, `SUPPORT_EMBEDDING_PROVIDER=openai`, `SUPPORT_QUESTION_PLANNER_PROVIDER=llm`, or `SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER=llm` |
 | `SUPPORT_LLM_MODEL` | `gpt-4.1-mini` | OpenAI chat model used by the LLM answer provider |
@@ -419,8 +763,16 @@ Application configuration uses the `SUPPORT_` prefix. LangSmith uses its native
 | `SUPPORT_CONFIDENCE_THRESHOLD` | `0.60` | Below this, mark the response as low confidence |
 | `SUPPORT_CONVERSATION_HISTORY_MAX_MESSAGES` | `50` | Safety cap for exact current-conversation messages passed into context |
 | `SUPPORT_GREETING_LAPSE_MINUTES` | `60` | Minutes after the previous customer message before the prompt says to greet again |
+| `SUPPORT_TENANT_CONFIG_CACHE_PROVIDER` | `memory` | Tenant config cache provider: `memory` or `redis`; Helm defaults to `redis` |
+| `SUPPORT_TENANT_CONFIG_CACHE_TTL_SECONDS` | `300` | TTL for Redis tenant config cache entries |
+| `SUPPORT_REDIS_URL` | unset | Redis URL required when `SUPPORT_TENANT_CONFIG_CACHE_PROVIDER=redis`; Helm points this at the bundled Redis service |
+| `SUPPORT_VECTOR_COLLECTION` | `customer-support` | Default vector collection/index name used by tenant config defaults; tenant namespaces isolate data |
 | `SUPPORT_TELEGRAM_BOT_TOKEN` | unset | Telegram bot token used to send replies with `sendMessage` |
 | `SUPPORT_TELEGRAM_WEBHOOK_SECRET_TOKEN` | unset | Optional Telegram webhook secret token checked against `X-Telegram-Bot-Api-Secret-Token` |
+| `SUPPORT_TELEGRAM_CREDENTIAL_PROVIDER` | `static` | `static` for env-backed Telegram credentials, or `kubernetes` for tenant-specific Secret lookup |
+| `SUPPORT_TELEGRAM_SECRET_NAMESPACE` | unset | Kubernetes namespace used for tenant Telegram Secret lookup; Helm defaults this to the pod namespace |
+| `SUPPORT_TELEGRAM_BOT_TOKEN_SECRET_KEY` | `TELEGRAM_BOT_TOKEN` | Secret key containing a tenant Telegram bot token |
+| `SUPPORT_TELEGRAM_WEBHOOK_SECRET_TOKEN_SECRET_KEY` | `TELEGRAM_WEBHOOK_SECRET_TOKEN` | Secret key containing a tenant Telegram webhook secret token |
 | `SUPPORT_WHATSAPP_ACCESS_TOKEN` | unset | WhatsApp Cloud API access token used to send replies |
 | `SUPPORT_WHATSAPP_PHONE_NUMBER_ID` | unset | WhatsApp Cloud API phone number id used for outbound messages |
 | `SUPPORT_WHATSAPP_VERIFY_TOKEN` | unset | WhatsApp webhook verification token checked during Meta webhook setup |
@@ -429,12 +781,27 @@ Application configuration uses the `SUPPORT_` prefix. LangSmith uses its native
 | `SUPPORT_KNOWLEDGE_PATH` | unset | Directory containing `.md`/`.txt` KB files; no startup documents are loaded when unset |
 | `SUPPORT_KNOWLEDGE_CHUNK_SIZE` | `1200` | Character target size for seed KB chunks before embedding |
 | `SUPPORT_KNOWLEDGE_CHUNK_OVERLAP` | `200` | Character overlap between adjacent seed KB chunks |
+| `SUPPORT_KNOWLEDGE_OBJECT_STORE_PROVIDER` | `memory` | Uploaded KB object store provider: `memory` or `s3`; Helm defaults to `s3` with bundled MinIO |
+| `SUPPORT_KNOWLEDGE_OBJECT_STORE_BUCKET` | `customer-support-knowledge` | Bucket for uploaded KB source files |
+| `SUPPORT_S3_ENDPOINT_URL` | unset | S3-compatible endpoint URL, e.g. bundled MinIO in Helm |
+| `SUPPORT_S3_ACCESS_KEY_ID` | unset | S3/MinIO access key id |
+| `SUPPORT_S3_SECRET_ACCESS_KEY` | unset | S3/MinIO secret access key |
+| `SUPPORT_S3_REGION_NAME` | `us-east-1` | S3 region name used by the object-store client |
+| `SUPPORT_S3_SECURE` | `false` | Use HTTPS for S3 endpoints that omit a URL scheme |
+| `SUPPORT_KNOWLEDGE_INGESTION_QUEUE_PROVIDER` | `memory` | Knowledge ingestion queue provider: `memory` or `redis`; Helm defaults to `redis` |
+| `SUPPORT_KNOWLEDGE_INGESTION_QUEUE_NAME` | `knowledge-ingestion-jobs` | Redis queue name for KB ingestion jobs |
+| `SUPPORT_KNOWLEDGE_INGESTION_WORKER_POLL_SECONDS` | `5` | Worker Redis polling timeout |
+| `SUPPORT_KNOWLEDGE_PDF_OCR_PROVIDER` | `none` | Set to `openai` to OCR scanned PDF pages during tenant PDF KB ingestion |
+| `SUPPORT_KNOWLEDGE_PDF_OCR_MODEL` | unset | Vision-capable model for scanned PDF OCR; defaults to `SUPPORT_LLM_MODEL` when unset |
+| `SUPPORT_KNOWLEDGE_PDF_OCR_DPI` | `120` | DPI used when rendering scanned PDF pages to PNG before OCR |
 | `SUPPORT_LOG_LEVEL` | `INFO` | Application log level, for example `DEBUG` |
 | `SUPPORT_LOG_FORMAT` | `{asctime} - {levelname}:{name}:{message}` | Python logging format using `{}` style |
 | `LANGSMITH_TRACING` | `true` | Enable LangSmith tracing |
 | `LANGSMITH_TRACING_V2` | `true` | Enable LangSmith tracing v2 |
+| `LANGCHAIN_TRACING_V2` | `true` | Legacy LangChain tracing v2 env var kept for SDK compatibility |
 | `LANGSMITH_ENDPOINT` | `https://eu.api.smith.langchain.com` | LangSmith endpoint |
-| `LANGSMITH_PROJECT` | `customer-support` | LangSmith project name |
+| `LANGSMITH_PROJECT` | `customer-service-local` | Deployment-level LangSmith trace project; tenant identity is represented with tags/metadata |
+| `LANGSMITH_WORKSPACE_ID` | unset | LangSmith workspace id; required for org-scoped API keys or keys linked to multiple workspaces |
 
 Changing `SUPPORT_EMBEDDING_DIMENSIONS` changes the required pgvector column type. Use a
 fresh database, recreate the `knowledge_documents` table, or reindex the KB when moving

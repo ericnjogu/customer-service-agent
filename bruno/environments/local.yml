@@ -1,4 +1,0 @@
-name: local
-variables:
-  - name: host
-    value: localhost:8000

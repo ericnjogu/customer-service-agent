@@ -1,0 +1,56 @@
+info:
+  name: 06 create deployment LangSmith project
+  type: http
+  seq: 6
+
+http:
+  method: post
+  url: "{{langsmith_endpoint}}/api/v1/sessions?upsert=true"
+  headers:
+    - name: x-api-key
+      value: "{{langsmith_api_key}}"
+    - name: x-tenant-id
+      value: "{{langsmith_workspace_id}}"
+    - name: content-type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "name": "{{deployment_langsmith_project}}",
+        "description": "Deployment-level tracing project for customer service",
+        "start_time": "{{langsmith_start_time}}",
+        "extra": {
+          "metadata": {
+            "tenant_id": "{{tenant_id}}",
+            "tenant_slug": "{{tenant_slug}}",
+            "source": "bruno-onboarding"
+          }
+        }
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: before-request
+      code: bru.setVar("langsmith_start_time", new Date().toISOString());
+    - type: after-response
+      code: |-
+        if (res.status >= 200 && res.status < 300) {
+          const body = res.body;
+          bru.setVar("deployment_langsmith_project_id", body.id);
+          bru.setVar("deployment_langsmith_project", body.name);
+        }
+
+settings:
+  encodeUrl: false
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+
+docs: |-
+  Creates/upserts the deployment-level LangSmith tracing project. LangSmith projects
+  are represented by tracer sessions in the API. Set `langsmith_workspace_id` to the
+  LangSmith workspace id targeted by the API key; organization-scoped service keys
+  require this header for workspace-scoped resources. Tenant identity is recorded
+  with trace tags/metadata, not separate runtime trace projects.

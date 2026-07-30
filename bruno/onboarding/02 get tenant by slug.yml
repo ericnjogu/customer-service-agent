@@ -1,0 +1,40 @@
+info:
+  name: 02 get tenant by slug
+  type: http
+  seq: 2
+
+http:
+  method: get
+  url: http://{{host}}/tenants/by-slug/{{tenant_lookup_slug}}
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        if (res.status === 200) {
+          const tenant = res.body;
+
+          bru.setVar("tenant_id", tenant.tenant_id);
+          bru.setVar("tenant_slug", tenant.slug);
+          bru.setVar("tenant_display_name", tenant.display_name);
+          bru.setVar("tenant_selected_plan", tenant.selected_plan);
+          bru.setVar("vector_namespace", `${tenant.slug}:seed-knowledge`);
+          bru.setVar("tenant_vector_namespace", `${tenant.slug}:seed-knowledge`);
+          bru.setVar("tenant_telegram_secret_name", `tenant-${tenant.slug}-telegram`);
+          bru.setVar("llm_project_name", `customer-service-${tenant.slug}`);
+          bru.setVar("langsmith_project", `customer-service-${tenant.slug}`);
+          bru.setVar("answer_prompt_instructions", `Use ${tenant.display_name}'s warm, concise brand voice.`);
+          bru.setVar("planner_prompt_instructions", `Questions about ${tenant.display_name}'s services, bookings, policies, locations, contact channels, and support process are in scope.`);
+        }
+
+settings:
+  encodeUrl: false
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+
+docs: |-
+  Deliberately reads back the tenant by slug and populates Bruno runtime variables
+  used by provider project creation and tenant config. This keeps tenant lookup an
+  explicit step instead of treating duplicate tenant creation as a successful lookup.

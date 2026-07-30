@@ -6,6 +6,7 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 
 from app.adapters.telegram import telegram_reply_text, telegram_update_to_incoming_message
 from app.adapters.whatsapp import whatsapp_reply_text, whatsapp_update_to_incoming_messages
+from app.api.tenants import router as tenants_router
 from app.config import get_settings
 from app.container import create_container
 from app.graph import invoke_support_graph
@@ -57,6 +58,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Customer Support Agent", version="0.1.0", lifespan=lifespan)
+app.include_router(tenants_router)
 
 
 @app.get("/healthz")
@@ -65,25 +67,47 @@ async def health() -> dict[str, str]:
 
 
 @app.post("/messages/customer", response_model=SupportReply)
-async def receive_customer_message(message: IncomingMessage, request: Request) -> SupportReply:
-    return await invoke_support_graph(request.app.state.container.graph, message)
+async def receive_customer_message(
+    message: IncomingMessage,
+    request: Request,
+    x_support_tenant_id: str | None = Header(default=None),
+) -> SupportReply:
+    settings = get_settings()
+    return await invoke_support_graph(
+        request.app.state.container.graph,
+        with_tenant(message, x_support_tenant_id, settings.default_tenant_id),
+    )
 
 
 @app.post("/webhooks/synthetic", response_model=SupportReply)
-async def synthetic_webhook(message: IncomingMessage, request: Request) -> SupportReply:
-    return await receive_customer_message(message, request)
+async def synthetic_webhook(
+    message: IncomingMessage,
+    request: Request,
+    x_support_tenant_id: str | None = Header(default=None),
+) -> SupportReply:
+    settings = get_settings()
+    return await invoke_support_graph(
+        request.app.state.container.graph,
+        with_tenant(message, x_support_tenant_id, settings.default_tenant_id),
+    )
 
 
 @app.post("/webhooks/telegram")
 async def telegram_webhook(
     update: dict,
     request: Request,
+    tenant_id: str | None = Query(default=None),
     x_telegram_bot_api_secret_token: str | None = Header(default=None),
+    x_support_tenant_id: str | None = Header(default=None),
 ) -> dict:
     settings = get_settings()
+    resolved_tenant_id = tenant_id or x_support_tenant_id or settings.default_tenant_id
+    telegram_credentials = await request.app.state.container.telegram_credentials.resolve(
+        resolved_tenant_id
+    )
     if (
-        settings.telegram_webhook_secret_token
-        and x_telegram_bot_api_secret_token != settings.telegram_webhook_secret_token
+        telegram_credentials.webhook_secret_token
+        and x_telegram_bot_api_secret_token != telegram_credentials.webhook_secret_token
     ):
         raise HTTPException(status_code=403, detail="Invalid Telegram webhook secret token")
 
@@ -91,10 +115,15 @@ async def telegram_webhook(
     if message is None:
         return {"ok": True, "ignored": True}
 
+    message = with_tenant(message, resolved_tenant_id, settings.default_tenant_id)
     reply = await invoke_support_graph(request.app.state.container.graph, message)
     telegram_sender = request.app.state.container.telegram_sender
     if telegram_sender:
-        await telegram_sender.send_message(message.external_chat_id, telegram_reply_text(reply))
+        await telegram_sender.send_message(
+            message.external_chat_id,
+            telegram_reply_text(reply),
+            tenant_id=message.tenant_id,
+        )
 
     return {"ok": True, "reply": reply.model_dump(mode="json")}
 
@@ -118,14 +147,21 @@ async def verify_whatsapp_webhook(
 
 
 @app.post("/webhooks/whatsapp")
-async def whatsapp_webhook(update: dict, request: Request) -> dict:
+async def whatsapp_webhook(
+    update: dict,
+    request: Request,
+    tenant_id: str | None = Query(default=None),
+    x_support_tenant_id: str | None = Header(default=None),
+) -> dict:
     messages = whatsapp_update_to_incoming_messages(update)
     if not messages:
         return {"ok": True, "ignored": True}
 
+    settings = get_settings()
     replies = []
     whatsapp_sender = request.app.state.container.whatsapp_sender
     for message in messages:
+        message = with_tenant(message, tenant_id or x_support_tenant_id, settings.default_tenant_id)
         reply = await invoke_support_graph(request.app.state.container.graph, message)
         if whatsapp_sender:
             await whatsapp_sender.send_message(message.external_chat_id, whatsapp_reply_text(reply))
@@ -156,3 +192,18 @@ async def update_conversation_state(
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="Conversation not found") from None
+
+
+def with_tenant(
+    message: IncomingMessage,
+    tenant_id: str | None,
+    default_tenant_id: str,
+) -> IncomingMessage:
+    message_tenant_id = message.tenant_id.strip() or "default"
+    selected_tenant_id = tenant_id or (
+        default_tenant_id if message_tenant_id == "default" else message_tenant_id
+    )
+    normalized_tenant_id = selected_tenant_id.strip() or "default"
+    if normalized_tenant_id == message.tenant_id:
+        return message
+    return message.model_copy(update={"tenant_id": normalized_tenant_id})

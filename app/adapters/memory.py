@@ -1,5 +1,6 @@
+import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 
 from langchain_core.documents import Document
@@ -8,9 +9,17 @@ from app.models import (
     ConversationPromptMetadata,
     ConversationRecord,
     IncomingMessage,
+    KnowledgeIngestionJob,
+    KnowledgeIngestionResult,
     QuestionPlan,
     StoredMessage,
+    TenantConfig,
+    TenantPlan,
+    TenantRecord,
 )
+from app.tenancy import DEFAULT_TENANT_PLAN, generate_tenant_id, normalize_tenant_id, tenant_slug
+
+logger = logging.getLogger(__name__)
 
 STOP_WORDS = {
     "a",
@@ -49,16 +58,17 @@ def tokenize(text: str) -> set[str]:
 
 class MemoryConversationRepository:
     def __init__(self) -> None:
-        self.conversations: dict[tuple[str, str], ConversationRecord] = {}
-        self.messages: dict[str, StoredMessage] = {}
+        self.conversations: dict[tuple[str, str, str], ConversationRecord] = {}
+        self.messages: dict[tuple[str, str], StoredMessage] = {}
 
     async def initialize(self) -> None:
         return None
 
     async def get_or_create(self, message: IncomingMessage) -> ConversationRecord:
-        key = (message.channel, message.external_chat_id)
+        key = (message.tenant_id, message.channel, message.external_chat_id)
         if key not in self.conversations:
             self.conversations[key] = ConversationRecord(
+                tenant_id=message.tenant_id,
                 channel=message.channel,
                 external_chat_id=message.external_chat_id,
                 external_user_id=message.external_user_id,
@@ -91,14 +101,15 @@ class MemoryConversationRepository:
                 "state": state,
             }
         )
-        key = (updated.channel, updated.external_chat_id)
+        key = (updated.tenant_id, updated.channel, updated.external_chat_id)
         self.conversations[key] = updated
         return updated
 
     async def save_message(self, message: StoredMessage) -> bool:
-        if message.event_id in self.messages:
+        key = (message.tenant_id, message.event_id)
+        if key in self.messages:
             return False
-        self.messages[message.event_id] = message
+        self.messages[key] = message
         return True
 
     async def list_messages_since(
@@ -167,6 +178,278 @@ class MemoryRetrievalStore:
         return [document for document in ranked if score(document) > 0][:limit]
 
 
+class MemoryTenantConfigRepository:
+    def __init__(self, default_vector_collection: str = "customer-support") -> None:
+        self.default_vector_collection = default_vector_collection
+        self.configs: dict[str, TenantConfig] = {}
+
+    async def initialize(self) -> None:
+        return None
+
+    async def get(self, tenant_id: str) -> TenantConfig:
+        normalized_tenant_id = normalize_tenant_id(tenant_id)
+        return self.configs.get(
+            normalized_tenant_id,
+            TenantConfig.with_defaults(
+                normalized_tenant_id,
+                vector_collection=self.default_vector_collection,
+            ),
+        )
+
+    async def get_existing(self, tenant_id: str) -> TenantConfig | None:
+        return self.configs.get(normalize_tenant_id(tenant_id))
+
+    async def upsert(
+        self,
+        tenant_id: str,
+        *,
+        selected_plan: TenantPlan | None = None,
+        enabled_features: list[str] | None = None,
+        answer_prompt_instructions: str | None = None,
+        planner_prompt_instructions: str | None = None,
+        llm_project_id: str | None = None,
+        llm_project_name: str | None = None,
+        langsmith_project: str | None = None,
+        llm_provider: str | None = None,
+        llm_model: str | None = None,
+        llm_base_url: str | None = None,
+        vector_provider: str | None = None,
+        vector_isolation_mode: str | None = None,
+        vector_collection: str | None = None,
+        vector_namespace: str | None = None,
+        telegram_secret_name: str | None = None,
+        whatsapp_secret_name: str | None = None,
+    ) -> TenantConfig:
+        normalized_tenant_id = normalize_tenant_id(tenant_id)
+        existing = await self.get(normalized_tenant_id)
+        updated = existing.model_copy(
+            update={
+                "selected_plan": selected_plan or existing.selected_plan,
+                "enabled_features": (
+                    enabled_features
+                    if enabled_features is not None
+                    else existing.enabled_features
+                ),
+                "answer_prompt_instructions": (
+                    answer_prompt_instructions
+                    if answer_prompt_instructions is not None
+                    else existing.answer_prompt_instructions
+                ),
+                "planner_prompt_instructions": (
+                    planner_prompt_instructions
+                    if planner_prompt_instructions is not None
+                    else existing.planner_prompt_instructions
+                ),
+                "llm_project_id": (
+                    llm_project_id
+                    if llm_project_id is not None
+                    else existing.llm_project_id
+                ),
+                "llm_project_name": (
+                    llm_project_name
+                    if llm_project_name is not None
+                    else existing.llm_project_name
+                ),
+                "langsmith_project": (
+                    langsmith_project
+                    if langsmith_project is not None
+                    else existing.langsmith_project
+                ),
+                "llm_provider": (
+                    llm_provider if llm_provider is not None else existing.llm_provider
+                ),
+                "llm_model": (llm_model if llm_model is not None else existing.llm_model),
+                "llm_base_url": (
+                    llm_base_url if llm_base_url is not None else existing.llm_base_url
+                ),
+                "vector_provider": (
+                    vector_provider
+                    if vector_provider is not None
+                    else existing.vector_provider
+                ),
+                "vector_isolation_mode": (
+                    vector_isolation_mode
+                    if vector_isolation_mode is not None
+                    else existing.vector_isolation_mode
+                ),
+                "vector_collection": (
+                    vector_collection
+                    if vector_collection is not None
+                    else existing.vector_collection
+                ),
+                "vector_namespace": (
+                    vector_namespace
+                    if vector_namespace is not None
+                    else existing.vector_namespace
+                ),
+                "telegram_secret_name": (
+                    telegram_secret_name
+                    if telegram_secret_name is not None
+                    else existing.telegram_secret_name
+                ),
+                "whatsapp_secret_name": (
+                    whatsapp_secret_name
+                    if whatsapp_secret_name is not None
+                    else existing.whatsapp_secret_name
+                ),
+                "updated_at": datetime.now(timezone.utc),
+            }
+        )
+        self.configs[normalized_tenant_id] = updated
+        return updated
+
+
+class MemoryTenantRepository:
+    def __init__(self) -> None:
+        self.tenants: dict[str, TenantRecord] = {}
+
+    async def initialize(self) -> None:
+        return None
+
+    async def get(self, tenant_id: str) -> TenantRecord | None:
+        return self.tenants.get(normalize_tenant_id(tenant_id))
+
+    async def get_by_slug(self, slug: str) -> TenantRecord | None:
+        normalized_slug = tenant_slug(slug)
+        return next(
+            (tenant for tenant in self.tenants.values() if tenant.slug == normalized_slug),
+            None,
+        )
+
+    async def create(
+        self,
+        *,
+        display_name: str,
+        slug: str | None = None,
+        selected_plan: TenantPlan | None = None,
+    ) -> TenantRecord:
+        tenant_id = generate_tenant_id()
+        now = datetime.now(timezone.utc)
+        tenant = TenantRecord(
+            tenant_id=tenant_id,
+            slug=tenant_slug(slug or display_name),
+            display_name=display_name.strip(),
+            selected_plan=selected_plan or DEFAULT_TENANT_PLAN,
+            created_at=now,
+            updated_at=now,
+        )
+        self.tenants[tenant_id] = tenant
+        return tenant
+
+
+class MemoryKnowledgeIngestionJobRepository:
+    def __init__(self) -> None:
+        self.jobs: dict[str, KnowledgeIngestionJob] = {}
+
+    async def initialize(self) -> None:
+        return None
+
+    async def create(
+        self,
+        *,
+        job_id: str,
+        tenant_id: str,
+        filename: str,
+        content_type: str,
+        object_bucket: str,
+        object_key: str,
+        object_etag: str | None = None,
+    ) -> KnowledgeIngestionJob:
+        job = KnowledgeIngestionJob(
+            job_id=job_id,
+            tenant_id=normalize_tenant_id(tenant_id),
+            status="PENDING",
+            filename=filename,
+            content_type=content_type,
+            object_bucket=object_bucket,
+            object_key=object_key,
+            object_etag=object_etag,
+        )
+        self.jobs[job_id] = job
+        logger.info(
+            "Created memory knowledge ingestion job job_id=%s tenant_id=%s status=%s "
+            "bucket=%s key=%s",
+            job.job_id,
+            job.tenant_id,
+            job.status,
+            job.object_bucket,
+            job.object_key,
+        )
+        return job
+
+    async def get(self, tenant_id: str, job_id: str) -> KnowledgeIngestionJob | None:
+        job = self.jobs.get(job_id)
+        if not job or job.tenant_id != normalize_tenant_id(tenant_id):
+            return None
+        return job
+
+    async def get_by_id(self, job_id: str) -> KnowledgeIngestionJob | None:
+        return self.jobs.get(job_id)
+
+    async def mark_running(self, job_id: str) -> KnowledgeIngestionJob:
+        existing = self.jobs[job_id]
+        updated = existing.model_copy(
+            update={
+                "status": "RUNNING",
+                "started_at": datetime.now(timezone.utc),
+                "error_message": None,
+            }
+        )
+        self.jobs[job_id] = updated
+        logger.info(
+            "Marked memory knowledge ingestion job running job_id=%s tenant_id=%s",
+            updated.job_id,
+            updated.tenant_id,
+        )
+        return updated
+
+    async def mark_succeeded(
+        self,
+        job_id: str,
+        *,
+        result: KnowledgeIngestionResult,
+    ) -> KnowledgeIngestionJob:
+        existing = self.jobs[job_id]
+        updated = existing.model_copy(
+            update={
+                "status": "SUCCEEDED",
+                "pages_read": result.pages_read,
+                "pages_with_text": result.pages_with_text,
+                "chunks_created": result.chunks_created,
+                "chunk_ids": result.chunk_ids,
+                "error_message": None,
+                "finished_at": datetime.now(timezone.utc),
+            }
+        )
+        self.jobs[job_id] = updated
+        logger.info(
+            "Marked memory knowledge ingestion job succeeded job_id=%s tenant_id=%s "
+            "chunks_created=%d",
+            updated.job_id,
+            updated.tenant_id,
+            updated.chunks_created,
+        )
+        return updated
+
+    async def mark_failed(self, job_id: str, *, error_message: str) -> KnowledgeIngestionJob:
+        existing = self.jobs[job_id]
+        updated = existing.model_copy(
+            update={
+                "status": "FAILED",
+                "error_message": error_message[:2_000],
+                "finished_at": datetime.now(timezone.utc),
+            }
+        )
+        self.jobs[job_id] = updated
+        logger.info(
+            "Marked memory knowledge ingestion job failed job_id=%s tenant_id=%s error=%s",
+            updated.job_id,
+            updated.tenant_id,
+            updated.error_message,
+        )
+        return updated
+
+
 class ExtractiveAnswerGenerator:
     async def generate(
         self,
@@ -174,6 +457,7 @@ class ExtractiveAnswerGenerator:
         documents: list[Document],
         conversation_history: list[StoredMessage] | None = None,
         conversation_metadata: ConversationPromptMetadata | None = None,
+        tenant_config: TenantConfig | None = None,
     ) -> tuple[str, float]:
         if not documents:
             return "I could not find enough information to answer that safely.", 0.0
@@ -237,6 +521,7 @@ class RuleBasedQuestionPlanner:
         self,
         message: IncomingMessage,
         conversation_metadata: ConversationPromptMetadata | None = None,
+        tenant_config: TenantConfig | None = None,
     ) -> QuestionPlan:
         text = message.text.lower().strip()
         if self._is_arithmetic_question(text) or any(

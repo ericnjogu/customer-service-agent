@@ -4,7 +4,15 @@ from pathlib import Path
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-SEED_KNOWLEDGE_NAMESPACE = "seed-knowledge"
+from app.tenancy import SEED_KNOWLEDGE_NAMESPACE, tenant_knowledge_namespace
+
+__all__ = [
+    "SEED_KNOWLEDGE_NAMESPACE",
+    "tenant_knowledge_namespace",
+    "load_knowledge_documents",
+    "chunk_text",
+]
+
 logger = logging.getLogger(__name__)
 
 SUPPORTED_KNOWLEDGE_EXTENSIONS = {".md", ".txt"}

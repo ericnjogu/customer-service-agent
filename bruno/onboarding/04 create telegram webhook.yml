@@ -1,0 +1,40 @@
+info:
+  name: 04 create Telegram webhook
+  type: http
+  seq: 4
+
+http:
+  method: post
+  url: https://api.telegram.org/bot{{telegram_bot_token}}/setWebhook
+  headers:
+    - name: content-type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "url": "{{telegram_webhook_base_url}}/webhooks/telegram?tenant_id={{tenant_id}}",
+        "secret_token": "{{telegram_webhook_secret_token}}",
+        "allowed_updates": ["message"]
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        if (res.status >= 200 && res.status < 300) {
+          bru.setVar("telegram_webhook_url", `${bru.getVar("telegram_webhook_base_url")}/webhooks/telegram?tenant_id=${bru.getVar("tenant_id")}`);
+          bru.setVar("telegram_webhook_created", res.body.ok);
+        }
+
+settings:
+  encodeUrl: false
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+
+docs: |-
+  Registers the tenant bot webhook with Telegram. Set `telegram_webhook_base_url`
+  to the public HTTPS base URL for this app, for example an ngrok URL without a
+  trailing slash.

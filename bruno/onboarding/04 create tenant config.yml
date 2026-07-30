@@ -1,0 +1,53 @@
+info:
+  name: 07 create tenant config
+  type: http
+  seq: 7
+
+http:
+  method: put
+  url: http://{{host}}/tenants/{{tenant_id}}/config
+  headers:
+    - name: content-type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "selected_plan": "{{tenant_selected_plan}}",
+        "enabled_features": {{tenant_enabled_features_json}},
+        "answer_prompt_instructions": "{{answer_prompt_instructions}}",
+        "planner_prompt_instructions": "{{planner_prompt_instructions}}",
+        "llm_project_id": "{{llm_project_id}}",
+        "llm_project_name": "{{llm_project_name}}",
+        "langsmith_project": "{{langsmith_project}}",
+        "llm_provider": "{{llm_provider}}",
+        "llm_model": "{{llm_model}}",
+        "vector_namespace": "{{vector_namespace}}",
+        "telegram_secret_name": "{{tenant_telegram_secret_name}}",
+        "whatsapp_secret_name": "tenant-{{tenant_slug}}-whatsapp"
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        const body = res.body;
+        bru.setVar("tenant_config_tenant_id", body.tenant_id);
+        bru.setVar("tenant_config_vector_namespace", body.vector_namespace);
+        bru.setVar("tenant_config_langsmith_project", body.langsmith_project);
+        bru.setVar("tenant_config_llm_project_id", body.llm_project_id);
+
+settings:
+  encodeUrl: false
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+
+docs: |-
+  Updates tenant runtime config using only non-default onboarding values captured
+  from the previous requests. Plan, enabled features, vector provider, vector
+  isolation mode and vector collection are already set by tenant creation/defaults
+  unless intentionally changed later. This request overrides vector namespace to
+  use the tenant slug, which keeps provider-facing names readable while the app
+  still routes by immutable tenant id.

@@ -1,7 +1,7 @@
 # Customer Support Agent
 
 Increment 4 is a locally runnable vertical slice using FastAPI, LangGraph, LangChain
-documents, tenant KB ingestion, conversation routing state, optional LLM-backed answer
+documents, tenant-scoped KB retrieval, conversation routing state, optional LLM-backed answer
 generation, and configurable retrieval/answer boundaries. Helm deploys the service with
 PostgreSQL and pgvector. No external LLM key is needed for the default local path: a
 deterministic extractive generator and local hash embeddings make the workflow inspectable
@@ -17,8 +17,6 @@ and reproducible.
 - In-memory adapters for fast development and tests.
 - PostgreSQL conversation persistence and pgvector retrieval in Kubernetes.
 - Startup knowledge loaded from a mounted directory or ConfigMap.
-- Async per-tenant PDF KB ingestion through `POST /tenants/{tenant_id}/knowledge/pdf`,
-  Redis, a worker process, and S3-compatible object storage/MinIO.
 - Conversation routing state updates for the handoff foundation.
 - Optional OpenAI/LangChain answer provider behind `SUPPORT_ANSWER_PROVIDER=openai`.
 - Optional OpenAI semantic embeddings behind `SUPPORT_EMBEDDING_PROVIDER=openai`.
@@ -28,9 +26,9 @@ and reproducible.
   `SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER=llm`.
 - Helm chart validation and API/graph tests.
 
-Telegram/WhatsApp support group creation, admin KB upload UI/dashboard, non-PDF KB upload
-types, OCR/image PDF extraction, and conversation memory are intentionally reserved for
-later increments.
+Telegram/WhatsApp support group creation, admin KB/source management UI, live source tools,
+cloud-document connectors, multimedia handling, and conversation memory are intentionally
+reserved for later increments.
 
 ## Run in the IDE
 
@@ -143,117 +141,11 @@ recipe; `nerdctl`, rather than Docker, builds it for Kubernetes.
 The default password in `values.yaml` is deliberately local-only. Override it outside local
 development and use a secret manager in production.
 
-### Ingest tenant KB PDFs through the API
-
-The forward path for tenant KB setup is an API endpoint that can be called by the SaaS
-admin today and protected for tenant owner/admin users later:
-
-```bash
-curl -X POST http://localhost:8000/tenants/maxys/knowledge/pdf \
-  -F "file=@./Maxys Lounge Menu v1.pdf;type=application/pdf"
-```
-
-The endpoint stores the uploaded PDF in the configured S3-compatible object store
-(MinIO in local Helm), creates a durable ingestion job, enqueues the job id on Redis, and
-returns `202 Accepted` immediately:
-
-```json
-{
-  "job_id": "kbi_...",
-  "tenant_id": "maxys",
-  "status": "PENDING",
-  "filename": "Maxys-Lounge-Menu-v1.pdf",
-  "content_type": "application/pdf",
-  "object_bucket": "customer-support-knowledge",
-  "object_key": "tenants/maxys/knowledge/kbi_.../Maxys-Lounge-Menu-v1.pdf",
-  "object_etag": "..."
-}
-```
-
-The worker process consumes the Redis queue, downloads the PDF from MinIO, extracts/OCRs
-text, chunks it with `SUPPORT_KNOWLEDGE_CHUNK_SIZE` and
-`SUPPORT_KNOWLEDGE_CHUNK_OVERLAP`, embeds the chunks, and writes them to the tenant's
-configured vector namespace. Poll job status with:
-
-```bash
-curl http://localhost:8000/tenants/maxys/knowledge/ingestions/kbi_...
-```
-
-Successful jobs include page/chunk counts and chunk ids. Each stored chunk has metadata
-linking it back to the uploaded object: `ingestion_job_id`, `object_bucket`,
-`object_key`, and `object_etag`.
-
-When uploading from Bruno or another API client, the upload response only confirms that
-the job was queued. Follow the worker logs to watch the long-running ingestion finish:
-
-```bash
-kubectl logs -n customer-support deployment/cs-local-customer-support-worker -f
-```
-
-The worker logs show job dequeue, object download, PDF text extraction, OCR fallback,
-page chunking, vector upsert, and final `SUCCEEDED`/`FAILED` status. API pod logs show
-upload receipt, object storage, job creation, and queueing:
-
-```bash
-kubectl logs -n customer-support deployment/cs-local-customer-support-app -f
-```
-
-By default, the endpoint extracts embedded PDF text only. For scanned/image PDFs, enable
-the vision OCR fallback:
-
-```bash
-SUPPORT_KNOWLEDGE_PDF_OCR_PROVIDER=openai \
-OPENAI_API_KEY="$OPENAI_API_KEY" \
-uv run uvicorn app.main:app --reload
-```
-
-In Helm:
-
-```bash
-helm upgrade --install cs-local helm/customer-support \
-  --namespace customer-support \
-  --set knowledge.pdfOcr.provider=openai
-```
-
-When OCR is enabled, pages without embedded text are rendered to PNG in-process with
-PyMuPDF and sent to the configured vision-capable LLM. This replaces the manual
-`pdftoppm`/image-resize/OCR workflow used during exploration, while keeping the same
-tenant ingestion endpoint. Pages that already contain embedded text are not sent for OCR.
-
-Run a local worker process against the same configured Redis/object store with:
-
-```bash
-uv run python -m app.worker
-```
-
-Local Helm uses MinIO AIStor for the bundled S3-compatible object store. AIStor requires a
-license for S3 operations. Keep the license out of the repository and create a Kubernetes
-Secret from your downloaded license file:
-
-```bash
-kubectl create secret generic cs-local-aistor-license \
-  --namespace customer-support \
-  --from-file=minio.license=/path/to/minio.license \
-  --dry-run=client \
-  -o yaml | kubectl apply -f -
-```
-
-Then reference it during deploy:
-
-```bash
-helm upgrade --install cs-local helm/customer-support \
-  --namespace customer-support \
-  --set minio.license.existingSecret=cs-local-aistor-license
-```
-
-For throwaway local experiments only, the chart also supports
-`--set-file minio.license.value=/path/to/minio.license`, but the Secret-based form keeps
-the license out of shell history and generated values.
-
 ### Mount local KB files through a ConfigMap
 
-ConfigMaps remain available as an optional local/bootstrap path, but the API ingestion path
-above is closer to the future admin self-service flow.
+ConfigMaps are the current local/bootstrap path for seed KB. Future increments can add
+tenant-approved live source tools and cloud-document connectors without making the app own
+PDF or multimedia storage.
 
 Keep the actual KB files outside the repository, for example:
 
@@ -781,19 +673,6 @@ Application configuration uses the `SUPPORT_` prefix. LangSmith uses its native
 | `SUPPORT_KNOWLEDGE_PATH` | unset | Directory containing `.md`/`.txt` KB files; no startup documents are loaded when unset |
 | `SUPPORT_KNOWLEDGE_CHUNK_SIZE` | `1200` | Character target size for seed KB chunks before embedding |
 | `SUPPORT_KNOWLEDGE_CHUNK_OVERLAP` | `200` | Character overlap between adjacent seed KB chunks |
-| `SUPPORT_KNOWLEDGE_OBJECT_STORE_PROVIDER` | `memory` | Uploaded KB object store provider: `memory` or `s3`; Helm defaults to `s3` with bundled MinIO |
-| `SUPPORT_KNOWLEDGE_OBJECT_STORE_BUCKET` | `customer-support-knowledge` | Bucket for uploaded KB source files |
-| `SUPPORT_S3_ENDPOINT_URL` | unset | S3-compatible endpoint URL, e.g. bundled MinIO in Helm |
-| `SUPPORT_S3_ACCESS_KEY_ID` | unset | S3/MinIO access key id |
-| `SUPPORT_S3_SECRET_ACCESS_KEY` | unset | S3/MinIO secret access key |
-| `SUPPORT_S3_REGION_NAME` | `us-east-1` | S3 region name used by the object-store client |
-| `SUPPORT_S3_SECURE` | `false` | Use HTTPS for S3 endpoints that omit a URL scheme |
-| `SUPPORT_KNOWLEDGE_INGESTION_QUEUE_PROVIDER` | `memory` | Knowledge ingestion queue provider: `memory` or `redis`; Helm defaults to `redis` |
-| `SUPPORT_KNOWLEDGE_INGESTION_QUEUE_NAME` | `knowledge-ingestion-jobs` | Redis queue name for KB ingestion jobs |
-| `SUPPORT_KNOWLEDGE_INGESTION_WORKER_POLL_SECONDS` | `5` | Worker Redis polling timeout |
-| `SUPPORT_KNOWLEDGE_PDF_OCR_PROVIDER` | `none` | Set to `openai` to OCR scanned PDF pages during tenant PDF KB ingestion |
-| `SUPPORT_KNOWLEDGE_PDF_OCR_MODEL` | unset | Vision-capable model for scanned PDF OCR; defaults to `SUPPORT_LLM_MODEL` when unset |
-| `SUPPORT_KNOWLEDGE_PDF_OCR_DPI` | `120` | DPI used when rendering scanned PDF pages to PNG before OCR |
 | `SUPPORT_LOG_LEVEL` | `INFO` | Application log level, for example `DEBUG` |
 | `SUPPORT_LOG_FORMAT` | `{asctime} - {levelname}:{name}:{message}` | Python logging format using `{}` style |
 | `LANGSMITH_TRACING` | `true` | Enable LangSmith tracing |

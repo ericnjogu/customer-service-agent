@@ -22,7 +22,6 @@ TenantFeature = Literal["multimedia", "telegram", "whatsapp"]
 LlmProvider = Literal["langchain-compatible", "openai"]
 VectorProvider = Literal["pgvector", "pinecone", "qdrant"]
 VectorIsolationMode = Literal["shared_collection", "dedicated_collection"]
-KnowledgeIngestionStatus = Literal["PENDING", "RUNNING", "SUCCEEDED", "FAILED"]
 
 
 class IncomingMessage(BaseModel):
@@ -194,36 +193,6 @@ class TenantConfigUpdate(BaseModel):
     @classmethod
     def validate_llm_base_url(cls, value: str | None) -> str | None:
         return validate_optional_http_url(value)
-
-
-class KnowledgeIngestionResult(BaseModel):
-    tenant_id: str
-    namespace: str
-    filename: str
-    content_type: str
-    pages_read: int
-    pages_with_text: int
-    chunks_created: int
-    chunk_ids: list[str]
-
-
-class KnowledgeIngestionJob(BaseModel):
-    job_id: str = Field(min_length=1)
-    tenant_id: str = Field(min_length=1)
-    status: KnowledgeIngestionStatus
-    filename: str = Field(min_length=1, max_length=500)
-    content_type: str = Field(min_length=1, max_length=500)
-    object_bucket: str = Field(min_length=1, max_length=500)
-    object_key: str = Field(min_length=1, max_length=1_000)
-    object_etag: str | None = Field(default=None, max_length=500)
-    pages_read: int = 0
-    pages_with_text: int = 0
-    chunks_created: int = 0
-    chunk_ids: list[str] = Field(default_factory=list)
-    error_message: str | None = Field(default=None, max_length=2_000)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
 
 
 def validate_optional_http_url(value: str | None) -> str | None:

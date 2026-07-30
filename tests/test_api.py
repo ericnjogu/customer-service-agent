@@ -247,52 +247,6 @@ def test_tenant_config_rejects_unknown_feature() -> None:
     )
 
 
-def test_tenant_pdf_knowledge_endpoint_uploads_pdf_for_ingestion(monkeypatch) -> None:
-    monkeypatch.setenv("SUPPORT_SEED_KNOWLEDGE", "false")
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/tenants/tenant-a/knowledge/pdf",
-            files={"file": ("menu.pdf", b"%PDF test", "application/pdf")},
-        )
-        job_id = response.json()["job_id"]
-        status_response = client.get(f"/tenants/tenant-a/knowledge/ingestions/{job_id}")
-
-    assert response.status_code == 202
-    assert response.json()["tenant_id"] == "tenant-a"
-    assert response.json()["status"] == "PENDING"
-    assert response.json()["filename"] == "menu.pdf"
-    assert response.json()["content_type"] == "application/pdf"
-    assert response.json()["object_bucket"] == "customer-support-knowledge"
-    assert response.json()["object_key"].startswith(f"tenants/tenant-a/knowledge/{job_id}/")
-    assert status_response.status_code == 200
-    assert status_response.json()["job_id"] == job_id
-    assert status_response.json()["status"] == "PENDING"
-
-
-def test_tenant_pdf_knowledge_status_returns_404_for_unknown_job(monkeypatch) -> None:
-    monkeypatch.setenv("SUPPORT_SEED_KNOWLEDGE", "false")
-
-    with TestClient(app) as client:
-        response = client.get("/tenants/tenant-a/knowledge/ingestions/missing-job")
-
-    assert response.status_code == 404
-    assert response.json()["detail"] == "Knowledge ingestion job not found"
-
-
-def test_tenant_pdf_knowledge_endpoint_rejects_non_pdf_upload(monkeypatch) -> None:
-    monkeypatch.setenv("SUPPORT_SEED_KNOWLEDGE", "false")
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/tenants/tenant-a/knowledge/pdf",
-            files={"file": ("menu.txt", b"hello", "text/plain")},
-        )
-
-    assert response.status_code == 415
-    assert response.json()["detail"] == "Only PDF knowledge uploads are supported"
-
-
 def test_tenant_config_rejects_unknown_providers() -> None:
     with TestClient(app) as client:
         llm_response = client.put(

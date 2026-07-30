@@ -43,23 +43,6 @@ redis:
   port: 6379
   url: ""
 
-minio:
-  enabled: true
-  image: quay.io/minio/aistor/minio:RELEASE.2026-03-26T21-24-40Z
-  port: 9000
-  consolePort: 9001
-  rootUser: minioadmin
-  rootPassword: local-only-minio-password
-  license:
-    value: ""
-    existingSecret: cs-local-aistor-license
-    secretKey: minio.license
-  storage: 1Gi
-
-worker:
-  enabled: true
-  replicaCount: 1
-
 retrieval:
   provider: pgvector
 
@@ -114,20 +97,6 @@ knowledge:
   seedOnStartup: true
   chunkSize: 1200
   chunkOverlap: 200
-  objectStore:
-    provider: s3
-    bucket: customer-support-knowledge
-    endpointUrl: ""
-    regionName: us-east-1
-    secure: "false"
-  ingestionQueue:
-    provider: redis
-    name: knowledge-ingestion-jobs
-    workerPollSeconds: 5
-  pdfOcr:
-    provider: none
-    model: ""
-    dpi: 120
 
 logging:
   level: INFO

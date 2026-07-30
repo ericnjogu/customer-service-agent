@@ -9,8 +9,6 @@ from app.models import (
     ConversationPromptMetadata,
     ConversationRecord,
     IncomingMessage,
-    KnowledgeIngestionJob,
-    KnowledgeIngestionResult,
     QuestionPlan,
     StoredMessage,
     TenantConfig,
@@ -335,119 +333,6 @@ class MemoryTenantRepository:
         )
         self.tenants[tenant_id] = tenant
         return tenant
-
-
-class MemoryKnowledgeIngestionJobRepository:
-    def __init__(self) -> None:
-        self.jobs: dict[str, KnowledgeIngestionJob] = {}
-
-    async def initialize(self) -> None:
-        return None
-
-    async def create(
-        self,
-        *,
-        job_id: str,
-        tenant_id: str,
-        filename: str,
-        content_type: str,
-        object_bucket: str,
-        object_key: str,
-        object_etag: str | None = None,
-    ) -> KnowledgeIngestionJob:
-        job = KnowledgeIngestionJob(
-            job_id=job_id,
-            tenant_id=normalize_tenant_id(tenant_id),
-            status="PENDING",
-            filename=filename,
-            content_type=content_type,
-            object_bucket=object_bucket,
-            object_key=object_key,
-            object_etag=object_etag,
-        )
-        self.jobs[job_id] = job
-        logger.info(
-            "Created memory knowledge ingestion job job_id=%s tenant_id=%s status=%s "
-            "bucket=%s key=%s",
-            job.job_id,
-            job.tenant_id,
-            job.status,
-            job.object_bucket,
-            job.object_key,
-        )
-        return job
-
-    async def get(self, tenant_id: str, job_id: str) -> KnowledgeIngestionJob | None:
-        job = self.jobs.get(job_id)
-        if not job or job.tenant_id != normalize_tenant_id(tenant_id):
-            return None
-        return job
-
-    async def get_by_id(self, job_id: str) -> KnowledgeIngestionJob | None:
-        return self.jobs.get(job_id)
-
-    async def mark_running(self, job_id: str) -> KnowledgeIngestionJob:
-        existing = self.jobs[job_id]
-        updated = existing.model_copy(
-            update={
-                "status": "RUNNING",
-                "started_at": datetime.now(timezone.utc),
-                "error_message": None,
-            }
-        )
-        self.jobs[job_id] = updated
-        logger.info(
-            "Marked memory knowledge ingestion job running job_id=%s tenant_id=%s",
-            updated.job_id,
-            updated.tenant_id,
-        )
-        return updated
-
-    async def mark_succeeded(
-        self,
-        job_id: str,
-        *,
-        result: KnowledgeIngestionResult,
-    ) -> KnowledgeIngestionJob:
-        existing = self.jobs[job_id]
-        updated = existing.model_copy(
-            update={
-                "status": "SUCCEEDED",
-                "pages_read": result.pages_read,
-                "pages_with_text": result.pages_with_text,
-                "chunks_created": result.chunks_created,
-                "chunk_ids": result.chunk_ids,
-                "error_message": None,
-                "finished_at": datetime.now(timezone.utc),
-            }
-        )
-        self.jobs[job_id] = updated
-        logger.info(
-            "Marked memory knowledge ingestion job succeeded job_id=%s tenant_id=%s "
-            "chunks_created=%d",
-            updated.job_id,
-            updated.tenant_id,
-            updated.chunks_created,
-        )
-        return updated
-
-    async def mark_failed(self, job_id: str, *, error_message: str) -> KnowledgeIngestionJob:
-        existing = self.jobs[job_id]
-        updated = existing.model_copy(
-            update={
-                "status": "FAILED",
-                "error_message": error_message[:2_000],
-                "finished_at": datetime.now(timezone.utc),
-            }
-        )
-        self.jobs[job_id] = updated
-        logger.info(
-            "Marked memory knowledge ingestion job failed job_id=%s tenant_id=%s error=%s",
-            updated.job_id,
-            updated.tenant_id,
-            updated.error_message,
-        )
-        return updated
 
 
 class ExtractiveAnswerGenerator:

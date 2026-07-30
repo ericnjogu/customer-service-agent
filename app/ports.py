@@ -8,8 +8,6 @@ from app.models import (
     ConversationPromptMetadata,
     ConversationRecord,
     IncomingMessage,
-    KnowledgeIngestionJob,
-    KnowledgeIngestionResult,
     QuestionPlan,
     StoredMessage,
     TenantConfig,
@@ -102,66 +100,6 @@ class TenantRepository(Protocol):
         slug: str | None = None,
         selected_plan: TenantPlan | None = None,
     ) -> TenantRecord: ...
-
-
-class StoredKnowledgeObject(Protocol):
-    bucket: str
-    key: str
-    etag: str | None
-
-
-class KnowledgeObjectStore(Protocol):
-    async def initialize(self) -> None: ...
-
-    async def put(
-        self,
-        *,
-        key: str,
-        content: bytes,
-        content_type: str,
-        metadata: dict[str, str],
-    ) -> StoredKnowledgeObject: ...
-
-    async def get(self, *, key: str) -> bytes: ...
-
-
-class KnowledgeIngestionJobRepository(Protocol):
-    async def initialize(self) -> None: ...
-
-    async def create(
-        self,
-        *,
-        job_id: str,
-        tenant_id: str,
-        filename: str,
-        content_type: str,
-        object_bucket: str,
-        object_key: str,
-        object_etag: str | None = None,
-    ) -> KnowledgeIngestionJob: ...
-
-    async def get(self, tenant_id: str, job_id: str) -> KnowledgeIngestionJob | None: ...
-
-    async def get_by_id(self, job_id: str) -> KnowledgeIngestionJob | None: ...
-
-    async def mark_running(self, job_id: str) -> KnowledgeIngestionJob: ...
-
-    async def mark_succeeded(
-        self,
-        job_id: str,
-        *,
-        result: KnowledgeIngestionResult,
-    ) -> KnowledgeIngestionJob: ...
-
-    async def mark_failed(self, job_id: str, *, error_message: str) -> KnowledgeIngestionJob: ...
-
-
-class KnowledgeIngestionQueue(Protocol):
-    async def enqueue(self, job_id: str) -> None: ...
-
-    async def dequeue(self, *, timeout_seconds: int = 5) -> str | None: ...
-
-    async def close(self) -> None: ...
 
 
 class EmbeddingProvider(Protocol):

@@ -88,22 +88,11 @@ This project currently uses increment-based milestones instead of semantic versi
   runtime variables from responses, and creating the tenant config from those values.
 - LangSmith tracing now targets the deployment-level `LANGSMITH_PROJECT`; tenant
   LangSmith/project fields are retained as tags/metadata for filtering and audit.
-- Asynchronous per-tenant PDF KB ingestion: `POST /tenants/{tenant_id}/knowledge/pdf`
-  stores uploads in S3-compatible object storage, creates a durable ingestion job,
-  enqueues it on Redis, and returns `202 Accepted`; workers process jobs and
-  `GET /tenants/{tenant_id}/knowledge/ingestions/{job_id}` returns status/results.
-- Bundled local MinIO and a knowledge ingestion worker deployment in Helm. Ingested
-  chunks store `ingestion_job_id`, `object_bucket`, `object_key`, and `object_etag`
-  metadata linking them to the uploaded source PDF.
-- Info-level ingestion lifecycle logs for API upload receipt, object storage, Redis
-  queueing/dequeueing, worker job execution, PDF extraction/OCR, chunking, vector upsert,
-  and final job status.
-- Optional scanned PDF OCR fallback for tenant PDF KB ingestion, using PyMuPDF page
-  rendering plus a vision-capable OpenAI/LangChain chat model for pages without embedded
-  PDF text.
-
 ### Changed
 
+- Removed the over-scoped PDF upload ingestion path, ingestion worker, S3/MinIO object
+  store wiring, and scanned-PDF OCR dependencies so future online-source or
+  cloud-document connectors can be added behind a smaller, deliberate boundary.
 - Collapsed conversation status handling into one routing state: `BOT_ACTIVE`,
   `HUMAN_REQUESTED`, and `HUMAN_ACTIVE`.
 - Low-confidence graph replies now return `low_confidence: true` without changing the

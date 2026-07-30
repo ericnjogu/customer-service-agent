@@ -178,40 +178,6 @@ spec:
               value: {{ .Values.knowledge.chunkSize | quote }}
             - name: SUPPORT_KNOWLEDGE_CHUNK_OVERLAP
               value: {{ .Values.knowledge.chunkOverlap | quote }}
-            - name: SUPPORT_KNOWLEDGE_OBJECT_STORE_PROVIDER
-              value: {{ .Values.knowledge.objectStore.provider | quote }}
-            - name: SUPPORT_KNOWLEDGE_OBJECT_STORE_BUCKET
-              value: {{ .Values.knowledge.objectStore.bucket | quote }}
-            - name: SUPPORT_S3_ENDPOINT_URL
-              value: {{ default (printf "http://%s-minio:%v" (include "customer-support.fullname" .) .Values.minio.port) .Values.knowledge.objectStore.endpointUrl | quote }}
-            - name: SUPPORT_S3_REGION_NAME
-              value: {{ .Values.knowledge.objectStore.regionName | quote }}
-            - name: SUPPORT_S3_SECURE
-              value: {{ .Values.knowledge.objectStore.secure | quote }}
-            {{- if .Values.minio.enabled }}
-            - name: SUPPORT_S3_ACCESS_KEY_ID
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "customer-support.fullname" . }}-minio
-                  key: access-key-id
-            - name: SUPPORT_S3_SECRET_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "customer-support.fullname" . }}-minio
-                  key: secret-access-key
-            {{- end }}
-            - name: SUPPORT_KNOWLEDGE_INGESTION_QUEUE_PROVIDER
-              value: {{ .Values.knowledge.ingestionQueue.provider | quote }}
-            - name: SUPPORT_KNOWLEDGE_INGESTION_QUEUE_NAME
-              value: {{ .Values.knowledge.ingestionQueue.name | quote }}
-            - name: SUPPORT_KNOWLEDGE_INGESTION_WORKER_POLL_SECONDS
-              value: {{ .Values.knowledge.ingestionQueue.workerPollSeconds | quote }}
-            - name: SUPPORT_KNOWLEDGE_PDF_OCR_PROVIDER
-              value: {{ .Values.knowledge.pdfOcr.provider | quote }}
-            - name: SUPPORT_KNOWLEDGE_PDF_OCR_MODEL
-              value: {{ .Values.knowledge.pdfOcr.model | quote }}
-            - name: SUPPORT_KNOWLEDGE_PDF_OCR_DPI
-              value: {{ .Values.knowledge.pdfOcr.dpi | quote }}
             {{- if .Values.knowledge.existingConfigMap }}
             - name: SUPPORT_KNOWLEDGE_PATH
               value: {{ .Values.knowledge.mountPath | quote }}

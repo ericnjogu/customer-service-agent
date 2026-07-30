@@ -9,8 +9,6 @@ from langchain_core.documents import Document
 from app.models import (
     ConversationRecord,
     IncomingMessage,
-    KnowledgeIngestionJob,
-    KnowledgeIngestionResult,
     StoredMessage,
     TenantConfig,
     TenantPlan,
@@ -56,15 +54,6 @@ def row_to_tenant_config(row: asyncpg.Record) -> TenantConfig:
 
 def row_to_tenant(row: asyncpg.Record) -> TenantRecord:
     return TenantRecord(**dict(row))
-
-
-def row_to_knowledge_ingestion_job(row: asyncpg.Record) -> KnowledgeIngestionJob:
-    data = dict(row)
-    chunk_ids = data.get("chunk_ids")
-    if isinstance(chunk_ids, str):
-        chunk_ids = json.loads(chunk_ids)
-    data["chunk_ids"] = chunk_ids or []
-    return KnowledgeIngestionJob(**data)
 
 
 class PostgresDatabase:
@@ -666,169 +655,6 @@ class PostgresTenantRepository:
         raise RuntimeError("Could not generate a unique tenant id and slug")
 
 
-class PostgresKnowledgeIngestionJobRepository:
-    def __init__(self, database: PostgresDatabase) -> None:
-        self.database = database
-
-    async def initialize(self) -> None:
-        return None
-
-    async def create(
-        self,
-        *,
-        job_id: str,
-        tenant_id: str,
-        filename: str,
-        content_type: str,
-        object_bucket: str,
-        object_key: str,
-        object_etag: str | None = None,
-    ) -> KnowledgeIngestionJob:
-        assert self.database.pool
-        row = await self.database.pool.fetchrow(
-            """
-            INSERT INTO knowledge_ingestion_jobs(
-                job_id,
-                tenant_id,
-                status,
-                filename,
-                content_type,
-                object_bucket,
-                object_key,
-                object_etag
-            )
-            VALUES ($1, $2, 'PENDING', $3, $4, $5, $6, $7)
-            RETURNING *
-            """,
-            job_id,
-            normalize_tenant_id(tenant_id),
-            filename,
-            content_type,
-            object_bucket,
-            object_key,
-            object_etag,
-        )
-        job = row_to_knowledge_ingestion_job(row)
-        logger.info(
-            "Created Postgres knowledge ingestion job job_id=%s tenant_id=%s status=%s "
-            "bucket=%s key=%s",
-            job.job_id,
-            job.tenant_id,
-            job.status,
-            job.object_bucket,
-            job.object_key,
-        )
-        return job
-
-    async def get(self, tenant_id: str, job_id: str) -> KnowledgeIngestionJob | None:
-        assert self.database.pool
-        row = await self.database.pool.fetchrow(
-            """
-            SELECT *
-            FROM knowledge_ingestion_jobs
-            WHERE tenant_id = $1 AND job_id = $2
-            """,
-            normalize_tenant_id(tenant_id),
-            job_id,
-        )
-        return row_to_knowledge_ingestion_job(row) if row else None
-
-    async def get_by_id(self, job_id: str) -> KnowledgeIngestionJob | None:
-        assert self.database.pool
-        row = await self.database.pool.fetchrow(
-            """
-            SELECT *
-            FROM knowledge_ingestion_jobs
-            WHERE job_id = $1
-            """,
-            job_id,
-        )
-        return row_to_knowledge_ingestion_job(row) if row else None
-
-    async def mark_running(self, job_id: str) -> KnowledgeIngestionJob:
-        assert self.database.pool
-        row = await self.database.pool.fetchrow(
-            """
-            UPDATE knowledge_ingestion_jobs
-            SET status = 'RUNNING',
-                started_at = COALESCE(started_at, now()),
-                error_message = NULL,
-                updated_at = now()
-            WHERE job_id = $1
-            RETURNING *
-            """,
-            job_id,
-        )
-        job = row_to_knowledge_ingestion_job(row)
-        logger.info(
-            "Marked Postgres knowledge ingestion job running job_id=%s tenant_id=%s",
-            job.job_id,
-            job.tenant_id,
-        )
-        return job
-
-    async def mark_succeeded(
-        self,
-        job_id: str,
-        *,
-        result: KnowledgeIngestionResult,
-    ) -> KnowledgeIngestionJob:
-        assert self.database.pool
-        row = await self.database.pool.fetchrow(
-            """
-            UPDATE knowledge_ingestion_jobs
-            SET status = 'SUCCEEDED',
-                pages_read = $2,
-                pages_with_text = $3,
-                chunks_created = $4,
-                chunk_ids = $5::jsonb,
-                error_message = NULL,
-                finished_at = now(),
-                updated_at = now()
-            WHERE job_id = $1
-            RETURNING *
-            """,
-            job_id,
-            result.pages_read,
-            result.pages_with_text,
-            result.chunks_created,
-            json.dumps(result.chunk_ids),
-        )
-        job = row_to_knowledge_ingestion_job(row)
-        logger.info(
-            "Marked Postgres knowledge ingestion job succeeded job_id=%s tenant_id=%s "
-            "chunks_created=%d",
-            job.job_id,
-            job.tenant_id,
-            job.chunks_created,
-        )
-        return job
-
-    async def mark_failed(self, job_id: str, *, error_message: str) -> KnowledgeIngestionJob:
-        assert self.database.pool
-        row = await self.database.pool.fetchrow(
-            """
-            UPDATE knowledge_ingestion_jobs
-            SET status = 'FAILED',
-                error_message = $2,
-                finished_at = now(),
-                updated_at = now()
-            WHERE job_id = $1
-            RETURNING *
-            """,
-            job_id,
-            error_message[:2_000],
-        )
-        job = row_to_knowledge_ingestion_job(row)
-        logger.info(
-            "Marked Postgres knowledge ingestion job failed job_id=%s tenant_id=%s error=%s",
-            job.job_id,
-            job.tenant_id,
-            job.error_message,
-        )
-        return job
-
-
 def schema(embedding_dimensions: int) -> str:
     return f"""
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -907,27 +733,6 @@ CREATE TABLE IF NOT EXISTS tenant_enabled_features (
     enabled_by text,
     source text,
     PRIMARY KEY (tenant_id, feature_key)
-);
-
-CREATE TABLE IF NOT EXISTS knowledge_ingestion_jobs (
-    job_id text PRIMARY KEY,
-    tenant_id text NOT NULL,
-    status text NOT NULL
-        CHECK (status IN ('PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED')),
-    filename text NOT NULL,
-    content_type text NOT NULL,
-    object_bucket text NOT NULL,
-    object_key text NOT NULL,
-    object_etag text,
-    pages_read integer NOT NULL DEFAULT 0,
-    pages_with_text integer NOT NULL DEFAULT 0,
-    chunks_created integer NOT NULL DEFAULT 0,
-    chunk_ids jsonb NOT NULL DEFAULT '[]',
-    error_message text,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    started_at timestamptz,
-    finished_at timestamptz
 );
 
 CREATE TABLE IF NOT EXISTS knowledge_documents (
@@ -1028,36 +833,6 @@ DROP COLUMN IF EXISTS category;
 
 CREATE INDEX IF NOT EXISTS tenant_enabled_features_feature_key_idx
 ON tenant_enabled_features(feature_key);
-
-ALTER TABLE knowledge_ingestion_jobs
-ADD COLUMN IF NOT EXISTS object_etag text;
-
-ALTER TABLE knowledge_ingestion_jobs
-ADD COLUMN IF NOT EXISTS pages_read integer NOT NULL DEFAULT 0;
-
-ALTER TABLE knowledge_ingestion_jobs
-ADD COLUMN IF NOT EXISTS pages_with_text integer NOT NULL DEFAULT 0;
-
-ALTER TABLE knowledge_ingestion_jobs
-ADD COLUMN IF NOT EXISTS chunks_created integer NOT NULL DEFAULT 0;
-
-ALTER TABLE knowledge_ingestion_jobs
-ADD COLUMN IF NOT EXISTS chunk_ids jsonb NOT NULL DEFAULT '[]';
-
-ALTER TABLE knowledge_ingestion_jobs
-ADD COLUMN IF NOT EXISTS error_message text;
-
-ALTER TABLE knowledge_ingestion_jobs
-ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
-
-ALTER TABLE knowledge_ingestion_jobs
-ADD COLUMN IF NOT EXISTS started_at timestamptz;
-
-ALTER TABLE knowledge_ingestion_jobs
-ADD COLUMN IF NOT EXISTS finished_at timestamptz;
-
-CREATE INDEX IF NOT EXISTS knowledge_ingestion_jobs_tenant_status_idx
-ON knowledge_ingestion_jobs(tenant_id, status);
 
 ALTER TABLE tenant_configs
 ADD COLUMN IF NOT EXISTS llm_project_id text;

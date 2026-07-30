@@ -93,18 +93,6 @@ def test_postgres_schema_includes_tenant_prompt_config() -> None:
     assert "whatsapp_secret_name text" in ddl
 
 
-def test_postgres_schema_includes_knowledge_ingestion_jobs() -> None:
-    ddl = schema(1536)
-
-    assert "CREATE TABLE IF NOT EXISTS knowledge_ingestion_jobs" in ddl
-    assert "job_id text PRIMARY KEY" in ddl
-    assert "CHECK (status IN ('PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED'))" in ddl
-    assert "object_bucket text NOT NULL" in ddl
-    assert "object_key text NOT NULL" in ddl
-    assert "chunk_ids jsonb NOT NULL DEFAULT '[]'" in ddl
-    assert "knowledge_ingestion_jobs_tenant_status_idx" in ddl
-
-
 def test_pgvector_search_selects_chunk_creation_timestamp() -> None:
     source = inspect.getsource(PgVectorRetrievalStore.search)
 

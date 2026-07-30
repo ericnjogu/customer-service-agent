@@ -27,16 +27,6 @@ class Settings(BaseSettings):
     tenant_config_cache_ttl_seconds: int = Field(default=300, gt=0)
     redis_url: str | None = None
     vector_collection: str = Field(default="customer-support", min_length=1)
-    knowledge_object_store_provider: str = "memory"
-    knowledge_object_store_bucket: str = "customer-support-knowledge"
-    s3_endpoint_url: str | None = None
-    s3_access_key_id: str | None = None
-    s3_secret_access_key: str | None = None
-    s3_region_name: str = "us-east-1"
-    s3_secure: bool = False
-    knowledge_ingestion_queue_provider: str = "memory"
-    knowledge_ingestion_queue_name: str = "knowledge-ingestion-jobs"
-    knowledge_ingestion_worker_poll_seconds: int = Field(default=5, gt=0)
     telegram_bot_token: str | None = None
     telegram_webhook_secret_token: str | None = None
     telegram_credential_provider: str = "static"
@@ -51,9 +41,6 @@ class Settings(BaseSettings):
     knowledge_path: str | None = None
     knowledge_chunk_size: int = Field(default=1_200, gt=0)
     knowledge_chunk_overlap: int = Field(default=200, ge=0)
-    knowledge_pdf_ocr_provider: str = "none"
-    knowledge_pdf_ocr_model: str | None = None
-    knowledge_pdf_ocr_dpi: int = Field(default=120, gt=0)
     log_level: str = "INFO"
     log_format: str = "{asctime} - {levelname}:{name}:{message}"
 

@@ -1,1 +1,1 @@
-"""Customer support agent package."""
+"""Customer service agent package."""

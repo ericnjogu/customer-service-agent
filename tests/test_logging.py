@@ -60,11 +60,11 @@ def test_configure_logging_uses_valid_formatter() -> None:
         pathname=__file__,
         lineno=1,
         msg="Starting %s with configured_log_level=%s effective_log_level=%s",
-        args=("customer-support-agent", "DEBUG", "DEBUG"),
+        args=("customer-service-agent", "DEBUG", "DEBUG"),
         exc_info=None,
     )
 
-    assert "customer-support-agent" in formatter.format(record)
+    assert "customer-service-agent" in formatter.format(record)
 
 
 def test_configure_logging_uses_curly_brace_style() -> None:

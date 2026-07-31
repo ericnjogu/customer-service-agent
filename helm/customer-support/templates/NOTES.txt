@@ -1,6 +1,0 @@
-Port-forward the API:
-  kubectl port-forward service/{{ include "customer-support.fullname" . }}-app 8000:{{ .Values.service.port }} --namespace {{ .Release.Namespace }}
-
-Port-forward the DB:
-  kubectl port-forward service/{{ include "customer-support.fullname" . }}-postgres {{ .Values.postgres.port }}:{{ .Values.postgres.port }} --namespace {{ .Release.Namespace }}
-Then open http://localhost:8000/docs.

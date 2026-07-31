@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "customer-support.fullname" . }}-app
+  name: {{ include "customer-service.fullname" . }}-app
   labels:
-    {{- include "customer-support.labels" . | nindent 4 }}
+    {{- include "customer-service.labels" . | nindent 4 }}
 spec:
   selector:
     app.kubernetes.io/component: app
@@ -17,9 +17,9 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "customer-support.fullname" . }}-app
+  name: {{ include "customer-service.fullname" . }}-app
   labels:
-    {{- include "customer-support.labels" . | nindent 4 }}
+    {{- include "customer-service.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
@@ -32,7 +32,7 @@ spec:
         app.kubernetes.io/component: app
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
-      serviceAccountName: {{ include "customer-support.fullname" . }}-app
+      serviceAccountName: {{ include "customer-service.fullname" . }}-app
       {{- if .Values.postgres.enabled }}
       initContainers:
         - name: wait-for-postgres
@@ -43,7 +43,7 @@ spec:
             - -c
             - >-
               until pg_isready
-              --host={{ include "customer-support.fullname" . }}-postgres
+              --host={{ include "customer-service.fullname" . }}-postgres
               --port={{ .Values.postgres.port }}
               --username={{ .Values.postgres.username }}
               --dbname={{ .Values.postgres.database }};
@@ -57,88 +57,88 @@ spec:
             - name: http
               containerPort: 8000
           env:
-            - name: SUPPORT_DEFAULT_TENANT_ID
+            - name: AGENT_DEFAULT_TENANT_ID
               value: {{ .Values.tenant.defaultId | quote }}
-            - name: SUPPORT_RETRIEVAL_PROVIDER
+            - name: AGENT_RETRIEVAL_PROVIDER
               value: {{ .Values.retrieval.provider | quote }}
-            - name: SUPPORT_VECTOR_COLLECTION
+            - name: AGENT_VECTOR_COLLECTION
               value: {{ .Values.vector.collection | quote }}
-            - name: SUPPORT_ANSWER_PROVIDER
+            - name: AGENT_ANSWER_PROVIDER
               value: {{ .Values.answer.provider | quote }}
-            - name: SUPPORT_EMBEDDING_PROVIDER
+            - name: AGENT_EMBEDDING_PROVIDER
               value: {{ .Values.embedding.provider | quote }}
-            - name: SUPPORT_EMBEDDING_MODEL
+            - name: AGENT_EMBEDDING_MODEL
               value: {{ .Values.embedding.model | quote }}
-            - name: SUPPORT_EMBEDDING_DIMENSIONS
+            - name: AGENT_EMBEDDING_DIMENSIONS
               value: {{ .Values.embedding.dimensions | quote }}
-            - name: SUPPORT_QUESTION_PLANNER_PROVIDER
+            - name: AGENT_QUESTION_PLANNER_PROVIDER
               value: {{ .Values.questionPlanner.provider | quote }}
-            - name: SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER
+            - name: AGENT_HUMAN_REQUEST_DETECTOR_PROVIDER
               value: {{ .Values.humanRequestDetector.provider | quote }}
-            - name: SUPPORT_CONVERSATION_HISTORY_MAX_MESSAGES
+            - name: AGENT_CONVERSATION_HISTORY_MAX_MESSAGES
               value: {{ .Values.conversationHistory.maxMessages | quote }}
-            - name: SUPPORT_GREETING_LAPSE_MINUTES
+            - name: AGENT_GREETING_LAPSE_MINUTES
               value: {{ .Values.conversationHistory.greetingLapseMinutes | quote }}
-            - name: SUPPORT_TENANT_CONFIG_CACHE_PROVIDER
+            - name: AGENT_TENANT_CONFIG_CACHE_PROVIDER
               value: {{ .Values.tenantConfigCache.provider | quote }}
-            - name: SUPPORT_TENANT_CONFIG_CACHE_TTL_SECONDS
+            - name: AGENT_TENANT_CONFIG_CACHE_TTL_SECONDS
               value: {{ .Values.tenantConfigCache.ttlSeconds | quote }}
             {{- if .Values.redis.enabled }}
-            - name: SUPPORT_REDIS_URL
-              value: {{ printf "redis://%s-redis:%v/0" (include "customer-support.fullname" .) .Values.redis.port | quote }}
+            - name: AGENT_REDIS_URL
+              value: {{ printf "redis://%s-redis:%v/0" (include "customer-service.fullname" .) .Values.redis.port | quote }}
             {{- else if .Values.redis.url }}
-            - name: SUPPORT_REDIS_URL
+            - name: AGENT_REDIS_URL
               value: {{ .Values.redis.url | quote }}
             {{- end }}
             {{- if .Values.telegram.existingSecret }}
-            - name: SUPPORT_TELEGRAM_BOT_TOKEN
+            - name: AGENT_TELEGRAM_BOT_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.telegram.existingSecret | quote }}
                   key: {{ .Values.telegram.botTokenSecretKey | quote }}
-            - name: SUPPORT_TELEGRAM_WEBHOOK_SECRET_TOKEN
+            - name: AGENT_TELEGRAM_WEBHOOK_SECRET_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.telegram.existingSecret | quote }}
                   key: {{ .Values.telegram.webhookSecretTokenSecretKey | quote }}
             {{- end }}
-            - name: SUPPORT_TELEGRAM_CREDENTIAL_PROVIDER
+            - name: AGENT_TELEGRAM_CREDENTIAL_PROVIDER
               value: {{ .Values.telegram.credentialProvider | quote }}
             {{- if .Values.telegram.secretNamespace }}
-            - name: SUPPORT_TELEGRAM_SECRET_NAMESPACE
+            - name: AGENT_TELEGRAM_SECRET_NAMESPACE
               value: {{ .Values.telegram.secretNamespace | quote }}
             {{- else }}
-            - name: SUPPORT_TELEGRAM_SECRET_NAMESPACE
+            - name: AGENT_TELEGRAM_SECRET_NAMESPACE
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
             {{- end }}
-            - name: SUPPORT_TELEGRAM_BOT_TOKEN_SECRET_KEY
+            - name: AGENT_TELEGRAM_BOT_TOKEN_SECRET_KEY
               value: {{ .Values.telegram.botTokenSecretKey | quote }}
-            - name: SUPPORT_TELEGRAM_WEBHOOK_SECRET_TOKEN_SECRET_KEY
+            - name: AGENT_TELEGRAM_WEBHOOK_SECRET_TOKEN_SECRET_KEY
               value: {{ .Values.telegram.webhookSecretTokenSecretKey | quote }}
             {{- if .Values.whatsapp.existingSecret }}
-            - name: SUPPORT_WHATSAPP_ACCESS_TOKEN
+            - name: AGENT_WHATSAPP_ACCESS_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.whatsapp.existingSecret | quote }}
                   key: {{ .Values.whatsapp.accessTokenSecretKey | quote }}
-            - name: SUPPORT_WHATSAPP_PHONE_NUMBER_ID
+            - name: AGENT_WHATSAPP_PHONE_NUMBER_ID
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.whatsapp.existingSecret | quote }}
                   key: {{ .Values.whatsapp.phoneNumberIdSecretKey | quote }}
-            - name: SUPPORT_WHATSAPP_VERIFY_TOKEN
+            - name: AGENT_WHATSAPP_VERIFY_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.whatsapp.existingSecret | quote }}
                   key: {{ .Values.whatsapp.verifyTokenSecretKey | quote }}
             {{- end }}
-            - name: SUPPORT_WHATSAPP_GRAPH_API_VERSION
+            - name: AGENT_WHATSAPP_GRAPH_API_VERSION
               value: {{ .Values.whatsapp.graphApiVersion | quote }}
-            - name: SUPPORT_LLM_MODEL
+            - name: AGENT_LLM_MODEL
               value: {{ .Values.llm.model | quote }}
-            - name: SUPPORT_LLM_TEMPERATURE
+            - name: AGENT_LLM_TEMPERATURE
               value: {{ .Values.llm.temperature | quote }}
             {{- if .Values.llm.existingSecret }}
             - name: OPENAI_API_KEY
@@ -147,9 +147,9 @@ spec:
                   name: {{ .Values.llm.existingSecret | quote }}
                   key: {{ .Values.llm.secretKey | quote }}
             {{- end }}
-            - name: SUPPORT_LOG_LEVEL
+            - name: AGENT_LOG_LEVEL
               value: {{ .Values.logging.level | quote }}
-            - name: SUPPORT_LOG_FORMAT
+            - name: AGENT_LOG_FORMAT
               value: {{ .Values.logging.format | quote }}
             - name: LANGSMITH_TRACING
               value: {{ .Values.langsmith.LANGSMITH_TRACING | quote }}
@@ -172,10 +172,10 @@ spec:
                   name: {{ .Values.langsmith.existingSecret | quote }}
                   key: {{ .Values.langsmith.secretKey | quote }}
             {{- end }}
-            - name: SUPPORT_DATABASE_URL
+            - name: AGENT_DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "customer-support.fullname" . }}-postgres
+                  name: {{ include "customer-service.fullname" . }}-postgres
                   key: database-url
           readinessProbe:
             httpGet:

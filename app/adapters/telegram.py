@@ -6,7 +6,7 @@ from typing import Protocol
 
 import httpx
 
-from app.models import IncomingMessage, SupportReply
+from app.models import IncomingMessage, ServiceReply
 from app.ports import TenantConfigRepository
 
 logger = logging.getLogger(__name__)
@@ -225,5 +225,5 @@ def format_sender_name(sender: dict) -> str | None:
     return str(username) if username else None
 
 
-def telegram_reply_text(reply: SupportReply) -> str:
+def telegram_reply_text(reply: ServiceReply) -> str:
     return reply.answer

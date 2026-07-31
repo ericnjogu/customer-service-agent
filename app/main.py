@@ -9,12 +9,12 @@ from app.adapters.whatsapp import whatsapp_reply_text, whatsapp_update_to_incomi
 from app.api.tenants import router as tenants_router
 from app.config import get_settings
 from app.container import create_container
-from app.graph import invoke_support_graph
+from app.graph import invoke_service_graph
 from app.models import (
     ConversationRecord,
     ConversationStateUpdate,
     IncomingMessage,
-    SupportReply,
+    ServiceReply,
 )
 
 
@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
     await app.state.container.close()
 
 
-app = FastAPI(title="Customer Support Agent", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Customer Service Agent", version="0.1.0", lifespan=lifespan)
 app.include_router(tenants_router)
 
 
@@ -66,29 +66,29 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/messages/customer", response_model=SupportReply)
+@app.post("/messages/customer", response_model=ServiceReply)
 async def receive_customer_message(
     message: IncomingMessage,
     request: Request,
-    x_support_tenant_id: str | None = Header(default=None),
-) -> SupportReply:
+    x_agent_tenant_id: str | None = Header(default=None),
+) -> ServiceReply:
     settings = get_settings()
-    return await invoke_support_graph(
+    return await invoke_service_graph(
         request.app.state.container.graph,
-        with_tenant(message, x_support_tenant_id, settings.default_tenant_id),
+        with_tenant(message, x_agent_tenant_id, settings.default_tenant_id),
     )
 
 
-@app.post("/webhooks/synthetic", response_model=SupportReply)
+@app.post("/webhooks/synthetic", response_model=ServiceReply)
 async def synthetic_webhook(
     message: IncomingMessage,
     request: Request,
-    x_support_tenant_id: str | None = Header(default=None),
-) -> SupportReply:
+    x_agent_tenant_id: str | None = Header(default=None),
+) -> ServiceReply:
     settings = get_settings()
-    return await invoke_support_graph(
+    return await invoke_service_graph(
         request.app.state.container.graph,
-        with_tenant(message, x_support_tenant_id, settings.default_tenant_id),
+        with_tenant(message, x_agent_tenant_id, settings.default_tenant_id),
     )
 
 
@@ -98,10 +98,10 @@ async def telegram_webhook(
     request: Request,
     tenant_id: str | None = Query(default=None),
     x_telegram_bot_api_secret_token: str | None = Header(default=None),
-    x_support_tenant_id: str | None = Header(default=None),
+    x_agent_tenant_id: str | None = Header(default=None),
 ) -> dict:
     settings = get_settings()
-    resolved_tenant_id = tenant_id or x_support_tenant_id or settings.default_tenant_id
+    resolved_tenant_id = tenant_id or x_agent_tenant_id or settings.default_tenant_id
     telegram_credentials = await request.app.state.container.telegram_credentials.resolve(
         resolved_tenant_id
     )
@@ -116,7 +116,7 @@ async def telegram_webhook(
         return {"ok": True, "ignored": True}
 
     message = with_tenant(message, resolved_tenant_id, settings.default_tenant_id)
-    reply = await invoke_support_graph(request.app.state.container.graph, message)
+    reply = await invoke_service_graph(request.app.state.container.graph, message)
     telegram_sender = request.app.state.container.telegram_sender
     if telegram_sender:
         await telegram_sender.send_message(
@@ -151,7 +151,7 @@ async def whatsapp_webhook(
     update: dict,
     request: Request,
     tenant_id: str | None = Query(default=None),
-    x_support_tenant_id: str | None = Header(default=None),
+    x_agent_tenant_id: str | None = Header(default=None),
 ) -> dict:
     messages = whatsapp_update_to_incoming_messages(update)
     if not messages:
@@ -161,8 +161,8 @@ async def whatsapp_webhook(
     replies = []
     whatsapp_sender = request.app.state.container.whatsapp_sender
     for message in messages:
-        message = with_tenant(message, tenant_id or x_support_tenant_id, settings.default_tenant_id)
-        reply = await invoke_support_graph(request.app.state.container.graph, message)
+        message = with_tenant(message, tenant_id or x_agent_tenant_id, settings.default_tenant_id)
+        reply = await invoke_service_graph(request.app.state.container.graph, message)
         if whatsapp_sender:
             await whatsapp_sender.send_message(message.external_chat_id, whatsapp_reply_text(reply))
         replies.append(reply.model_dump(mode="json"))

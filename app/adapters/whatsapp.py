@@ -2,7 +2,7 @@ from typing import Protocol
 
 import httpx
 
-from app.models import IncomingMessage, SupportReply
+from app.models import IncomingMessage, ServiceReply
 
 
 class WhatsAppSender(Protocol):
@@ -115,5 +115,5 @@ def whatsapp_contact_names_by_id(value: dict) -> dict[str, str]:
     return names
 
 
-def whatsapp_reply_text(reply: SupportReply) -> str:
+def whatsapp_reply_text(reply: ServiceReply) -> str:
     return reply.answer

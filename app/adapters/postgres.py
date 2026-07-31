@@ -89,7 +89,7 @@ class PostgresDatabase:
                 "knowledge_documents.embedding has type "
                 f"{embedding_type}, but configured embedding dimensions require {expected}. "
                 "Use a fresh database, recreate the knowledge_documents table, or reindex "
-                "the KB after changing SUPPORT_EMBEDDING_DIMENSIONS."
+                "the KB after changing AGENT_EMBEDDING_DIMENSIONS."
             )
 
 
@@ -409,7 +409,7 @@ class PostgresTenantConfigRepository:
     def __init__(
         self,
         database: PostgresDatabase,
-        default_vector_collection: str = "customer-support",
+        default_vector_collection: str = "customer-service",
     ) -> None:
         self.database = database
         self.default_vector_collection = default_vector_collection
@@ -718,7 +718,7 @@ CREATE TABLE IF NOT EXISTS tenant_configs (
     vector_provider text NOT NULL DEFAULT 'pgvector',
     vector_isolation_mode text NOT NULL DEFAULT 'shared_collection'
         CHECK (vector_isolation_mode IN ('shared_collection', 'dedicated_collection')),
-    vector_collection text NOT NULL DEFAULT 'customer-support',
+    vector_collection text NOT NULL DEFAULT 'customer-service',
     vector_namespace text,
     telegram_secret_name text,
     whatsapp_secret_name text,
@@ -886,7 +886,7 @@ ALTER TABLE tenant_configs
 ADD COLUMN IF NOT EXISTS vector_isolation_mode text NOT NULL DEFAULT 'shared_collection';
 
 ALTER TABLE tenant_configs
-ADD COLUMN IF NOT EXISTS vector_collection text NOT NULL DEFAULT 'customer-support';
+ADD COLUMN IF NOT EXISTS vector_collection text NOT NULL DEFAULT 'customer-service';
 
 ALTER TABLE tenant_configs
 ADD COLUMN IF NOT EXISTS vector_namespace text;

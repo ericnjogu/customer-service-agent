@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "customer-support-agent"
+name = "customer-service-agent"
 version = "0.1.0"
-description = "Incremental LangGraph customer support agent"
+description = "Incremental LangGraph customer service agent"
 requires-python = ">=3.10"
 dependencies = [
   "asyncpg>=0.29,<1",

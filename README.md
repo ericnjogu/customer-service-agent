@@ -1,4 +1,4 @@
-# Customer Support Agent
+# Customer Service Agent
 
 Increment 4 is a locally runnable vertical slice using FastAPI, LangGraph, LangChain
 documents, tenant-scoped KB retrieval, conversation routing state, optional LLM-backed answer
@@ -18,12 +18,12 @@ and reproducible.
 - PostgreSQL conversation persistence and pgvector retrieval in Kubernetes.
 - Tenant-scoped KB retrieval through the configured retrieval store.
 - Conversation routing state updates for the handoff foundation.
-- Optional OpenAI/LangChain answer provider behind `SUPPORT_ANSWER_PROVIDER=openai`.
-- Optional OpenAI semantic embeddings behind `SUPPORT_EMBEDDING_PROVIDER=openai`.
-- Optional question planner behind `SUPPORT_QUESTION_PLANNER_PROVIDER=llm` that routes
+- Optional OpenAI/LangChain answer provider behind `AGENT_ANSWER_PROVIDER=openai`.
+- Optional OpenAI semantic embeddings behind `AGENT_EMBEDDING_PROVIDER=openai`.
+- Optional question planner behind `AGENT_QUESTION_PLANNER_PROVIDER=llm` that routes
   out-of-scope questions and decides whether conversation history is needed.
 - Optional LLM-backed human-request detection behind
-  `SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER=llm`.
+  `AGENT_HUMAN_REQUEST_DETECTOR_PROVIDER=llm`.
 - Helm chart validation and API/graph tests.
 
 Telegram/WhatsApp support group creation, admin KB/source management UI, live source tools,
@@ -58,7 +58,7 @@ Run checks:
 ```bash
 uv run pytest
 uv run ruff check .
-helm lint helm/customer-support
+helm lint helm/customer-service
 ```
 
 ## Run with Rancher Desktop Kubernetes
@@ -69,50 +69,50 @@ daemon is required.
 
 ```bash
 kubectl config use-context rancher-desktop
-nerdctl --namespace k8s.io build -t customer-support:local .
-kubectl create namespace customer-support
-helm upgrade --install support helm/customer-support --namespace customer-support
-kubectl rollout status statefulset/support-customer-support-postgres --namespace customer-support
-kubectl rollout status deployment/support-customer-support-app --namespace customer-support
-kubectl port-forward service/support-customer-support-app 8000:8000 --namespace customer-support
+nerdctl --namespace k8s.io build -t customer-service:local .
+kubectl create namespace customer-service
+helm upgrade --install support helm/customer-service --namespace customer-service
+kubectl rollout status statefulset/support-customer-service-postgres --namespace customer-service
+kubectl rollout status deployment/support-customer-service-app --namespace customer-service
+kubectl port-forward service/support-customer-service-app 8000:8000 --namespace customer-service
 ```
 
 In another terminal, send the same synthetic webhook shown above. Inspect the deployment
 with:
 
 ```bash
-kubectl get pods --namespace customer-support
-kubectl logs deployment/support-customer-support-app --namespace customer-support
+kubectl get pods --namespace customer-service
+kubectl logs deployment/support-customer-service-app --namespace customer-service
 ```
 
 ### Redeploy after changing Python code
 
 Helm only recreates Pods when the rendered Kubernetes Pod template changes. Rebuilding
-`customer-support:local` changes the local image contents, but the Deployment still points
+`customer-service:local` changes the local image contents, but the Deployment still points
 to the same image tag, so Kubernetes will keep running the existing Pods until you restart
 the rollout or use a new image tag.
 
 For local development with the `cs-local` release:
 
 ```bash
-nerdctl --namespace k8s.io build -t customer-support:local .
+nerdctl --namespace k8s.io build -t customer-service:local .
 
-helm upgrade --install cs-local helm/customer-support \
-  --namespace customer-support \
+helm upgrade --install cs-local helm/customer-service \
+  --namespace customer-service \
   --set logging.level=DEBUG
 
-kubectl rollout restart deployment/cs-local-customer-support-app \
-  --namespace customer-support
+kubectl rollout restart deployment/cs-local-customer-service-app \
+  --namespace customer-service
 
-kubectl rollout status deployment/cs-local-customer-support-app \
-  --namespace customer-support
+kubectl rollout status deployment/cs-local-customer-service-app \
+  --namespace customer-service
 ```
 
 Then check the new Pod logs:
 
 ```bash
-kubectl logs deployment/cs-local-customer-support-app \
-  --namespace customer-support
+kubectl logs deployment/cs-local-customer-service-app \
+  --namespace customer-service
 ```
 
 Or run the helper script:
@@ -121,7 +121,7 @@ Or run the helper script:
 scripts/deploy-local.sh
 ```
 
-The script defaults to `cs-local`, `customer-support`, `customer-support:local`, and
+The script defaults to `cs-local`, `customer-service`, `customer-service:local`, and
 `DEBUG` logging. If `OPENAI_API_KEY` is present, it also creates/updates an OpenAI secret
 and deploys with `answer.provider=openai`. Override values with environment variables:
 
@@ -202,18 +202,18 @@ For each incoming customer message, the graph first runs a question planner. The
 receives the latest customer message, the optional sender name, and compact greeting
 metadata derived from the minute delta since the previous customer message. It does not
 receive full conversation history at this stage. The planner decides whether the question
-is in scope for customer support and whether conversation history is needed. If a question
+is in scope for customer service and whether conversation history is needed. If a question
 is out of scope, the graph uses the planner's `explanation` as the customer-facing reply
 and does not call the answer-generation LLM. If the question is standalone, such as a
 location or menu question, the graph skips loading history and answers from KB context
 only. If the question depends on earlier messages, the graph loads exact messages for the
 current conversation since `conversation.created_at`.
 
-Loaded history is bounded by `SUPPORT_CONVERSATION_HISTORY_MAX_MESSAGES` so very long open
+Loaded history is bounded by `AGENT_CONVERSATION_HISTORY_MAX_MESSAGES` so very long open
 chats do not overfill the LLM context.
 
 The graph also derives compact greeting metadata for the LLM. By default,
-`SUPPORT_GREETING_LAPSE_MINUTES=60`, so the prompt tells the LLM to greet the customer on
+`AGENT_GREETING_LAPSE_MINUTES=60`, so the prompt tells the LLM to greet the customer on
 their first message or when the previous customer message was at least 60 minutes ago.
 Absolute timestamps are intentionally omitted from the prompt metadata.
 
@@ -239,7 +239,7 @@ reserved for a later increment.
 ## Tenant foundation
 
 The local MVP is still configured as a single running app, but inbound messages now carry
-a `tenant_id`. When no tenant is supplied, the app uses `SUPPORT_DEFAULT_TENANT_ID`
+a `tenant_id`. When no tenant is supplied, the app uses `AGENT_DEFAULT_TENANT_ID`
 (`tenant.defaultId` in Helm), which defaults to `default`.
 
 Tenant isolation currently covers:
@@ -337,9 +337,9 @@ curl http://localhost:8000/tenants/tnt_abc123...
 ```
 
 For synthetic/API calls, include `tenant_id` in the JSON body or send
-`X-Support-Tenant-Id`. For Telegram and WhatsApp webhook posts, pass `tenant_id` as a
+`X-Agent-Tenant-Id`. For Telegram and WhatsApp webhook posts, pass `tenant_id` as a
 query parameter, for example `/webhooks/telegram?tenant_id=hustle-hq`, or send
-`X-Support-Tenant-Id`.
+`X-Agent-Tenant-Id`.
 
 Tenant prompt configuration is managed through:
 
@@ -359,7 +359,7 @@ curl -X PUT http://localhost:8000/tenants/tnt_abc123.../config \
     "llm_base_url": "https://api.deepseek.com",
     "vector_provider": "pgvector",
     "vector_isolation_mode": "shared_collection",
-    "vector_collection": "customer-support",
+    "vector_collection": "customer-service",
     "vector_namespace": "hustle-hq:seed-knowledge",
     "telegram_secret_name": "tenant-hustle-hq-telegram",
     "whatsapp_secret_name": "tenant-hustle-hq-whatsapp"
@@ -411,7 +411,7 @@ Provider project/index fields are tenant control-plane metadata:
   metadata/filtering context, not as the runtime trace destination.
 - Vector storage is modeled generically using `vector_provider`,
   `vector_isolation_mode`, `vector_collection`, and `vector_namespace`. Local Helm
-  configures the default collection with `SUPPORT_VECTOR_COLLECTION`; Pinecone can map
+  configures the default collection with `AGENT_VECTOR_COLLECTION`; Pinecone can map
   collection to index and namespace to namespace, while Qdrant can map collection to
   collection and namespace/tenant to payload filters or a dedicated collection.
 - Telegram credentials can be resolved from one Secret reference per tenant. Secret values
@@ -446,9 +446,9 @@ provider project creation jobs, and usage tracking are reserved for later increm
 The default answer provider is still deterministic and local:
 
 ```env
-SUPPORT_ANSWER_PROVIDER=extractive
-SUPPORT_QUESTION_PLANNER_PROVIDER=rules
-SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER=rules
+AGENT_ANSWER_PROVIDER=extractive
+AGENT_QUESTION_PLANNER_PROVIDER=rules
+AGENT_HUMAN_REQUEST_DETECTOR_PROVIDER=rules
 ```
 
 Run the API locally with the OpenAI answer provider:
@@ -462,7 +462,7 @@ keys:
 
 ```bash
 kubectl create secret generic api-keys \
-  --namespace customer-support \
+  --namespace customer-service \
   --from-literal=OPENAI_API_KEY="key" \
   --from-literal=key="key"
 ```
@@ -470,8 +470,8 @@ kubectl create secret generic api-keys \
 Then deploy on kubernetes with:
 
 ```bash
-helm upgrade --install cs-local helm/customer-support \
-  --namespace customer-support \
+helm upgrade --install cs-local helm/customer-service \
+  --namespace customer-service \
   --set answer.provider=openai \
   --set llm.existingSecret=openai-api \
   --set llm.model=gpt-4.1-mini
@@ -499,13 +499,13 @@ If a tenant config has `telegram_secret_name`, the app reads that Kubernetes Sec
 validates the incoming `X-Telegram-Bot-Api-Secret-Token` against the tenant-specific
 `TELEGRAM_WEBHOOK_SECRET_TOKEN`, and sends the reply with the tenant-specific
 `TELEGRAM_BOT_TOKEN`. If no tenant Secret is configured, the app falls back to
-`SUPPORT_TELEGRAM_BOT_TOKEN` and `SUPPORT_TELEGRAM_WEBHOOK_SECRET_TOKEN`.
+`AGENT_TELEGRAM_BOT_TOKEN` and `AGENT_TELEGRAM_WEBHOOK_SECRET_TOKEN`.
 
 Create a Secret for the bot token and webhook secret token:
 
 ```bash
 kubectl create secret generic telegram-bot \
-  --namespace customer-support \
+  --namespace customer-service \
   --from-literal=TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
   --from-literal=TELEGRAM_WEBHOOK_SECRET_TOKEN="$TELEGRAM_WEBHOOK_SECRET_TOKEN"
 ```
@@ -513,8 +513,8 @@ kubectl create secret generic telegram-bot \
 Deploy with the Secret:
 
 ```bash
-helm upgrade --install cs-local helm/customer-support \
-  --namespace customer-support \
+helm upgrade --install cs-local helm/customer-service \
+  --namespace customer-service \
   --set telegram.existingSecret=telegram-bot
 ```
 
@@ -524,7 +524,7 @@ name in the tenant config. The Bruno onboarding flow can create this Secret thro
 
 ```bash
 kubectl create secret generic tenant-hustle-hq-telegram \
-  --namespace customer-support \
+  --namespace customer-service \
   --from-literal=TELEGRAM_BOT_TOKEN="$TENANT_TELEGRAM_BOT_TOKEN" \
   --from-literal=TELEGRAM_WEBHOOK_SECRET_TOKEN="$TENANT_TELEGRAM_WEBHOOK_SECRET_TOKEN"
 ```
@@ -560,9 +560,9 @@ POST /webhooks/whatsapp
 ```
 
 The `GET` endpoint verifies the Meta WhatsApp webhook using
-`SUPPORT_WHATSAPP_VERIFY_TOKEN`. The `POST` endpoint currently handles customer text
+`AGENT_WHATSAPP_VERIFY_TOKEN`. The `POST` endpoint currently handles customer text
 messages from the WhatsApp Cloud API payload. Non-text updates are acknowledged and
-ignored. If `SUPPORT_WHATSAPP_ACCESS_TOKEN` and `SUPPORT_WHATSAPP_PHONE_NUMBER_ID` are
+ignored. If `AGENT_WHATSAPP_ACCESS_TOKEN` and `AGENT_WHATSAPP_PHONE_NUMBER_ID` are
 configured, the app sends the graph reply back to the customer using the WhatsApp Cloud
 API `messages` endpoint.
 
@@ -570,7 +570,7 @@ Create a Secret for the WhatsApp Cloud API values:
 
 ```bash
 kubectl create secret generic whatsapp-cloud \
-  --namespace customer-support \
+  --namespace customer-service \
   --from-literal=WHATSAPP_ACCESS_TOKEN="$WHATSAPP_ACCESS_TOKEN" \
   --from-literal=WHATSAPP_PHONE_NUMBER_ID="$WHATSAPP_PHONE_NUMBER_ID" \
   --from-literal=WHATSAPP_VERIFY_TOKEN="$WHATSAPP_VERIFY_TOKEN"
@@ -579,8 +579,8 @@ kubectl create secret generic whatsapp-cloud \
 Deploy with the Secret:
 
 ```bash
-helm upgrade --install cs-local helm/customer-support \
-  --namespace customer-support \
+helm upgrade --install cs-local helm/customer-service \
+  --namespace customer-service \
   --set whatsapp.existingSecret=whatsapp-cloud
 ```
 
@@ -592,42 +592,42 @@ https://example.com/webhooks/whatsapp
 
 ## Configuration
 
-Application configuration uses the `SUPPORT_` prefix. LangSmith uses its native
+Application configuration uses the `AGENT_` prefix. LangSmith uses its native
 `LANGSMITH_` names:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `SUPPORT_DEFAULT_TENANT_ID` | `default` | Tenant id used when an inbound message does not explicitly provide one |
-| `SUPPORT_RETRIEVAL_PROVIDER` | `memory` | `memory` or `pgvector` |
-| `SUPPORT_ANSWER_PROVIDER` | `extractive` | `extractive` or `openai` |
-| `SUPPORT_EMBEDDING_PROVIDER` | `local` | `local` or `openai`; Helm defaults to `openai` for pgvector |
-| `SUPPORT_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding model when `SUPPORT_EMBEDDING_PROVIDER=openai` |
-| `SUPPORT_EMBEDDING_DIMENSIONS` | `64` | pgvector embedding size; Helm defaults to `1536` for OpenAI embeddings |
-| `SUPPORT_QUESTION_PLANNER_PROVIDER` | `rules` | `rules` or `llm`; planner receives the latest customer message plus compact greeting metadata and decides scope/history routing |
-| `SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER` | `rules` | `rules` or `llm`; `llm` uses OpenAI to detect explicit human-agent requests |
-| `OPENAI_API_KEY` | unset | Required when `SUPPORT_ANSWER_PROVIDER=openai`, `SUPPORT_EMBEDDING_PROVIDER=openai`, `SUPPORT_QUESTION_PLANNER_PROVIDER=llm`, or `SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER=llm` |
-| `SUPPORT_LLM_MODEL` | `gpt-4.1-mini` | OpenAI chat model used by the LLM answer provider |
-| `SUPPORT_LLM_TEMPERATURE` | `0.0` | LLM sampling temperature |
-| `SUPPORT_DATABASE_URL` | unset | PostgreSQL connection string |
-| `SUPPORT_CONFIDENCE_THRESHOLD` | `0.60` | Below this, mark the response as low confidence |
-| `SUPPORT_CONVERSATION_HISTORY_MAX_MESSAGES` | `50` | Safety cap for exact current-conversation messages passed into context |
-| `SUPPORT_GREETING_LAPSE_MINUTES` | `60` | Minutes after the previous customer message before the prompt says to greet again |
-| `SUPPORT_TENANT_CONFIG_CACHE_PROVIDER` | `memory` | Tenant config cache provider: `memory` or `redis`; Helm defaults to `redis` |
-| `SUPPORT_TENANT_CONFIG_CACHE_TTL_SECONDS` | `300` | TTL for Redis tenant config cache entries |
-| `SUPPORT_REDIS_URL` | unset | Redis URL required when `SUPPORT_TENANT_CONFIG_CACHE_PROVIDER=redis`; Helm points this at the bundled Redis service |
-| `SUPPORT_VECTOR_COLLECTION` | `customer-support` | Default vector collection/index name used by tenant config defaults; tenant namespaces isolate data |
-| `SUPPORT_TELEGRAM_BOT_TOKEN` | unset | Telegram bot token used to send replies with `sendMessage` |
-| `SUPPORT_TELEGRAM_WEBHOOK_SECRET_TOKEN` | unset | Optional Telegram webhook secret token checked against `X-Telegram-Bot-Api-Secret-Token` |
-| `SUPPORT_TELEGRAM_CREDENTIAL_PROVIDER` | `static` | `static` for env-backed Telegram credentials, or `kubernetes` for tenant-specific Secret lookup |
-| `SUPPORT_TELEGRAM_SECRET_NAMESPACE` | unset | Kubernetes namespace used for tenant Telegram Secret lookup; Helm defaults this to the pod namespace |
-| `SUPPORT_TELEGRAM_BOT_TOKEN_SECRET_KEY` | `TELEGRAM_BOT_TOKEN` | Secret key containing a tenant Telegram bot token |
-| `SUPPORT_TELEGRAM_WEBHOOK_SECRET_TOKEN_SECRET_KEY` | `TELEGRAM_WEBHOOK_SECRET_TOKEN` | Secret key containing a tenant Telegram webhook secret token |
-| `SUPPORT_WHATSAPP_ACCESS_TOKEN` | unset | WhatsApp Cloud API access token used to send replies |
-| `SUPPORT_WHATSAPP_PHONE_NUMBER_ID` | unset | WhatsApp Cloud API phone number id used for outbound messages |
-| `SUPPORT_WHATSAPP_VERIFY_TOKEN` | unset | WhatsApp webhook verification token checked during Meta webhook setup |
-| `SUPPORT_WHATSAPP_GRAPH_API_VERSION` | `v20.0` | Meta Graph API version used for WhatsApp outbound messages |
-| `SUPPORT_LOG_LEVEL` | `INFO` | Application log level, for example `DEBUG` |
-| `SUPPORT_LOG_FORMAT` | `{asctime} - {levelname}:{name}:{message}` | Python logging format using `{}` style |
+| `AGENT_DEFAULT_TENANT_ID` | `default` | Tenant id used when an inbound message does not explicitly provide one |
+| `AGENT_RETRIEVAL_PROVIDER` | `memory` | `memory` or `pgvector` |
+| `AGENT_ANSWER_PROVIDER` | `extractive` | `extractive` or `openai` |
+| `AGENT_EMBEDDING_PROVIDER` | `local` | `local` or `openai`; Helm defaults to `openai` for pgvector |
+| `AGENT_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding model when `AGENT_EMBEDDING_PROVIDER=openai` |
+| `AGENT_EMBEDDING_DIMENSIONS` | `64` | pgvector embedding size; Helm defaults to `1536` for OpenAI embeddings |
+| `AGENT_QUESTION_PLANNER_PROVIDER` | `rules` | `rules` or `llm`; planner receives the latest customer message plus compact greeting metadata and decides scope/history routing |
+| `AGENT_HUMAN_REQUEST_DETECTOR_PROVIDER` | `rules` | `rules` or `llm`; `llm` uses OpenAI to detect explicit human-agent requests |
+| `OPENAI_API_KEY` | unset | Required when `AGENT_ANSWER_PROVIDER=openai`, `AGENT_EMBEDDING_PROVIDER=openai`, `AGENT_QUESTION_PLANNER_PROVIDER=llm`, or `AGENT_HUMAN_REQUEST_DETECTOR_PROVIDER=llm` |
+| `AGENT_LLM_MODEL` | `gpt-4.1-mini` | OpenAI chat model used by the LLM answer provider |
+| `AGENT_LLM_TEMPERATURE` | `0.0` | LLM sampling temperature |
+| `AGENT_DATABASE_URL` | unset | PostgreSQL connection string |
+| `AGENT_CONFIDENCE_THRESHOLD` | `0.60` | Below this, mark the response as low confidence |
+| `AGENT_CONVERSATION_HISTORY_MAX_MESSAGES` | `50` | Safety cap for exact current-conversation messages passed into context |
+| `AGENT_GREETING_LAPSE_MINUTES` | `60` | Minutes after the previous customer message before the prompt says to greet again |
+| `AGENT_TENANT_CONFIG_CACHE_PROVIDER` | `memory` | Tenant config cache provider: `memory` or `redis`; Helm defaults to `redis` |
+| `AGENT_TENANT_CONFIG_CACHE_TTL_SECONDS` | `300` | TTL for Redis tenant config cache entries |
+| `AGENT_REDIS_URL` | unset | Redis URL required when `AGENT_TENANT_CONFIG_CACHE_PROVIDER=redis`; Helm points this at the bundled Redis service |
+| `AGENT_VECTOR_COLLECTION` | `customer-service` | Default vector collection/index name used by tenant config defaults; tenant namespaces isolate data |
+| `AGENT_TELEGRAM_BOT_TOKEN` | unset | Telegram bot token used to send replies with `sendMessage` |
+| `AGENT_TELEGRAM_WEBHOOK_SECRET_TOKEN` | unset | Optional Telegram webhook secret token checked against `X-Telegram-Bot-Api-Secret-Token` |
+| `AGENT_TELEGRAM_CREDENTIAL_PROVIDER` | `static` | `static` for env-backed Telegram credentials, or `kubernetes` for tenant-specific Secret lookup |
+| `AGENT_TELEGRAM_SECRET_NAMESPACE` | unset | Kubernetes namespace used for tenant Telegram Secret lookup; Helm defaults this to the pod namespace |
+| `AGENT_TELEGRAM_BOT_TOKEN_SECRET_KEY` | `TELEGRAM_BOT_TOKEN` | Secret key containing a tenant Telegram bot token |
+| `AGENT_TELEGRAM_WEBHOOK_SECRET_TOKEN_SECRET_KEY` | `TELEGRAM_WEBHOOK_SECRET_TOKEN` | Secret key containing a tenant Telegram webhook secret token |
+| `AGENT_WHATSAPP_ACCESS_TOKEN` | unset | WhatsApp Cloud API access token used to send replies |
+| `AGENT_WHATSAPP_PHONE_NUMBER_ID` | unset | WhatsApp Cloud API phone number id used for outbound messages |
+| `AGENT_WHATSAPP_VERIFY_TOKEN` | unset | WhatsApp webhook verification token checked during Meta webhook setup |
+| `AGENT_WHATSAPP_GRAPH_API_VERSION` | `v20.0` | Meta Graph API version used for WhatsApp outbound messages |
+| `AGENT_LOG_LEVEL` | `INFO` | Application log level, for example `DEBUG` |
+| `AGENT_LOG_FORMAT` | `{asctime} - {levelname}:{name}:{message}` | Python logging format using `{}` style |
 | `LANGSMITH_TRACING` | `true` | Enable LangSmith tracing |
 | `LANGSMITH_TRACING_V2` | `true` | Enable LangSmith tracing v2 |
 | `LANGCHAIN_TRACING_V2` | `true` | Legacy LangChain tracing v2 env var kept for SDK compatibility |
@@ -635,7 +635,7 @@ Application configuration uses the `SUPPORT_` prefix. LangSmith uses its native
 | `LANGSMITH_PROJECT` | `customer-service-local` | Deployment-level LangSmith trace project; tenant identity is represented with tags/metadata |
 | `LANGSMITH_WORKSPACE_ID` | unset | LangSmith workspace id; required for org-scoped API keys or keys linked to multiple workspaces |
 
-Changing `SUPPORT_EMBEDDING_DIMENSIONS` changes the required pgvector column type. Use a
+Changing `AGENT_EMBEDDING_DIMENSIONS` changes the required pgvector column type. Use a
 fresh database, recreate the `knowledge_documents` table, or reindex the KB when moving
 between local 64-dimensional embeddings and OpenAI 1536-dimensional embeddings.
 Knowledge rows use stable chunk ids such as `kb/menu.txt#0000` so callers can trace

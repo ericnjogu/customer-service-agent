@@ -5,7 +5,7 @@ from langchain_core.documents import Document
 from app.adapters.memory import RuleBasedHumanRequestDetector, RuleBasedQuestionPlanner
 from app.config import Settings
 from app.container import create_container
-from app.graph import build_prompt_metadata, build_support_graph, invoke_support_graph
+from app.graph import build_prompt_metadata, build_service_graph, invoke_service_graph
 from app.knowledge import SEED_KNOWLEDGE_NAMESPACE, tenant_knowledge_namespace
 from app.models import (
     ConversationPromptMetadata,
@@ -74,7 +74,7 @@ async def test_grounded_question_returns_citation() -> None:
         ],
         SEED_KNOWLEDGE_NAMESPACE,
     )
-    reply = await invoke_support_graph(
+    reply = await invoke_service_graph(
         container.graph,
         IncomingMessage(
             event_id="event-1",
@@ -92,7 +92,7 @@ async def test_grounded_question_returns_citation() -> None:
 
 async def test_unknown_question_is_marked_low_confidence() -> None:
     container = await create_container(Settings())
-    reply = await invoke_support_graph(
+    reply = await invoke_service_graph(
         container.graph,
         IncomingMessage(
             event_id="event-2",
@@ -122,7 +122,7 @@ async def test_retrieves_directly_seeded_knowledge() -> None:
         ],
         SEED_KNOWLEDGE_NAMESPACE,
     )
-    reply = await invoke_support_graph(
+    reply = await invoke_service_graph(
         container.graph,
         IncomingMessage(
             event_id="event-3",
@@ -150,7 +150,7 @@ async def test_tenant_knowledge_namespace_defaults_to_existing_seed_namespace() 
 async def test_graph_isolates_conversations_by_tenant() -> None:
     container = await create_container(Settings())
 
-    first_reply = await invoke_support_graph(
+    first_reply = await invoke_service_graph(
         container.graph,
         IncomingMessage(
             tenant_id="tenant-a",
@@ -160,7 +160,7 @@ async def test_graph_isolates_conversations_by_tenant() -> None:
             text="Unknown question?",
         ),
     )
-    second_reply = await invoke_support_graph(
+    second_reply = await invoke_service_graph(
         container.graph,
         IncomingMessage(
             tenant_id="tenant-b",
@@ -197,7 +197,7 @@ async def test_graph_retrieves_knowledge_from_message_tenant_namespace() -> None
         tenant_knowledge_namespace("tenant-b"),
     )
 
-    reply = await invoke_support_graph(
+    reply = await invoke_service_graph(
         container.graph,
         IncomingMessage(
             tenant_id="tenant-b",
@@ -224,7 +224,7 @@ async def test_graph_passes_tenant_prompt_config_to_planner_and_answer_generator
         llm_provider="langchain-compatible",
         llm_model="deepseek-chat",
         llm_base_url="https://api.deepseek.com",
-        langsmith_project="customer-support-tenant-a",
+        langsmith_project="customer-service-tenant-a",
         telegram_secret_name="tenant-a-telegram",
         whatsapp_secret_name="tenant-a-whatsapp",
     )
@@ -245,7 +245,7 @@ async def test_graph_passes_tenant_prompt_config_to_planner_and_answer_generator
             explanation="tenant config test",
         )
     )
-    graph = build_support_graph(
+    graph = build_service_graph(
         container.conversations,
         container.tenant_configs,
         container.retrieval,
@@ -257,7 +257,7 @@ async def test_graph_passes_tenant_prompt_config_to_planner_and_answer_generator
         greeting_lapse_minutes=60,
     )
 
-    reply = await invoke_support_graph(
+    reply = await invoke_service_graph(
         graph,
         IncomingMessage(
             tenant_id="tenant-a",
@@ -273,13 +273,13 @@ async def test_graph_passes_tenant_prompt_config_to_planner_and_answer_generator
     assert planner.tenant_configs[-1].selected_plan == "enterprise"
     assert planner.tenant_configs[-1].enabled_features == ["telegram", "whatsapp"]
     assert planner.tenant_configs[-1].llm_project_id == "proj_tenant_a"
-    assert planner.tenant_configs[-1].langsmith_project == "customer-support-tenant-a"
+    assert planner.tenant_configs[-1].langsmith_project == "customer-service-tenant-a"
     assert planner.tenant_configs[-1].llm_provider == "langchain-compatible"
     assert planner.tenant_configs[-1].llm_model == "deepseek-chat"
     assert planner.tenant_configs[-1].llm_base_url == "https://api.deepseek.com"
     assert planner.tenant_configs[-1].vector_provider == "pgvector"
     assert planner.tenant_configs[-1].vector_isolation_mode == "shared_collection"
-    assert planner.tenant_configs[-1].vector_collection == "customer-support"
+    assert planner.tenant_configs[-1].vector_collection == "customer-service"
     assert planner.tenant_configs[-1].vector_namespace == "tenant-a:seed-knowledge"
     assert planner.tenant_configs[-1].telegram_secret_name == "tenant-a-telegram"
     assert planner.tenant_configs[-1].whatsapp_secret_name == "tenant-a-whatsapp"
@@ -297,7 +297,7 @@ async def test_graph_passes_tenant_prompt_config_to_planner_and_answer_generator
 async def test_graph_passes_current_conversation_history_with_safety_cap() -> None:
     container = await create_container(Settings())
     generator = RecordingAnswerGenerator()
-    graph = build_support_graph(
+    graph = build_service_graph(
         container.conversations,
         container.tenant_configs,
         container.retrieval,
@@ -310,7 +310,7 @@ async def test_graph_passes_current_conversation_history_with_safety_cap() -> No
     )
 
     for index in range(4):
-        await invoke_support_graph(
+        await invoke_service_graph(
             graph,
             IncomingMessage(
                 event_id=f"history-event-{index}",
@@ -337,7 +337,7 @@ async def test_graph_uses_question_plan_explanation_for_out_of_scope_reply() -> 
             explanation="Hi Ada, I can help with questions about Hustle HQ.",
         )
     )
-    graph = build_support_graph(
+    graph = build_service_graph(
         container.conversations,
         container.tenant_configs,
         container.retrieval,
@@ -349,7 +349,7 @@ async def test_graph_uses_question_plan_explanation_for_out_of_scope_reply() -> 
         greeting_lapse_minutes=60,
     )
 
-    reply = await invoke_support_graph(
+    reply = await invoke_service_graph(
         graph,
         IncomingMessage(
             event_id="out-of-scope-event",
@@ -378,7 +378,7 @@ async def test_graph_passes_no_greet_metadata_to_planner_for_active_conversation
             explanation="I can help with questions about Hustle HQ.",
         )
     )
-    graph = build_support_graph(
+    graph = build_service_graph(
         container.conversations,
         container.tenant_configs,
         container.retrieval,
@@ -390,7 +390,7 @@ async def test_graph_passes_no_greet_metadata_to_planner_for_active_conversation
         greeting_lapse_minutes=60,
     )
 
-    await invoke_support_graph(
+    await invoke_service_graph(
         graph,
         IncomingMessage(
             event_id="active-out-of-scope-1",
@@ -400,7 +400,7 @@ async def test_graph_passes_no_greet_metadata_to_planner_for_active_conversation
             text="1+1?",
         ),
     )
-    reply = await invoke_support_graph(
+    reply = await invoke_service_graph(
         graph,
         IncomingMessage(
             event_id="active-out-of-scope-2",
@@ -436,7 +436,7 @@ async def test_graph_skips_conversation_history_for_standalone_question() -> Non
             explanation="standalone location question",
         )
     )
-    graph = build_support_graph(
+    graph = build_service_graph(
         container.conversations,
         container.tenant_configs,
         container.retrieval,
@@ -448,7 +448,7 @@ async def test_graph_skips_conversation_history_for_standalone_question() -> Non
         greeting_lapse_minutes=60,
     )
 
-    await invoke_support_graph(
+    await invoke_service_graph(
         graph,
         IncomingMessage(
             event_id="previous-history-event",
@@ -457,7 +457,7 @@ async def test_graph_skips_conversation_history_for_standalone_question() -> Non
             text="Can I still get that?",
         ),
     )
-    await invoke_support_graph(
+    await invoke_service_graph(
         graph,
         IncomingMessage(
             event_id="standalone-location-event",
@@ -487,7 +487,7 @@ async def test_explicit_human_request_sets_human_requested_state() -> None:
         ],
         SEED_KNOWLEDGE_NAMESPACE,
     )
-    reply = await invoke_support_graph(
+    reply = await invoke_service_graph(
         container.graph,
         IncomingMessage(
             event_id="human-request-event",
@@ -508,7 +508,7 @@ async def test_explicit_human_request_sets_human_requested_state() -> None:
 
 async def test_frustration_without_human_request_does_not_change_state() -> None:
     container = await create_container(Settings())
-    reply = await invoke_support_graph(
+    reply = await invoke_service_graph(
         container.graph,
         IncomingMessage(
             event_id="frustration-event",
@@ -534,7 +534,7 @@ async def test_citations_fall_back_to_source_without_chunk_id() -> None:
         SEED_KNOWLEDGE_NAMESPACE,
     )
 
-    reply = await invoke_support_graph(
+    reply = await invoke_service_graph(
         container.graph,
         IncomingMessage(
             event_id="source-fallback-event",

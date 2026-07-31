@@ -85,7 +85,7 @@ def test_postgres_schema_includes_tenant_prompt_config() -> None:
     assert "llm_base_url text" in ddl
     assert "vector_provider text NOT NULL DEFAULT 'pgvector'" in ddl
     assert "vector_isolation_mode text NOT NULL DEFAULT 'shared_collection'" in ddl
-    assert "vector_collection text NOT NULL DEFAULT 'customer-support'" in ddl
+    assert "vector_collection text NOT NULL DEFAULT 'customer-service'" in ddl
     assert "vector_namespace text" in ddl
     assert "DROP COLUMN IF EXISTS pinecone_index" in ddl
     assert "DROP COLUMN IF EXISTS pinecone_namespace" in ddl

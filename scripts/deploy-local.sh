@@ -9,13 +9,13 @@ print_exit_timestamp() {
 trap print_exit_timestamp EXIT
 
 RELEASE_NAME="${RELEASE_NAME:-cs-local}"
-NAMESPACE="${NAMESPACE:-customer-support}"
-CHART_PATH="${CHART_PATH:-helm/customer-support}"
-IMAGE_REPOSITORY="${IMAGE_REPOSITORY:-customer-support}"
+NAMESPACE="${NAMESPACE:-customer-service}"
+CHART_PATH="${CHART_PATH:-helm/customer-service}"
+IMAGE_REPOSITORY="${IMAGE_REPOSITORY:-customer-service}"
 IMAGE_TAG="${IMAGE_TAG:-local}"
 LOG_LEVEL="${LOG_LEVEL:-DEBUG}"
 KUBE_CONTEXT="${KUBE_CONTEXT:-rancher-desktop}"
-APP_DEPLOYMENT="${APP_DEPLOYMENT:-${RELEASE_NAME}-customer-support-app}"
+APP_DEPLOYMENT="${APP_DEPLOYMENT:-${RELEASE_NAME}-customer-service-app}"
 
 echo "Using Kubernetes context: ${KUBE_CONTEXT}"
 kubectl config use-context "${KUBE_CONTEXT}"

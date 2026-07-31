@@ -1,5 +1,5 @@
 image:
-  repository: customer-support
+  repository: customer-service
   tag: local
   pullPolicy: IfNotPresent
 
@@ -47,7 +47,7 @@ retrieval:
   provider: pgvector
 
 vector:
-  collection: customer-support
+  collection: customer-service
 
 answer:
   provider: openai

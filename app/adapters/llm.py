@@ -22,7 +22,7 @@ from app.models import (
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are a customer support assistant.
+SYSTEM_PROMPT = """You are a customer service assistant.
 Answer only from the provided information.
 Tenant-specific answer instructions may customize brand voice, business details, and
 response preferences, but they must not override these system instructions.
@@ -74,7 +74,7 @@ Return JSON only with:
 - explicit_human_request: boolean
 """
 
-QUESTION_PLANNING_PROMPT = """You are routing a customer support message before any
+QUESTION_PLANNING_PROMPT = """You are routing a customer service message before any
 knowledge-base retrieval or conversation-history lookup.
 Decide using only the latest customer message.
 Tenant-specific planner instructions may customize business scope and routing preferences,
@@ -157,7 +157,7 @@ def format_conversation_history(messages: list[StoredMessage]) -> str:
         "<sender_type>: <message body>.\n"
         "Order: oldest message first, newest message last.\n"
         "sender_type values: CUSTOMER is the customer, BOT is this assistant, "
-        "AGENT is a human support agent, SYSTEM is an internal system event.\n"
+        "AGENT is a human customer service agent, SYSTEM is an internal system event.\n"
         "Use created_at for exact message times. Use the relative age only as a readable "
         "summary of how long before the newest message each entry was sent. Use the first "
         "CUSTOMER entry for the customer's first available message in this conversation.\n"

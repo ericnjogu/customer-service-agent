@@ -1,6 +1,6 @@
 apiVersion: v2
-name: customer-support
-description: Local MVP customer support agent
+name: customer-service
+description: Local MVP customer service agent
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

@@ -44,8 +44,7 @@ This project currently uses increment-based milestones instead of semantic versi
 - `SUPPORT_EMBEDDING_PROVIDER`, `SUPPORT_EMBEDDING_MODEL`, and
   `SUPPORT_EMBEDDING_DIMENSIONS` configuration.
 - Helm values for OpenAI `text-embedding-3-small` embeddings with 1536 dimensions.
-- Seed KB chunking via LangChain `RecursiveCharacterTextSplitter`, configured with
-  `SUPPORT_KNOWLEDGE_CHUNK_SIZE` and `SUPPORT_KNOWLEDGE_CHUNK_OVERLAP`.
+- Knowledge chunking helper via LangChain `RecursiveCharacterTextSplitter`.
 - Tenant id foundation for inbound messages, conversation records, replies, tenant-scoped
   conversation lookup, tenant-scoped message idempotency, and tenant-specific seed KB
   namespaces.
@@ -93,6 +92,9 @@ This project currently uses increment-based milestones instead of semantic versi
 - Removed the over-scoped PDF upload ingestion path, ingestion worker, S3/MinIO object
   store wiring, and scanned-PDF OCR dependencies so future online-source or
   cloud-document connectors can be added behind a smaller, deliberate boundary.
+- Removed ConfigMap/startup seed KB loading from the app and Helm chart; KB data should
+  now be populated through retrieval storage, future source tools, cloud-document
+  connectors, learned support answers, or admin workflows.
 - Collapsed conversation status handling into one routing state: `BOT_ACTIVE`,
   `HUMAN_REQUESTED`, and `HUMAN_ACTIVE`.
 - Low-confidence graph replies now return `low_confidence: true` without changing the
@@ -135,8 +137,6 @@ This project currently uses increment-based milestones instead of semantic versi
 
 ### Fixed
 
-- Seed knowledge loading now ignores Kubernetes ConfigMap projected-volume backing paths
-  such as `..2026_*`, preventing duplicate file ingestion.
 - pgvector search now accepts JSONB metadata returned by the driver as either a mapping or
   JSON string, preventing customer-message retrieval crashes.
 - Local MVP token embeddings now normalize simple plural variants such as `socials` and

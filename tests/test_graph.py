@@ -57,15 +57,23 @@ class StaticQuestionPlanner:
         return self.plan_value
 
 
-async def test_grounded_question_returns_citation(tmp_path) -> None:
-    knowledge_dir = tmp_path / "knowledge"
-    knowledge_dir.mkdir()
-    (knowledge_dir / "password-reset.txt").write_text(
-        "To reset your password, open Settings, select Security, then choose Reset password.",
-        encoding="utf-8",
+async def test_grounded_question_returns_citation() -> None:
+    container = await create_container(Settings())
+    await container.retrieval.upsert(
+        [
+            Document(
+                page_content=(
+                    "To reset your password, open Settings, select Security, "
+                    "then choose Reset password."
+                ),
+                metadata={
+                    "source": "kb/password-reset.txt",
+                    "chunk_id": "kb/password-reset.txt#0000",
+                },
+            )
+        ],
+        SEED_KNOWLEDGE_NAMESPACE,
     )
-
-    container = await create_container(Settings(knowledge_path=str(knowledge_dir)))
     reply = await invoke_support_graph(
         container.graph,
         IncomingMessage(
@@ -103,15 +111,17 @@ async def test_unknown_question_is_marked_low_confidence() -> None:
     assert conversation.state == "BOT_ACTIVE"
 
 
-async def test_loads_knowledge_from_directory(tmp_path) -> None:
-    knowledge_dir = tmp_path / "knowledge"
-    knowledge_dir.mkdir()
-    (knowledge_dir / "shipping.md").write_text(
-        "Shipping address changes are allowed before the order is packed.",
-        encoding="utf-8",
+async def test_retrieves_directly_seeded_knowledge() -> None:
+    container = await create_container(Settings())
+    await container.retrieval.upsert(
+        [
+            Document(
+                page_content="Shipping address changes are allowed before the order is packed.",
+                metadata={"source": "kb/shipping.md", "chunk_id": "kb/shipping.md#0000"},
+            )
+        ],
+        SEED_KNOWLEDGE_NAMESPACE,
     )
-
-    container = await create_container(Settings(knowledge_path=str(knowledge_dir)))
     reply = await invoke_support_graph(
         container.graph,
         IncomingMessage(
@@ -128,19 +138,8 @@ async def test_loads_knowledge_from_directory(tmp_path) -> None:
     assert reply.state == "BOT_ACTIVE"
 
 
-async def test_seed_knowledge_namespace_constant_is_used(tmp_path) -> None:
-    knowledge_dir = tmp_path / "knowledge"
-    knowledge_dir.mkdir()
-    (knowledge_dir / "shipping.md").write_text(
-        "Shipping address changes are allowed before the order is packed.",
-        encoding="utf-8",
-    )
-
-    container = await create_container(Settings(knowledge_path=str(knowledge_dir)))
-
+async def test_seed_knowledge_namespace_constant_is_used() -> None:
     assert SEED_KNOWLEDGE_NAMESPACE == "seed-knowledge"
-    assert SEED_KNOWLEDGE_NAMESPACE in container.retrieval.documents
-    assert "knowledge" not in container.retrieval.documents
 
 
 async def test_tenant_knowledge_namespace_defaults_to_existing_seed_namespace() -> None:
@@ -149,7 +148,7 @@ async def test_tenant_knowledge_namespace_defaults_to_existing_seed_namespace() 
 
 
 async def test_graph_isolates_conversations_by_tenant() -> None:
-    container = await create_container(Settings(seed_knowledge=False))
+    container = await create_container(Settings())
 
     first_reply = await invoke_support_graph(
         container.graph,
@@ -178,7 +177,7 @@ async def test_graph_isolates_conversations_by_tenant() -> None:
 
 
 async def test_graph_retrieves_knowledge_from_message_tenant_namespace() -> None:
-    container = await create_container(Settings(seed_knowledge=False))
+    container = await create_container(Settings())
     await container.retrieval.upsert(
         [
             Document(
@@ -214,7 +213,7 @@ async def test_graph_retrieves_knowledge_from_message_tenant_namespace() -> None
 
 
 async def test_graph_passes_tenant_prompt_config_to_planner_and_answer_generator() -> None:
-    container = await create_container(Settings(seed_knowledge=False))
+    container = await create_container(Settings())
     await container.tenant_configs.upsert(
         "tenant-a",
         selected_plan="enterprise",
@@ -296,7 +295,7 @@ async def test_graph_passes_tenant_prompt_config_to_planner_and_answer_generator
 
 
 async def test_graph_passes_current_conversation_history_with_safety_cap() -> None:
-    container = await create_container(Settings(seed_knowledge=False))
+    container = await create_container(Settings())
     generator = RecordingAnswerGenerator()
     graph = build_support_graph(
         container.conversations,
@@ -329,7 +328,7 @@ async def test_graph_passes_current_conversation_history_with_safety_cap() -> No
 
 
 async def test_graph_uses_question_plan_explanation_for_out_of_scope_reply() -> None:
-    container = await create_container(Settings(seed_knowledge=False))
+    container = await create_container(Settings())
     generator = RecordingAnswerGenerator()
     planner = StaticQuestionPlanner(
         QuestionPlan(
@@ -370,7 +369,7 @@ async def test_graph_uses_question_plan_explanation_for_out_of_scope_reply() -> 
 
 
 async def test_graph_passes_no_greet_metadata_to_planner_for_active_conversation() -> None:
-    container = await create_container(Settings(seed_knowledge=False))
+    container = await create_container(Settings())
     generator = RecordingAnswerGenerator()
     planner = StaticQuestionPlanner(
         QuestionPlan(
@@ -419,7 +418,7 @@ async def test_graph_passes_no_greet_metadata_to_planner_for_active_conversation
 
 
 async def test_graph_skips_conversation_history_for_standalone_question() -> None:
-    container = await create_container(Settings(seed_knowledge=False))
+    container = await create_container(Settings())
     await container.retrieval.upsert(
         [
             Document(
@@ -478,7 +477,7 @@ async def test_graph_skips_conversation_history_for_standalone_question() -> Non
 
 
 async def test_explicit_human_request_sets_human_requested_state() -> None:
-    container = await create_container(Settings(seed_knowledge=False))
+    container = await create_container(Settings())
     await container.retrieval.upsert(
         [
             Document(
@@ -508,7 +507,7 @@ async def test_explicit_human_request_sets_human_requested_state() -> None:
 
 
 async def test_frustration_without_human_request_does_not_change_state() -> None:
-    container = await create_container(Settings(seed_knowledge=False))
+    container = await create_container(Settings())
     reply = await invoke_support_graph(
         container.graph,
         IncomingMessage(
@@ -524,7 +523,7 @@ async def test_frustration_without_human_request_does_not_change_state() -> None
 
 
 async def test_citations_fall_back_to_source_without_chunk_id() -> None:
-    container = await create_container(Settings(seed_knowledge=False))
+    container = await create_container(Settings())
     await container.retrieval.upsert(
         [
             Document(

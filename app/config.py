@@ -37,10 +37,6 @@ class Settings(BaseSettings):
     whatsapp_phone_number_id: str | None = None
     whatsapp_verify_token: str | None = None
     whatsapp_graph_api_version: str = "v20.0"
-    seed_knowledge: bool = True
-    knowledge_path: str | None = None
-    knowledge_chunk_size: int = Field(default=1_200, gt=0)
-    knowledge_chunk_overlap: int = Field(default=200, ge=0)
     log_level: str = "INFO"
     log_format: str = "{asctime} - {levelname}:{name}:{message}"
 

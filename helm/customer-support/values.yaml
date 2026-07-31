@@ -91,13 +91,6 @@ llm:
   existingSecret: "api-keys"
   secretKey: OPENAI_API_KEY
 
-knowledge:
-  existingConfigMap: "seed-knowledge"
-  mountPath: /knowledge
-  seedOnStartup: true
-  chunkSize: 1200
-  chunkOverlap: 200
-
 logging:
   level: INFO
   format: "{asctime} - {levelname}: {name}: {message}"

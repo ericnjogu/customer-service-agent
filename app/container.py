@@ -38,7 +38,6 @@ from app.adapters.tenant_cache import (
 from app.adapters.whatsapp import WhatsAppCloudClient, WhatsAppSender
 from app.config import Settings
 from app.graph import build_support_graph
-from app.knowledge import load_knowledge_documents, tenant_knowledge_namespace
 
 logger = logging.getLogger(__name__)
 
@@ -65,16 +64,12 @@ class Container:
 
 async def create_container(settings: Settings) -> Container:
     database = None
-    if settings.knowledge_chunk_overlap >= settings.knowledge_chunk_size:
-        raise ValueError("SUPPORT_KNOWLEDGE_CHUNK_OVERLAP must be smaller than chunk size")
     logger.info(
         "Creating app container with retrieval_provider=%s embedding_provider=%s "
-        "embedding_dimensions=%s seed_knowledge=%s knowledge_path=%s",
+        "embedding_dimensions=%s",
         settings.retrieval_provider,
         settings.embedding_provider,
         settings.embedding_dimensions,
-        settings.seed_knowledge,
-        settings.knowledge_path or "<unset>",
     )
 
     if settings.embedding_provider == "local":
@@ -138,22 +133,6 @@ async def create_container(settings: Settings) -> Container:
     await tenants.initialize()
     await tenant_configs.initialize()
     await retrieval.initialize()
-    if settings.seed_knowledge:
-        knowledge_namespace = tenant_knowledge_namespace(settings.default_tenant_id)
-        documents = load_knowledge_documents(
-            settings.knowledge_path,
-            chunk_size=settings.knowledge_chunk_size,
-            chunk_overlap=settings.knowledge_chunk_overlap,
-        )
-        logger.info(
-            "Loaded %d seed knowledge chunk(s) for namespace=%s sources=%s",
-            len(documents),
-            knowledge_namespace,
-            [str(document.metadata.get("source", "unknown")) for document in documents],
-        )
-        await retrieval.upsert(documents, knowledge_namespace)
-    else:
-        logger.info("Seed knowledge loading is disabled")
 
     logger.info(f"answer provider '{settings.answer_provider}'")
     if settings.answer_provider == "extractive":

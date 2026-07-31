@@ -124,7 +124,7 @@ def test_tenant_can_be_created_with_generated_id_without_config() -> None:
         create_response = client.post(
             "/tenants",
             json={
-                "display_name": "Maxys Lounge",
+                "display_name": "Hustle HQ",
                 "selected_plan": "enterprise",
             },
         )
@@ -135,8 +135,8 @@ def test_tenant_can_be_created_with_generated_id_without_config() -> None:
     assert create_response.status_code == 201
     assert tenant_id.startswith("tnt_")
     assert "config" not in create_response.json()
-    assert create_response.json()["slug"] == "maxys-lounge"
-    assert create_response.json()["display_name"] == "Maxys Lounge"
+    assert create_response.json()["slug"] == "hustle-hq"
+    assert create_response.json()["display_name"] == "Hustle HQ"
     assert create_response.json()["selected_plan"] == "enterprise"
     assert get_response.status_code == 200
     assert get_response.json()["tenant_id"] == tenant_id
@@ -146,12 +146,12 @@ def test_tenant_can_be_created_with_generated_id_without_config() -> None:
 
 def test_tenant_creation_returns_conflict_when_slug_already_exists() -> None:
     with TestClient(app) as client:
-        first_response = client.post("/tenants", json={"display_name": "Acme Lounge"})
-        second_response = client.post("/tenants", json={"display_name": "Acme Lounge"})
+        first_response = client.post("/tenants", json={"display_name": "Hustle HQ"})
+        second_response = client.post("/tenants", json={"display_name": "Hustle HQ"})
 
     assert first_response.status_code == 201
     assert second_response.status_code == 409
-    assert first_response.json()["slug"] == "acme-lounge"
+    assert first_response.json()["slug"] == "hustle-hq"
     assert (
         second_response.json()["detail"]
         == "Tenant with matching name or slug already exists"

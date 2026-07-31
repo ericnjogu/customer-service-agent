@@ -353,13 +353,13 @@ Create a tenant record with:
 curl -X POST http://localhost:8000/tenants \
   -H 'content-type: application/json' \
   -d '{
-    "display_name": "Acme Lounge",
+    "display_name": "Hustle HQ",
     "selected_plan": "sme"
   }'
 ```
 
 The response includes an immutable generated tenant id such as `tnt_...`, a readable slug
-such as `acme-lounge`, and no tenant config. Tenant config is created later with
+such as `hustle-hq`, and no tenant config. Tenant config is created later with
 `PUT /tenants/{tenant_id}/config`, after provider project names are known. Use the
 generated `tenant_id` for chat routing, tenant config, and KB ingestion. The slug is for
 display/search/URLs and may later be changed independently.
@@ -370,7 +370,7 @@ else's tenant id. Use the explicit lookup endpoint when you intentionally want a
 tenant:
 
 ```bash
-curl http://localhost:8000/tenants/by-slug/acme-lounge
+curl http://localhost:8000/tenants/by-slug/hustle-hq
 ```
 
 Read the tenant record with:
@@ -381,7 +381,7 @@ curl http://localhost:8000/tenants/tnt_abc123...
 
 For synthetic/API calls, include `tenant_id` in the JSON body or send
 `X-Support-Tenant-Id`. For Telegram and WhatsApp webhook posts, pass `tenant_id` as a
-query parameter, for example `/webhooks/telegram?tenant_id=acme`, or send
+query parameter, for example `/webhooks/telegram?tenant_id=hustle-hq`, or send
 `X-Support-Tenant-Id`.
 
 Tenant prompt configuration is managed through:
@@ -392,20 +392,20 @@ curl -X PUT http://localhost:8000/tenants/tnt_abc123.../config \
   -d '{
     "selected_plan": "sme",
     "enabled_features": ["telegram", "whatsapp"],
-    "answer_prompt_instructions": "Use Acme Lounge'\''s warm, concise brand voice.",
+    "answer_prompt_instructions": "Use Hustle HQ'\''s warm, concise brand voice.",
     "planner_prompt_instructions": "Questions about table bookings and private events are in scope.",
-    "llm_project_id": "proj_acme",
-    "llm_project_name": "customer-service-acme",
-    "langsmith_project": "customer-service-acme",
+    "llm_project_id": "proj_hustle_hq",
+    "llm_project_name": "customer-service-hustle-hq",
+    "langsmith_project": "customer-service-hustle-hq",
     "llm_provider": "langchain-compatible",
     "llm_model": "deepseek-chat",
     "llm_base_url": "https://api.deepseek.com",
     "vector_provider": "pgvector",
     "vector_isolation_mode": "shared_collection",
     "vector_collection": "customer-support",
-    "vector_namespace": "acme:seed-knowledge",
-    "telegram_secret_name": "tenant-acme-telegram",
-    "whatsapp_secret_name": "tenant-acme-whatsapp"
+    "vector_namespace": "hustle-hq:seed-knowledge",
+    "telegram_secret_name": "tenant-hustle-hq-telegram",
+    "whatsapp_secret_name": "tenant-hustle-hq-whatsapp"
   }'
 ```
 
@@ -566,7 +566,7 @@ name in the tenant config. The Bruno onboarding flow can create this Secret thro
 `kubectl proxy`; manually, it looks like:
 
 ```bash
-kubectl create secret generic tenant-maxys-lounge-telegram \
+kubectl create secret generic tenant-hustle-hq-telegram \
   --namespace customer-support \
   --from-literal=TELEGRAM_BOT_TOKEN="$TENANT_TELEGRAM_BOT_TOKEN" \
   --from-literal=TELEGRAM_WEBHOOK_SECRET_TOKEN="$TENANT_TELEGRAM_WEBHOOK_SECRET_TOKEN"
@@ -574,7 +574,7 @@ kubectl create secret generic tenant-maxys-lounge-telegram \
 
 ```json
 {
-  "telegram_secret_name": "tenant-maxys-lounge-telegram"
+  "telegram_secret_name": "tenant-hustle-hq-telegram"
 }
 ```
 

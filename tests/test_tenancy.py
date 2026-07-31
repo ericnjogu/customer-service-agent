@@ -17,11 +17,11 @@ def test_normalize_tenant_id_uses_default_for_missing_or_blank_values() -> None:
 
 
 def test_normalize_tenant_id_trims_non_blank_values() -> None:
-    assert normalize_tenant_id("  Acme Lounge  ") == "Acme Lounge"
+    assert normalize_tenant_id("  Hustle HQ  ") == "Hustle HQ"
 
 
 def test_tenant_slug_normalizes_provider_safe_names() -> None:
-    assert tenant_slug("Acme Lounge") == "acme-lounge"
+    assert tenant_slug("Hustle HQ") == "hustle-hq"
     assert tenant_slug("  Tenant_123!! ") == "tenant-123"
     assert tenant_slug("North/East.Co") == "north-east-co"
 
@@ -32,8 +32,8 @@ def test_tenant_slug_uses_default_when_no_alphanumeric_characters_remain() -> No
 
 
 def test_default_project_names_use_tenant_slug() -> None:
-    assert default_llm_project_name("Acme Lounge") == "customer-support-acme-lounge"
-    assert default_langsmith_project("Acme Lounge") == "customer-support-acme-lounge"
+    assert default_llm_project_name("Hustle HQ") == "customer-support-hustle-hq"
+    assert default_langsmith_project("Hustle HQ") == "customer-support-hustle-hq"
 
 
 def test_default_vector_namespace_preserves_default_tenant_namespace() -> None:
@@ -41,7 +41,7 @@ def test_default_vector_namespace_preserves_default_tenant_namespace() -> None:
 
 
 def test_default_vector_namespace_uses_tenant_slug_for_non_default_tenants() -> None:
-    assert default_vector_namespace("Acme Lounge") == "acme-lounge:seed-knowledge"
+    assert default_vector_namespace("Hustle HQ") == "hustle-hq:seed-knowledge"
 
 
 def test_generate_tenant_id_uses_internal_tenant_prefix() -> None:

@@ -16,7 +16,7 @@ and reproducible.
   answers.
 - In-memory adapters for fast development and tests.
 - PostgreSQL conversation persistence and pgvector retrieval in Kubernetes.
-- Startup knowledge loaded from a mounted directory or ConfigMap.
+- Tenant-scoped KB retrieval through the configured retrieval store.
 - Conversation routing state updates for the handoff foundation.
 - Optional OpenAI/LangChain answer provider behind `SUPPORT_ANSWER_PROVIDER=openai`.
 - Optional OpenAI semantic embeddings behind `SUPPORT_EMBEDDING_PROVIDER=openai`.
@@ -141,55 +141,12 @@ recipe; `nerdctl`, rather than Docker, builds it for Kubernetes.
 The default password in `values.yaml` is deliberately local-only. Override it outside local
 development and use a secret manager in production.
 
-### Mount local KB files through a ConfigMap
+### Knowledge base direction
 
-ConfigMaps are the current local/bootstrap path for seed KB. Future increments can add
-tenant-approved live source tools and cloud-document connectors without making the app own
-PDF or multimedia storage.
-
-Keep the actual KB files outside the repository, for example:
-
-```bash
-mkdir -p "$HOME/customer-support-knowledge"
-cat > "$HOME/customer-support-knowledge/refunds.md" <<'EOF'
-Refund requests can be submitted within 30 days of purchase. Include the order number
-and the reason for the request.
-EOF
-```
-
-Create or update a ConfigMap from that directory:
-
-```bash
-kubectl create configmap seed-knowledge \
-  --namespace customer-support \
-  --from-file=./files-dir \
-  --dry-run=client \
-  -o yaml | kubectl apply -f -
-```
-
-or using selected files:
-
-```bash
-kubectl create configmap seed-knowledge \
-  --namespace customer-support \
-  --from-file=drinks.txt \
-  --from-file=menu-gpt-4.txt \
-  --dry-run=client \
-  -o yaml | kubectl apply -f -
-
-```
-
-Then mount it into the app:
-
-```bash
-helm upgrade --install support helm/customer-support \
-  --namespace customer-support \
-  --set knowledge.existingConfigMap=seed-knowledge
-```
-
-The app reads `.md` and `.txt` files from `/knowledge` by default. ConfigMaps are suitable
-for these small 4 KB documents, but keep the total ConfigMap size comfortably below
-Kubernetes' 1 MiB object limit.
+The app no longer loads startup KB files from a mounted directory or ConfigMap. Tenant KB
+storage and retrieval remain in place through the retrieval/vector store, but knowledge
+should be populated by future source tools, cloud-document connectors, learned support
+answers, or admin workflows rather than static files mounted into the pod.
 
 ## Conversation routing state
 
@@ -669,10 +626,6 @@ Application configuration uses the `SUPPORT_` prefix. LangSmith uses its native
 | `SUPPORT_WHATSAPP_PHONE_NUMBER_ID` | unset | WhatsApp Cloud API phone number id used for outbound messages |
 | `SUPPORT_WHATSAPP_VERIFY_TOKEN` | unset | WhatsApp webhook verification token checked during Meta webhook setup |
 | `SUPPORT_WHATSAPP_GRAPH_API_VERSION` | `v20.0` | Meta Graph API version used for WhatsApp outbound messages |
-| `SUPPORT_SEED_KNOWLEDGE` | `true` | Load startup knowledge |
-| `SUPPORT_KNOWLEDGE_PATH` | unset | Directory containing `.md`/`.txt` KB files; no startup documents are loaded when unset |
-| `SUPPORT_KNOWLEDGE_CHUNK_SIZE` | `1200` | Character target size for seed KB chunks before embedding |
-| `SUPPORT_KNOWLEDGE_CHUNK_OVERLAP` | `200` | Character overlap between adjacent seed KB chunks |
 | `SUPPORT_LOG_LEVEL` | `INFO` | Application log level, for example `DEBUG` |
 | `SUPPORT_LOG_FORMAT` | `{asctime} - {levelname}:{name}:{message}` | Python logging format using `{}` style |
 | `LANGSMITH_TRACING` | `true` | Enable LangSmith tracing |
@@ -685,8 +638,8 @@ Application configuration uses the `SUPPORT_` prefix. LangSmith uses its native
 Changing `SUPPORT_EMBEDDING_DIMENSIONS` changes the required pgvector column type. Use a
 fresh database, recreate the `knowledge_documents` table, or reindex the KB when moving
 between local 64-dimensional embeddings and OpenAI 1536-dimensional embeddings.
-Seed KB files are chunked before embedding, so pgvector stores one row per chunk using a
-stable `chunk_id` such as `kb/menu.txt#0000`.
+Knowledge rows use stable chunk ids such as `kb/menu.txt#0000` so callers can trace
+answers to exact retrieved chunks.
 API response citations return these chunk ids, not just source file paths, so callers can
 trace an answer to the exact retrieved chunk.
 Retrieved chunks passed to the LLM include `chunk_id`, `source`, and the pgvector

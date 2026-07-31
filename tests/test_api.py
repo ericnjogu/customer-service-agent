@@ -1,12 +1,34 @@
+import asyncio
+
 import pytest
 from fastapi.testclient import TestClient
+from langchain_core.documents import Document
 
 from app.config import get_settings
+from app.knowledge import SEED_KNOWLEDGE_NAMESPACE
 from app.main import app
 
 
 def validation_messages(response) -> list[str]:
     return [str(error.get("msg", "")) for error in response.json()["detail"]]
+
+
+def seed_default_knowledge(client: TestClient, filename: str, content: str) -> None:
+    source = f"kb/{filename}"
+    asyncio.run(
+        client.app.state.container.retrieval.upsert(
+            [
+                Document(
+                    page_content=content,
+                    metadata={
+                        "source": source,
+                        "chunk_id": f"{source}#0000",
+                    },
+                )
+            ],
+            SEED_KNOWLEDGE_NAMESPACE,
+        )
+    )
 
 
 class FakeTelegramSender:
@@ -53,16 +75,13 @@ def clear_settings_cache():
     get_settings.cache_clear()
 
 
-def test_synthetic_webhook_vertical_slice(tmp_path, monkeypatch) -> None:
-    knowledge_dir = tmp_path / "knowledge"
-    knowledge_dir.mkdir()
-    (knowledge_dir / "refunds.txt").write_text(
-        "Refund requests can be submitted within 30 days of purchase.",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("SUPPORT_KNOWLEDGE_PATH", str(knowledge_dir))
-
+def test_synthetic_webhook_vertical_slice() -> None:
     with TestClient(app) as client:
+        seed_default_knowledge(
+            client,
+            "refunds.txt",
+            "Refund requests can be submitted within 30 days of purchase.",
+        )
         response = client.post(
             "/webhooks/synthetic",
             json={
@@ -77,16 +96,13 @@ def test_synthetic_webhook_vertical_slice(tmp_path, monkeypatch) -> None:
     assert response.json()["citations"] == ["kb/refunds.txt#0000"]
 
 
-def test_customer_message_endpoint_receives_user_question(tmp_path, monkeypatch) -> None:
-    knowledge_dir = tmp_path / "knowledge"
-    knowledge_dir.mkdir()
-    (knowledge_dir / "password-reset.txt").write_text(
-        "To reset your password, open Settings, select Security, then choose Reset password.",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("SUPPORT_KNOWLEDGE_PATH", str(knowledge_dir))
-
+def test_customer_message_endpoint_receives_user_question() -> None:
     with TestClient(app) as client:
+        seed_default_knowledge(
+            client,
+            "password-reset.txt",
+            "To reset your password, open Settings, select Security, then choose Reset password.",
+        )
         response = client.post(
             "/messages/customer",
             json={
@@ -332,20 +348,14 @@ def test_explicit_human_request_updates_conversation_state() -> None:
     assert response.json()["low_confidence"] is True
 
 
-def test_telegram_webhook_receives_customer_message_and_sends_reply(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    knowledge_dir = tmp_path / "knowledge"
-    knowledge_dir.mkdir()
-    (knowledge_dir / "refunds.txt").write_text(
-        "Refund requests can be submitted within 30 days of purchase.",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("SUPPORT_KNOWLEDGE_PATH", str(knowledge_dir))
-
+def test_telegram_webhook_receives_customer_message_and_sends_reply() -> None:
     sender = FakeTelegramSender()
     with TestClient(app) as client:
+        seed_default_knowledge(
+            client,
+            "refunds.txt",
+            "Refund requests can be submitted within 30 days of purchase.",
+        )
         client.app.state.container.telegram_sender = sender
         response = client.post(
             "/webhooks/telegram",
@@ -464,20 +474,14 @@ def test_whatsapp_webhook_verification_rejects_invalid_verify_token(monkeypatch)
     assert response.status_code == 403
 
 
-def test_whatsapp_webhook_receives_customer_message_and_sends_reply(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    knowledge_dir = tmp_path / "knowledge"
-    knowledge_dir.mkdir()
-    (knowledge_dir / "refunds.txt").write_text(
-        "Refund requests can be submitted within 30 days of purchase.",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("SUPPORT_KNOWLEDGE_PATH", str(knowledge_dir))
-
+def test_whatsapp_webhook_receives_customer_message_and_sends_reply() -> None:
     sender = FakeWhatsAppSender()
     with TestClient(app) as client:
+        seed_default_knowledge(
+            client,
+            "refunds.txt",
+            "Refund requests can be submitted within 30 days of purchase.",
+        )
         client.app.state.container.whatsapp_sender = sender
         response = client.post(
             "/webhooks/whatsapp",

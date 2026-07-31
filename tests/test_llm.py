@@ -197,7 +197,7 @@ async def test_llm_answer_generator_instructs_model_to_reject_out_of_scope_quest
 
     answer, confidence = await generator.generate(
         "Tell me a riddle.",
-        [Document(page_content="Maxys Lounge serves food and drinks.")],
+        [Document(page_content="Hustle HQ serves food and drinks.")],
     )
 
     system_prompt = chat_model.last_messages[0].content
@@ -217,7 +217,7 @@ async def test_llm_answer_generator_instructs_model_to_reply_in_customer_languag
 
     await generator.generate(
         "Mnafunga saa ngapi?",
-        [Document(page_content="Maxys Lounge closes at 8 PM.")],
+        [Document(page_content="Hustle HQ closes at 8 PM.")],
     )
 
     system_prompt = chat_model.last_messages[0].content

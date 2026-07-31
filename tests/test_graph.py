@@ -145,7 +145,7 @@ async def test_seed_knowledge_namespace_constant_is_used(tmp_path) -> None:
 
 async def test_tenant_knowledge_namespace_defaults_to_existing_seed_namespace() -> None:
     assert tenant_knowledge_namespace("default") == SEED_KNOWLEDGE_NAMESPACE
-    assert tenant_knowledge_namespace("acme") == "acme:seed-knowledge"
+    assert tenant_knowledge_namespace("hustle-hq") == "hustle-hq:seed-knowledge"
 
 
 async def test_graph_isolates_conversations_by_tenant() -> None:
@@ -335,7 +335,7 @@ async def test_graph_uses_question_plan_explanation_for_out_of_scope_reply() -> 
         QuestionPlan(
             in_scope=False,
             needs_conversation_history=False,
-            explanation="Hi Ada, I can help with questions about Maxys Lounge.",
+            explanation="Hi Ada, I can help with questions about Hustle HQ.",
         )
     )
     graph = build_support_graph(
@@ -363,7 +363,7 @@ async def test_graph_uses_question_plan_explanation_for_out_of_scope_reply() -> 
 
     assert planner.calls == 1
     assert generator.calls == 0
-    assert reply.answer == "Hi Ada, I can help with questions about Maxys Lounge."
+    assert reply.answer == "Hi Ada, I can help with questions about Hustle HQ."
     assert reply.confidence == 0
     assert reply.low_confidence is True
     assert reply.citations == []
@@ -376,7 +376,7 @@ async def test_graph_passes_no_greet_metadata_to_planner_for_active_conversation
         QuestionPlan(
             in_scope=False,
             needs_conversation_history=False,
-            explanation="I can help with questions about Maxys Lounge.",
+            explanation="I can help with questions about Hustle HQ.",
         )
     )
     graph = build_support_graph(
@@ -415,7 +415,7 @@ async def test_graph_passes_no_greet_metadata_to_planner_for_active_conversation
     assert planner.metadata[-1] is not None
     assert planner.metadata[-1].should_greet_customer is False
     assert planner.metadata[-1].greeting_reason == "active conversation; avoid repeated greeting"
-    assert reply.answer == "I can help with questions about Maxys Lounge."
+    assert reply.answer == "I can help with questions about Hustle HQ."
 
 
 async def test_graph_skips_conversation_history_for_standalone_question() -> None:
@@ -423,7 +423,7 @@ async def test_graph_skips_conversation_history_for_standalone_question() -> Non
     await container.retrieval.upsert(
         [
             Document(
-                page_content="Maxys Lounge is located on River Road.",
+                page_content="Hustle HQ is located on River Road.",
                 metadata={"source": "kb/location.txt", "chunk_id": "kb/location.txt#0000"},
             )
         ],

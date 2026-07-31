@@ -1,7 +1,18 @@
 opencollection: 1.0.0
 
 info:
-  name: customer-support-agent
+  name: customer-service-agent
+config:
+  proxy:
+    inherit: true
+    config:
+      protocol: http
+      hostname: ""
+      port: ""
+      auth:
+        username: ""
+        password: ""
+      bypassProxy: ""
 bundled: false
 extensions:
   bruno:

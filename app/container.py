@@ -11,6 +11,8 @@ from app.adapters.memory import (
     ExtractiveAnswerGenerator,
     MemoryConversationRepository,
     MemoryRetrievalStore,
+    MemoryTenantConfigRepository,
+    MemoryTenantRepository,
     RuleBasedHumanRequestDetector,
     RuleBasedQuestionPlanner,
 )
@@ -18,12 +20,25 @@ from app.adapters.postgres import (
     PgVectorRetrievalStore,
     PostgresConversationRepository,
     PostgresDatabase,
+    PostgresTenantConfigRepository,
+    PostgresTenantRepository,
 )
-from app.adapters.telegram import TelegramBotClient, TelegramSender
+from app.adapters.telegram import (
+    KubernetesSecretTelegramCredentialResolver,
+    StaticTelegramCredentialResolver,
+    TelegramCredentialResolver,
+    TelegramSender,
+    TenantAwareTelegramSender,
+)
+from app.adapters.tenant_cache import (
+    MemoryCachedTenantConfigRepository,
+    RedisTenantConfigRepository,
+    create_redis_client,
+)
 from app.adapters.whatsapp import WhatsAppCloudClient, WhatsAppSender
 from app.config import Settings
 from app.graph import build_support_graph
-from app.knowledge import SEED_KNOWLEDGE_NAMESPACE, load_knowledge_documents
+from app.knowledge import load_knowledge_documents, tenant_knowledge_namespace
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +46,19 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Container:
     conversations: object
+    tenants: object
+    tenant_configs: object
     retrieval: object
     graph: object
+    telegram_credentials: TelegramCredentialResolver
     telegram_sender: TelegramSender | None = None
     whatsapp_sender: WhatsAppSender | None = None
     database: PostgresDatabase | None = None
 
     async def close(self) -> None:
+        close_tenant_configs = getattr(self.tenant_configs, "close", None)
+        if close_tenant_configs:
+            await close_tenant_configs()
         if self.database:
             await self.database.close()
 
@@ -78,16 +99,47 @@ async def create_container(settings: Settings) -> Container:
         )
         await database.initialize()
         conversations = PostgresConversationRepository(database)
+        tenants = PostgresTenantRepository(database)
+        tenant_configs = PostgresTenantConfigRepository(
+            database,
+            default_vector_collection=settings.vector_collection,
+        )
         retrieval = PgVectorRetrievalStore(database, embeddings)
     elif settings.retrieval_provider == "memory":
         conversations = MemoryConversationRepository()
+        tenants = MemoryTenantRepository()
+        tenant_configs = MemoryTenantConfigRepository(
+            default_vector_collection=settings.vector_collection,
+        )
         retrieval = MemoryRetrievalStore()
     else:
         raise ValueError(f"Unsupported retrieval provider: {settings.retrieval_provider}")
 
+    if settings.tenant_config_cache_provider == "redis":
+        if not settings.redis_url:
+            raise ValueError(
+                "SUPPORT_REDIS_URL is required when "
+                "SUPPORT_TENANT_CONFIG_CACHE_PROVIDER=redis"
+            )
+        tenant_configs = RedisTenantConfigRepository(
+            tenant_configs,
+            create_redis_client(settings.redis_url),
+            ttl_seconds=settings.tenant_config_cache_ttl_seconds,
+        )
+    elif settings.tenant_config_cache_provider == "memory":
+        tenant_configs = MemoryCachedTenantConfigRepository(tenant_configs)
+    else:
+        raise ValueError(
+            "Unsupported tenant config cache provider: "
+            f"{settings.tenant_config_cache_provider}"
+        )
+
     await conversations.initialize()
+    await tenants.initialize()
+    await tenant_configs.initialize()
     await retrieval.initialize()
     if settings.seed_knowledge:
+        knowledge_namespace = tenant_knowledge_namespace(settings.default_tenant_id)
         documents = load_knowledge_documents(
             settings.knowledge_path,
             chunk_size=settings.knowledge_chunk_size,
@@ -96,10 +148,10 @@ async def create_container(settings: Settings) -> Container:
         logger.info(
             "Loaded %d seed knowledge chunk(s) for namespace=%s sources=%s",
             len(documents),
-            SEED_KNOWLEDGE_NAMESPACE,
+            knowledge_namespace,
             [str(document.metadata.get("source", "unknown")) for document in documents],
         )
-        await retrieval.upsert(documents, SEED_KNOWLEDGE_NAMESPACE)
+        await retrieval.upsert(documents, knowledge_namespace)
     else:
         logger.info("Seed knowledge loading is disabled")
 
@@ -161,6 +213,7 @@ async def create_container(settings: Settings) -> Container:
 
     graph = build_support_graph(
         conversations,
+        tenant_configs,
         retrieval,
         generator,
         question_planner,
@@ -169,11 +222,26 @@ async def create_container(settings: Settings) -> Container:
         settings.conversation_history_max_messages,
         settings.greeting_lapse_minutes,
     )
-    telegram_sender = (
-        TelegramBotClient(settings.telegram_bot_token)
-        if settings.telegram_bot_token
-        else None
+    static_telegram_credentials = StaticTelegramCredentialResolver(
+        bot_token=settings.telegram_bot_token,
+        webhook_secret_token=settings.telegram_webhook_secret_token,
     )
+    if settings.telegram_credential_provider == "kubernetes":
+        telegram_credentials = KubernetesSecretTelegramCredentialResolver(
+            tenant_configs=tenant_configs,
+            fallback=static_telegram_credentials,
+            namespace=settings.telegram_secret_namespace,
+            bot_token_key=settings.telegram_bot_token_secret_key,
+            webhook_secret_token_key=settings.telegram_webhook_secret_token_secret_key,
+        )
+    elif settings.telegram_credential_provider == "static":
+        telegram_credentials = static_telegram_credentials
+    else:
+        raise ValueError(
+            "Unsupported Telegram credential provider: "
+            f"{settings.telegram_credential_provider}"
+        )
+    telegram_sender = TenantAwareTelegramSender(telegram_credentials)
     whatsapp_sender = (
         WhatsAppCloudClient(
             settings.whatsapp_access_token,
@@ -185,8 +253,11 @@ async def create_container(settings: Settings) -> Container:
     )
     return Container(
         conversations=conversations,
+        tenants=tenants,
+        tenant_configs=tenant_configs,
         retrieval=retrieval,
         graph=graph,
+        telegram_credentials=telegram_credentials,
         telegram_sender=telegram_sender,
         whatsapp_sender=whatsapp_sender,
         database=database,

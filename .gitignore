@@ -7,3 +7,6 @@ __pycache__/
 .env
 dist/
 build/
+bruno/environments/local.yml
+bruno/environments/ngrok.yml
+mumbo-jumbo.md

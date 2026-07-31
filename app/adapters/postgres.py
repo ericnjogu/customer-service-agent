@@ -10,8 +10,12 @@ from app.models import (
     ConversationRecord,
     IncomingMessage,
     StoredMessage,
+    TenantConfig,
+    TenantPlan,
+    TenantRecord,
 )
 from app.ports import EmbeddingProvider
+from app.tenancy import DEFAULT_TENANT_PLAN, generate_tenant_id, normalize_tenant_id, tenant_slug
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +42,18 @@ def decode_metadata(value: object) -> dict:
         if isinstance(decoded, dict):
             return decoded
     return {}
+
+
+def row_to_tenant_config(row: asyncpg.Record) -> TenantConfig:
+    data = dict(row)
+    data["enabled_features"] = [
+        str(item) for item in (data.get("enabled_features") or [])
+    ]
+    return TenantConfig(**data)
+
+
+def row_to_tenant(row: asyncpg.Record) -> TenantRecord:
+    return TenantRecord(**dict(row))
 
 
 class PostgresDatabase:
@@ -88,12 +104,13 @@ class PostgresConversationRepository:
         assert self.database.pool
         row = await self.database.pool.fetchrow(
             """
-            INSERT INTO conversations(channel, external_chat_id, external_user_id)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (channel, external_chat_id) DO UPDATE
+            INSERT INTO conversations(tenant_id, channel, external_chat_id, external_user_id)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (tenant_id, channel, external_chat_id) DO UPDATE
             SET external_user_id = EXCLUDED.external_user_id, updated_at = now()
-            RETURNING id, channel, external_chat_id, external_user_id, state, created_at
+            RETURNING id, tenant_id, channel, external_chat_id, external_user_id, state, created_at
             """,
+            message.tenant_id,
             message.channel,
             message.external_chat_id,
             message.external_user_id,
@@ -104,7 +121,7 @@ class PostgresConversationRepository:
         assert self.database.pool
         row = await self.database.pool.fetchrow(
             """
-            SELECT id, channel, external_chat_id, external_user_id, state, created_at
+            SELECT id, tenant_id, channel, external_chat_id, external_user_id, state, created_at
             FROM conversations WHERE id = $1
             """,
             conversation_id,
@@ -136,7 +153,14 @@ class PostgresConversationRepository:
                     UPDATE conversations
                     SET state = $2, updated_at = now()
                     WHERE id = $1
-                    RETURNING id, channel, external_chat_id, external_user_id, state, created_at
+                    RETURNING
+                        id,
+                        tenant_id,
+                        channel,
+                        external_chat_id,
+                        external_user_id,
+                        state,
+                        created_at
                     """,
                     conversation_id,
                     state,
@@ -162,9 +186,17 @@ class PostgresConversationRepository:
         assert self.database.pool
         result = await self.database.pool.execute(
             """
-            INSERT INTO messages(conversation_id, event_id, sender_type, body, created_at)
-            VALUES ($1, $2, $3, $4, $5) ON CONFLICT (event_id) DO NOTHING
+            INSERT INTO messages(
+                tenant_id,
+                conversation_id,
+                event_id,
+                sender_type,
+                body,
+                created_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (tenant_id, event_id) DO NOTHING
             """,
+            message.tenant_id,
             message.conversation_id,
             message.event_id,
             message.sender_type,
@@ -182,7 +214,7 @@ class PostgresConversationRepository:
         assert self.database.pool
         rows = await self.database.pool.fetch(
             """
-            SELECT conversation_id, event_id, sender_type, body, created_at
+            SELECT tenant_id, conversation_id, event_id, sender_type, body, created_at
             FROM messages
             WHERE conversation_id = $1 AND created_at >= $2
             ORDER BY created_at DESC
@@ -373,6 +405,256 @@ class PgVectorRetrievalStore:
         ]
 
 
+class PostgresTenantConfigRepository:
+    def __init__(
+        self,
+        database: PostgresDatabase,
+        default_vector_collection: str = "customer-support",
+    ) -> None:
+        self.database = database
+        self.default_vector_collection = default_vector_collection
+
+    async def initialize(self) -> None:
+        return None
+
+    async def get(self, tenant_id: str) -> TenantConfig:
+        existing = await self.get_existing(tenant_id)
+        if existing is not None:
+            return existing
+        return TenantConfig.with_defaults(
+            normalize_tenant_id(tenant_id),
+            vector_collection=self.default_vector_collection,
+        )
+
+    async def get_existing(self, tenant_id: str) -> TenantConfig | None:
+        assert self.database.pool
+        normalized_tenant_id = normalize_tenant_id(tenant_id)
+        row = await self.database.pool.fetchrow(
+            """
+            SELECT
+                tenant_configs.tenant_id,
+                tenant_configs.selected_plan,
+                COALESCE(
+                    array_agg(
+                        tenant_enabled_features.feature_key
+                        ORDER BY tenant_enabled_features.feature_key
+                    )
+                    FILTER (WHERE tenant_enabled_features.feature_key IS NOT NULL),
+                    ARRAY[]::text[]
+                ) AS enabled_features,
+                tenant_configs.answer_prompt_instructions,
+                tenant_configs.planner_prompt_instructions,
+                tenant_configs.llm_project_id,
+                tenant_configs.llm_project_name,
+                tenant_configs.langsmith_project,
+                tenant_configs.llm_provider,
+                tenant_configs.llm_model,
+                tenant_configs.llm_base_url,
+                tenant_configs.vector_provider,
+                tenant_configs.vector_isolation_mode,
+                tenant_configs.vector_collection,
+                tenant_configs.vector_namespace,
+                tenant_configs.telegram_secret_name,
+                tenant_configs.whatsapp_secret_name,
+                tenant_configs.created_at,
+                tenant_configs.updated_at
+            FROM tenant_configs
+            LEFT JOIN tenant_enabled_features
+                ON tenant_enabled_features.tenant_id = tenant_configs.tenant_id
+            WHERE tenant_configs.tenant_id = $1
+            GROUP BY tenant_configs.tenant_id
+            """,
+            normalized_tenant_id,
+        )
+        if row:
+            return row_to_tenant_config(row)
+        return None
+
+    async def upsert(
+        self,
+        tenant_id: str,
+        *,
+        selected_plan: TenantPlan | None = None,
+        enabled_features: list[str] | None = None,
+        answer_prompt_instructions: str | None = None,
+        planner_prompt_instructions: str | None = None,
+        llm_project_id: str | None = None,
+        llm_project_name: str | None = None,
+        langsmith_project: str | None = None,
+        llm_provider: str | None = None,
+        llm_model: str | None = None,
+        llm_base_url: str | None = None,
+        vector_provider: str | None = None,
+        vector_isolation_mode: str | None = None,
+        vector_collection: str | None = None,
+        vector_namespace: str | None = None,
+        telegram_secret_name: str | None = None,
+        whatsapp_secret_name: str | None = None,
+    ) -> TenantConfig:
+        assert self.database.pool
+        existing = await self.get(tenant_id)
+        normalized_tenant_id = existing.tenant_id
+        await self.database.pool.execute(
+            """
+            INSERT INTO tenant_configs(
+                tenant_id,
+                selected_plan,
+                answer_prompt_instructions,
+                planner_prompt_instructions,
+                llm_project_id,
+                llm_project_name,
+                langsmith_project,
+                llm_provider,
+                llm_model,
+                llm_base_url,
+                vector_provider,
+                vector_isolation_mode,
+                vector_collection,
+                vector_namespace,
+                telegram_secret_name,
+                whatsapp_secret_name
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            ON CONFLICT (tenant_id) DO UPDATE
+            SET selected_plan = EXCLUDED.selected_plan,
+                answer_prompt_instructions = EXCLUDED.answer_prompt_instructions,
+                planner_prompt_instructions = EXCLUDED.planner_prompt_instructions,
+                llm_project_id = EXCLUDED.llm_project_id,
+                llm_project_name = EXCLUDED.llm_project_name,
+                langsmith_project = EXCLUDED.langsmith_project,
+                llm_provider = EXCLUDED.llm_provider,
+                llm_model = EXCLUDED.llm_model,
+                llm_base_url = EXCLUDED.llm_base_url,
+                vector_provider = EXCLUDED.vector_provider,
+                vector_isolation_mode = EXCLUDED.vector_isolation_mode,
+                vector_collection = EXCLUDED.vector_collection,
+                vector_namespace = EXCLUDED.vector_namespace,
+                telegram_secret_name = EXCLUDED.telegram_secret_name,
+                whatsapp_secret_name = EXCLUDED.whatsapp_secret_name,
+                updated_at = now()
+            """,
+            normalized_tenant_id,
+            selected_plan or existing.selected_plan,
+            answer_prompt_instructions
+            if answer_prompt_instructions is not None
+            else existing.answer_prompt_instructions,
+            planner_prompt_instructions
+            if planner_prompt_instructions is not None
+            else existing.planner_prompt_instructions,
+            llm_project_id if llm_project_id is not None else existing.llm_project_id,
+            llm_project_name
+            if llm_project_name is not None
+            else existing.llm_project_name,
+            langsmith_project if langsmith_project is not None else existing.langsmith_project,
+            llm_provider if llm_provider is not None else existing.llm_provider,
+            llm_model if llm_model is not None else existing.llm_model,
+            llm_base_url if llm_base_url is not None else existing.llm_base_url,
+            vector_provider if vector_provider is not None else existing.vector_provider,
+            vector_isolation_mode
+            if vector_isolation_mode is not None
+            else existing.vector_isolation_mode,
+            vector_collection if vector_collection is not None else existing.vector_collection,
+            vector_namespace
+            if vector_namespace is not None
+            else existing.vector_namespace,
+            telegram_secret_name
+            if telegram_secret_name is not None
+            else existing.telegram_secret_name,
+            whatsapp_secret_name
+            if whatsapp_secret_name is not None
+            else existing.whatsapp_secret_name,
+        )
+        if enabled_features is not None:
+            await self.database.pool.execute(
+                """
+                DELETE FROM tenant_enabled_features
+                WHERE tenant_id = $1
+                """,
+                normalized_tenant_id,
+            )
+            await self.database.pool.executemany(
+                """
+                INSERT INTO tenant_enabled_features(tenant_id, feature_key)
+                VALUES ($1, $2)
+                ON CONFLICT (tenant_id, feature_key) DO NOTHING
+                """,
+                [
+                    (normalized_tenant_id, feature_key)
+                    for feature_key in sorted(set(enabled_features))
+                ],
+            )
+        return await self.get(normalized_tenant_id)
+
+
+class PostgresTenantRepository:
+    def __init__(self, database: PostgresDatabase) -> None:
+        self.database = database
+
+    async def initialize(self) -> None:
+        return None
+
+    async def get(self, tenant_id: str) -> TenantRecord | None:
+        assert self.database.pool
+        row = await self.database.pool.fetchrow(
+            """
+            SELECT tenant_id, slug, display_name, selected_plan, created_at, updated_at
+            FROM tenants
+            WHERE tenant_id = $1
+            """,
+            normalize_tenant_id(tenant_id),
+        )
+        if not row:
+            return None
+        return row_to_tenant(row)
+
+    async def get_by_slug(self, slug: str) -> TenantRecord | None:
+        assert self.database.pool
+        row = await self.database.pool.fetchrow(
+            """
+            SELECT tenant_id, slug, display_name, selected_plan, created_at, updated_at
+            FROM tenants
+            WHERE slug = $1
+            """,
+            tenant_slug(slug),
+        )
+        if not row:
+            return None
+        return row_to_tenant(row)
+
+    async def create(
+        self,
+        *,
+        display_name: str,
+        slug: str | None = None,
+        selected_plan: TenantPlan | None = None,
+    ) -> TenantRecord:
+        assert self.database.pool
+        candidate_slug = tenant_slug(slug or display_name)
+        plan = selected_plan or DEFAULT_TENANT_PLAN
+        for _attempt in range(1, 20):
+            tenant_id = generate_tenant_id()
+            try:
+                row = await self.database.pool.fetchrow(
+                    """
+                    INSERT INTO tenants(tenant_id, slug, display_name, selected_plan)
+                    VALUES ($1, $2, $3, $4)
+                    RETURNING tenant_id, slug, display_name, selected_plan, created_at, updated_at
+                    """,
+                    tenant_id,
+                    candidate_slug,
+                    display_name.strip(),
+                    plan,
+                )
+                return row_to_tenant(row)
+            except asyncpg.UniqueViolationError:
+                logger.info(
+                    "Tenant id or slug collision while creating tenant; "
+                    "retrying tenant_id for slug=%s",
+                    candidate_slug,
+                )
+        raise RuntimeError("Could not generate a unique tenant id and slug")
+
+
 def schema(embedding_dimensions: int) -> str:
     return f"""
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -380,6 +662,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS conversations (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id text NOT NULL DEFAULT 'default',
     channel text NOT NULL,
     external_chat_id text NOT NULL,
     external_user_id text NOT NULL,
@@ -387,16 +670,18 @@ CREATE TABLE IF NOT EXISTS conversations (
         CHECK (state IN ('BOT_ACTIVE', 'HUMAN_REQUESTED', 'HUMAN_ACTIVE')),
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
-    UNIQUE(channel, external_chat_id)
+    UNIQUE(tenant_id, channel, external_chat_id)
 );
 
 CREATE TABLE IF NOT EXISTS messages (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id text NOT NULL DEFAULT 'default',
     conversation_id uuid NOT NULL REFERENCES conversations(id),
-    event_id text NOT NULL UNIQUE,
+    event_id text NOT NULL,
     sender_type text NOT NULL,
     body text NOT NULL,
-    created_at timestamptz NOT NULL DEFAULT now()
+    created_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE(tenant_id, event_id)
 );
 
 CREATE TABLE IF NOT EXISTS conversation_state_events (
@@ -406,6 +691,48 @@ CREATE TABLE IF NOT EXISTS conversation_state_events (
     new_state text NOT NULL,
     reason text,
     created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS tenants (
+    tenant_id text PRIMARY KEY,
+    slug text NOT NULL UNIQUE,
+    display_name text NOT NULL,
+    selected_plan text NOT NULL DEFAULT 'sme'
+        CHECK (selected_plan IN ('sme', 'enterprise')),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS tenant_configs (
+    tenant_id text PRIMARY KEY,
+    selected_plan text NOT NULL DEFAULT 'sme'
+        CHECK (selected_plan IN ('sme', 'enterprise')),
+    answer_prompt_instructions text,
+    planner_prompt_instructions text,
+    llm_project_id text,
+    llm_project_name text,
+    langsmith_project text,
+    llm_provider text,
+    llm_model text,
+    llm_base_url text,
+    vector_provider text NOT NULL DEFAULT 'pgvector',
+    vector_isolation_mode text NOT NULL DEFAULT 'shared_collection'
+        CHECK (vector_isolation_mode IN ('shared_collection', 'dedicated_collection')),
+    vector_collection text NOT NULL DEFAULT 'customer-support',
+    vector_namespace text,
+    telegram_secret_name text,
+    whatsapp_secret_name text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS tenant_enabled_features (
+    tenant_id text NOT NULL REFERENCES tenant_configs(tenant_id) ON DELETE CASCADE,
+    feature_key text NOT NULL,
+    enabled_at timestamptz NOT NULL DEFAULT now(),
+    enabled_by text,
+    source text,
+    PRIMARY KEY (tenant_id, feature_key)
 );
 
 CREATE TABLE IF NOT EXISTS knowledge_documents (
@@ -423,6 +750,9 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
 );
 
 ALTER TABLE conversations
+ADD COLUMN IF NOT EXISTS tenant_id text NOT NULL DEFAULT 'default';
+
+ALTER TABLE conversations
 ADD COLUMN IF NOT EXISTS state text NOT NULL DEFAULT 'BOT_ACTIVE';
 
 ALTER TABLE conversations
@@ -432,7 +762,167 @@ ALTER TABLE conversations
 ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
 
 ALTER TABLE messages
+ADD COLUMN IF NOT EXISTS tenant_id text NOT NULL DEFAULT 'default';
+
+ALTER TABLE messages
 ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+
+ALTER TABLE tenants
+ADD COLUMN IF NOT EXISTS slug text;
+
+ALTER TABLE tenants
+ADD COLUMN IF NOT EXISTS display_name text;
+
+ALTER TABLE tenants
+ADD COLUMN IF NOT EXISTS selected_plan text NOT NULL DEFAULT 'sme';
+
+ALTER TABLE tenants
+ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+
+ALTER TABLE tenants
+ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+
+ALTER TABLE conversations
+DROP CONSTRAINT IF EXISTS conversations_channel_external_chat_id_key;
+
+ALTER TABLE messages
+DROP CONSTRAINT IF EXISTS messages_event_id_key;
+
+CREATE UNIQUE INDEX IF NOT EXISTS conversations_tenant_channel_chat_idx
+ON conversations(tenant_id, channel, external_chat_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS messages_tenant_event_id_idx
+ON messages(tenant_id, event_id);
+
+ALTER TABLE tenant_configs
+ADD COLUMN IF NOT EXISTS selected_plan text NOT NULL DEFAULT 'sme';
+
+INSERT INTO tenants(tenant_id, slug, display_name, selected_plan)
+SELECT
+    tenant_id,
+    regexp_replace(lower(tenant_id), '[^a-z0-9]+', '-', 'g') || '-' || substr(md5(tenant_id), 1, 8),
+    tenant_id,
+    selected_plan
+FROM tenant_configs
+ON CONFLICT (tenant_id) DO NOTHING;
+
+UPDATE tenants
+SET slug = regexp_replace(lower(tenant_id), '[^a-z0-9]+', '-', 'g')
+    || '-'
+    || substr(md5(tenant_id), 1, 8)
+WHERE slug IS NULL OR btrim(slug) = '';
+
+UPDATE tenants
+SET display_name = tenant_id
+WHERE display_name IS NULL OR btrim(display_name) = '';
+
+ALTER TABLE tenants
+ALTER COLUMN slug SET NOT NULL;
+
+ALTER TABLE tenants
+ALTER COLUMN display_name SET NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS tenants_slug_idx
+ON tenants(slug);
+
+ALTER TABLE tenant_configs
+DROP COLUMN IF EXISTS enabled_features;
+
+ALTER TABLE tenant_configs
+DROP COLUMN IF EXISTS category;
+
+CREATE INDEX IF NOT EXISTS tenant_enabled_features_feature_key_idx
+ON tenant_enabled_features(feature_key);
+
+ALTER TABLE tenant_configs
+ADD COLUMN IF NOT EXISTS llm_project_id text;
+
+ALTER TABLE tenant_configs
+ADD COLUMN IF NOT EXISTS llm_project_name text;
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'tenant_configs' AND column_name = 'openai_project_id'
+    ) THEN
+        UPDATE tenant_configs
+        SET llm_project_id = openai_project_id
+        WHERE openai_project_id IS NOT NULL;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'tenant_configs' AND column_name = 'openai_project_name'
+    ) THEN
+        UPDATE tenant_configs
+        SET llm_project_name = openai_project_name
+        WHERE openai_project_name IS NOT NULL;
+    END IF;
+END $$;
+
+ALTER TABLE tenant_configs
+DROP COLUMN IF EXISTS openai_project_id;
+
+ALTER TABLE tenant_configs
+DROP COLUMN IF EXISTS openai_project_name;
+
+ALTER TABLE tenant_configs
+ADD COLUMN IF NOT EXISTS langsmith_project text;
+
+ALTER TABLE tenant_configs
+ADD COLUMN IF NOT EXISTS llm_provider text;
+
+ALTER TABLE tenant_configs
+ADD COLUMN IF NOT EXISTS llm_model text;
+
+ALTER TABLE tenant_configs
+ADD COLUMN IF NOT EXISTS llm_base_url text;
+
+ALTER TABLE tenant_configs
+ADD COLUMN IF NOT EXISTS vector_provider text NOT NULL DEFAULT 'pgvector';
+
+ALTER TABLE tenant_configs
+ADD COLUMN IF NOT EXISTS vector_isolation_mode text NOT NULL DEFAULT 'shared_collection';
+
+ALTER TABLE tenant_configs
+ADD COLUMN IF NOT EXISTS vector_collection text NOT NULL DEFAULT 'customer-support';
+
+ALTER TABLE tenant_configs
+ADD COLUMN IF NOT EXISTS vector_namespace text;
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'tenant_configs' AND column_name = 'pinecone_index'
+    ) THEN
+        UPDATE tenant_configs
+        SET vector_collection = pinecone_index
+        WHERE pinecone_index IS NOT NULL;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'tenant_configs' AND column_name = 'pinecone_namespace'
+    ) THEN
+        UPDATE tenant_configs
+        SET vector_namespace = pinecone_namespace
+        WHERE pinecone_namespace IS NOT NULL;
+    END IF;
+END $$;
+
+ALTER TABLE tenant_configs
+DROP COLUMN IF EXISTS pinecone_index;
+
+ALTER TABLE tenant_configs
+DROP COLUMN IF EXISTS pinecone_namespace;
+
+ALTER TABLE tenant_configs
+ADD COLUMN IF NOT EXISTS telegram_secret_name text;
+
+ALTER TABLE tenant_configs
+ADD COLUMN IF NOT EXISTS whatsapp_secret_name text;
 
 ALTER TABLE knowledge_documents
 ADD COLUMN IF NOT EXISTS chunk_id text;

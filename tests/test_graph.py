@@ -6,14 +6,21 @@ from app.adapters.memory import RuleBasedHumanRequestDetector, RuleBasedQuestion
 from app.config import Settings
 from app.container import create_container
 from app.graph import build_prompt_metadata, build_support_graph, invoke_support_graph
-from app.knowledge import SEED_KNOWLEDGE_NAMESPACE
-from app.models import ConversationPromptMetadata, IncomingMessage, QuestionPlan, StoredMessage
+from app.knowledge import SEED_KNOWLEDGE_NAMESPACE, tenant_knowledge_namespace
+from app.models import (
+    ConversationPromptMetadata,
+    IncomingMessage,
+    QuestionPlan,
+    StoredMessage,
+    TenantConfig,
+)
 
 
 class RecordingAnswerGenerator:
     def __init__(self) -> None:
         self.histories: list[list[StoredMessage]] = []
         self.metadata: list[ConversationPromptMetadata | None] = []
+        self.tenant_configs: list[TenantConfig | None] = []
         self.calls = 0
 
     async def generate(
@@ -22,10 +29,12 @@ class RecordingAnswerGenerator:
         documents,
         conversation_history: list[StoredMessage] | None = None,
         conversation_metadata: ConversationPromptMetadata | None = None,
+        tenant_config: TenantConfig | None = None,
     ) -> tuple[str, float]:
         self.calls += 1
         self.histories.append(conversation_history or [])
         self.metadata.append(conversation_metadata)
+        self.tenant_configs.append(tenant_config)
         return "Recorded", 0.95
 
 
@@ -34,14 +43,17 @@ class StaticQuestionPlanner:
         self.plan_value = plan
         self.calls = 0
         self.metadata: list[ConversationPromptMetadata | None] = []
+        self.tenant_configs: list[TenantConfig | None] = []
 
     async def plan(
         self,
         message: IncomingMessage,
         conversation_metadata: ConversationPromptMetadata | None = None,
+        tenant_config: TenantConfig | None = None,
     ) -> QuestionPlan:
         self.calls += 1
         self.metadata.append(conversation_metadata)
+        self.tenant_configs.append(tenant_config)
         return self.plan_value
 
 
@@ -131,11 +143,164 @@ async def test_seed_knowledge_namespace_constant_is_used(tmp_path) -> None:
     assert "knowledge" not in container.retrieval.documents
 
 
+async def test_tenant_knowledge_namespace_defaults_to_existing_seed_namespace() -> None:
+    assert tenant_knowledge_namespace("default") == SEED_KNOWLEDGE_NAMESPACE
+    assert tenant_knowledge_namespace("acme") == "acme:seed-knowledge"
+
+
+async def test_graph_isolates_conversations_by_tenant() -> None:
+    container = await create_container(Settings(seed_knowledge=False))
+
+    first_reply = await invoke_support_graph(
+        container.graph,
+        IncomingMessage(
+            tenant_id="tenant-a",
+            event_id="tenant-a-event",
+            external_chat_id="shared-chat",
+            external_user_id="user-a",
+            text="Unknown question?",
+        ),
+    )
+    second_reply = await invoke_support_graph(
+        container.graph,
+        IncomingMessage(
+            tenant_id="tenant-b",
+            event_id="tenant-b-event",
+            external_chat_id="shared-chat",
+            external_user_id="user-b",
+            text="Unknown question?",
+        ),
+    )
+
+    assert first_reply.tenant_id == "tenant-a"
+    assert second_reply.tenant_id == "tenant-b"
+    assert first_reply.conversation_id != second_reply.conversation_id
+
+
+async def test_graph_retrieves_knowledge_from_message_tenant_namespace() -> None:
+    container = await create_container(Settings(seed_knowledge=False))
+    await container.retrieval.upsert(
+        [
+            Document(
+                page_content="Tenant A refunds are available within 10 days.",
+                metadata={"source": "kb/refunds-a.txt", "chunk_id": "kb/refunds-a.txt#0000"},
+            )
+        ],
+        tenant_knowledge_namespace("tenant-a"),
+    )
+    await container.retrieval.upsert(
+        [
+            Document(
+                page_content="Tenant B refunds are available within 20 days.",
+                metadata={"source": "kb/refunds-b.txt", "chunk_id": "kb/refunds-b.txt#0000"},
+            )
+        ],
+        tenant_knowledge_namespace("tenant-b"),
+    )
+
+    reply = await invoke_support_graph(
+        container.graph,
+        IncomingMessage(
+            tenant_id="tenant-b",
+            event_id="tenant-knowledge-event",
+            external_chat_id="tenant-knowledge-chat",
+            external_user_id="tenant-knowledge-user",
+            text="What is the refund policy?",
+        ),
+    )
+
+    assert reply.citations == ["kb/refunds-b.txt#0000"]
+    assert "20 days" in reply.answer
+
+
+async def test_graph_passes_tenant_prompt_config_to_planner_and_answer_generator() -> None:
+    container = await create_container(Settings(seed_knowledge=False))
+    await container.tenant_configs.upsert(
+        "tenant-a",
+        selected_plan="enterprise",
+        enabled_features=["telegram", "whatsapp"],
+        answer_prompt_instructions="Use Tenant A's cheerful answer voice.",
+        planner_prompt_instructions="Treat Tenant A menu questions as in scope.",
+        llm_project_id="proj_tenant_a",
+        llm_provider="langchain-compatible",
+        llm_model="deepseek-chat",
+        llm_base_url="https://api.deepseek.com",
+        langsmith_project="customer-support-tenant-a",
+        telegram_secret_name="tenant-a-telegram",
+        whatsapp_secret_name="tenant-a-whatsapp",
+    )
+    await container.retrieval.upsert(
+        [
+            Document(
+                page_content="Tenant A serves tea.",
+                metadata={"source": "kb/menu.txt", "chunk_id": "kb/menu.txt#0000"},
+            )
+        ],
+        tenant_knowledge_namespace("tenant-a"),
+    )
+    generator = RecordingAnswerGenerator()
+    planner = StaticQuestionPlanner(
+        QuestionPlan(
+            in_scope=True,
+            needs_conversation_history=False,
+            explanation="tenant config test",
+        )
+    )
+    graph = build_support_graph(
+        container.conversations,
+        container.tenant_configs,
+        container.retrieval,
+        generator,
+        planner,
+        RuleBasedHumanRequestDetector(),
+        confidence_threshold=0.60,
+        conversation_history_max_messages=2,
+        greeting_lapse_minutes=60,
+    )
+
+    reply = await invoke_support_graph(
+        graph,
+        IncomingMessage(
+            tenant_id="tenant-a",
+            event_id="tenant-config-event",
+            external_chat_id="tenant-config-chat",
+            external_user_id="tenant-config-user",
+            text="Do you serve tea?",
+        ),
+    )
+
+    assert reply.tenant_id == "tenant-a"
+    assert planner.tenant_configs[-1] is not None
+    assert planner.tenant_configs[-1].selected_plan == "enterprise"
+    assert planner.tenant_configs[-1].enabled_features == ["telegram", "whatsapp"]
+    assert planner.tenant_configs[-1].llm_project_id == "proj_tenant_a"
+    assert planner.tenant_configs[-1].langsmith_project == "customer-support-tenant-a"
+    assert planner.tenant_configs[-1].llm_provider == "langchain-compatible"
+    assert planner.tenant_configs[-1].llm_model == "deepseek-chat"
+    assert planner.tenant_configs[-1].llm_base_url == "https://api.deepseek.com"
+    assert planner.tenant_configs[-1].vector_provider == "pgvector"
+    assert planner.tenant_configs[-1].vector_isolation_mode == "shared_collection"
+    assert planner.tenant_configs[-1].vector_collection == "customer-support"
+    assert planner.tenant_configs[-1].vector_namespace == "tenant-a:seed-knowledge"
+    assert planner.tenant_configs[-1].telegram_secret_name == "tenant-a-telegram"
+    assert planner.tenant_configs[-1].whatsapp_secret_name == "tenant-a-whatsapp"
+    assert (
+        planner.tenant_configs[-1].planner_prompt_instructions
+        == "Treat Tenant A menu questions as in scope."
+    )
+    assert generator.tenant_configs[-1] is not None
+    assert (
+        generator.tenant_configs[-1].answer_prompt_instructions
+        == "Use Tenant A's cheerful answer voice."
+    )
+
+
 async def test_graph_passes_current_conversation_history_with_safety_cap() -> None:
     container = await create_container(Settings(seed_knowledge=False))
     generator = RecordingAnswerGenerator()
     graph = build_support_graph(
         container.conversations,
+        container.tenant_configs,
         container.retrieval,
         generator,
         RuleBasedQuestionPlanner(),
@@ -175,6 +340,7 @@ async def test_graph_uses_question_plan_explanation_for_out_of_scope_reply() -> 
     )
     graph = build_support_graph(
         container.conversations,
+        container.tenant_configs,
         container.retrieval,
         generator,
         planner,
@@ -215,6 +381,7 @@ async def test_graph_passes_no_greet_metadata_to_planner_for_active_conversation
     )
     graph = build_support_graph(
         container.conversations,
+        container.tenant_configs,
         container.retrieval,
         generator,
         planner,
@@ -272,6 +439,7 @@ async def test_graph_skips_conversation_history_for_standalone_question() -> Non
     )
     graph = build_support_graph(
         container.conversations,
+        container.tenant_configs,
         container.retrieval,
         generator,
         planner,

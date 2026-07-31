@@ -1,0 +1,18 @@
+info:
+  name: 08 get tenant config
+  type: http
+  seq: 8
+
+http:
+  method: get
+  url: http://{{host}}/tenants/{{tenant_id}}/config
+  auth: inherit
+
+settings:
+  encodeUrl: false
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+
+docs: |-
+  Reads back the tenant config created by the onboarding flow.

@@ -3,7 +3,7 @@ from typing import TypedDict
 from langchain_core.documents import Document
 from langgraph.graph import END, START, StateGraph
 
-from app.knowledge import SEED_KNOWLEDGE_NAMESPACE
+from app.knowledge import tenant_knowledge_namespace
 from app.models import (
     ConversationPromptMetadata,
     ConversationRecord,
@@ -11,6 +11,7 @@ from app.models import (
     QuestionPlan,
     StoredMessage,
     SupportReply,
+    TenantConfig,
 )
 from app.ports import (
     AnswerGenerator,
@@ -18,12 +19,14 @@ from app.ports import (
     HumanRequestDetector,
     QuestionPlanner,
     RetrievalStore,
+    TenantConfigRepository,
 )
 
 
 class SupportState(TypedDict, total=False):
     message: IncomingMessage
     conversation: ConversationRecord
+    tenant_config: TenantConfig
     question_plan: QuestionPlan
     conversation_history: list[StoredMessage]
     conversation_metadata: ConversationPromptMetadata
@@ -37,6 +40,7 @@ class SupportState(TypedDict, total=False):
 
 def build_support_graph(
     conversations: ConversationRepository,
+    tenant_configs: TenantConfigRepository,
     retrieval: RetrievalStore,
     generator: AnswerGenerator,
     question_planner: QuestionPlanner,
@@ -49,6 +53,7 @@ def build_support_graph(
         conversation = await conversations.get_or_create(state["message"])
         await conversations.save_message(
             StoredMessage(
+                tenant_id=state["message"].tenant_id,
                 conversation_id=conversation.id,
                 event_id=state["message"].event_id,
                 sender_type="CUSTOMER",
@@ -56,6 +61,10 @@ def build_support_graph(
             )
         )
         return {"conversation": conversation}
+
+    async def load_tenant_config(state: SupportState) -> dict:
+        tenant_config = await tenant_configs.get(state["conversation"].tenant_id)
+        return {"tenant_config": tenant_config}
 
     async def plan_question(state: SupportState) -> dict:
         minutes_since_last_customer_message = (
@@ -70,7 +79,11 @@ def build_support_graph(
             minutes_since_last_customer_message,
             greeting_lapse_minutes,
         )
-        plan = await question_planner.plan(state["message"], metadata)
+        plan = await question_planner.plan(
+            state["message"],
+            metadata,
+            state.get("tenant_config"),
+        )
         return {"question_plan": plan, "conversation_metadata": metadata}
 
     async def detect_human_request(state: SupportState) -> dict:
@@ -119,7 +132,16 @@ def build_support_graph(
         return {"conversation_metadata": metadata}
 
     async def retrieve(state: SupportState) -> dict:
-        documents = await retrieval.search(state["message"].text, SEED_KNOWLEDGE_NAMESPACE)
+        tenant_config = state.get("tenant_config")
+        namespace = (
+            tenant_config.vector_namespace
+            if tenant_config and tenant_config.vector_namespace
+            else tenant_knowledge_namespace(state["message"].tenant_id)
+        )
+        documents = await retrieval.search(
+            state["message"].text,
+            namespace,
+        )
         return {"documents": documents}
 
     async def answer_out_of_scope(state: SupportState) -> dict:
@@ -151,6 +173,7 @@ def build_support_graph(
             state["documents"],
             state.get("conversation_history", []),
             state.get("conversation_metadata"),
+            state.get("tenant_config"),
         )
         citations = [
             str(item.metadata.get("chunk_id") or item.metadata.get("source", "unknown"))
@@ -177,6 +200,7 @@ def build_support_graph(
         conversation = state["conversation"]
         await conversations.save_message(
             StoredMessage(
+                tenant_id=conversation.tenant_id,
                 conversation_id=conversation.id,
                 event_id=f"reply:{state['message'].event_id}",
                 sender_type="BOT",
@@ -187,6 +211,7 @@ def build_support_graph(
 
     workflow = StateGraph(SupportState)
     workflow.add_node("persist_message", persist_message)
+    workflow.add_node("load_tenant_config", load_tenant_config)
     workflow.add_node("plan_question", plan_question)
     workflow.add_node("detect_human_request", detect_human_request)
     workflow.add_node("apply_human_request_state", apply_human_request_state)
@@ -198,7 +223,8 @@ def build_support_graph(
     workflow.add_node("answer", answer)
     workflow.add_node("persist_reply", persist_reply)
     workflow.add_edge(START, "persist_message")
-    workflow.add_edge("persist_message", "plan_question")
+    workflow.add_edge("persist_message", "load_tenant_config")
+    workflow.add_edge("load_tenant_config", "plan_question")
     workflow.add_conditional_edges(
         "plan_question",
         route_after_plan,
@@ -323,6 +349,7 @@ def customer_first_name(sender_name: str | None) -> str | None:
 async def invoke_support_graph(graph, message: IncomingMessage) -> SupportReply:
     state = await graph.ainvoke({"message": message})
     return SupportReply(
+        tenant_id=state["conversation"].tenant_id,
         conversation_id=state["conversation"].id,
         answer=state["answer"],
         confidence=state["confidence"],

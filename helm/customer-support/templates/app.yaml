@@ -32,6 +32,7 @@ spec:
         app.kubernetes.io/component: app
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
+      serviceAccountName: {{ include "customer-support.fullname" . }}-app
       {{- if .Values.postgres.enabled }}
       initContainers:
         - name: wait-for-postgres
@@ -56,8 +57,12 @@ spec:
             - name: http
               containerPort: 8000
           env:
+            - name: SUPPORT_DEFAULT_TENANT_ID
+              value: {{ .Values.tenant.defaultId | quote }}
             - name: SUPPORT_RETRIEVAL_PROVIDER
               value: {{ .Values.retrieval.provider | quote }}
+            - name: SUPPORT_VECTOR_COLLECTION
+              value: {{ .Values.vector.collection | quote }}
             - name: SUPPORT_ANSWER_PROVIDER
               value: {{ .Values.answer.provider | quote }}
             - name: SUPPORT_EMBEDDING_PROVIDER
@@ -74,6 +79,17 @@ spec:
               value: {{ .Values.conversationHistory.maxMessages | quote }}
             - name: SUPPORT_GREETING_LAPSE_MINUTES
               value: {{ .Values.conversationHistory.greetingLapseMinutes | quote }}
+            - name: SUPPORT_TENANT_CONFIG_CACHE_PROVIDER
+              value: {{ .Values.tenantConfigCache.provider | quote }}
+            - name: SUPPORT_TENANT_CONFIG_CACHE_TTL_SECONDS
+              value: {{ .Values.tenantConfigCache.ttlSeconds | quote }}
+            {{- if .Values.redis.enabled }}
+            - name: SUPPORT_REDIS_URL
+              value: {{ printf "redis://%s-redis:%v/0" (include "customer-support.fullname" .) .Values.redis.port | quote }}
+            {{- else if .Values.redis.url }}
+            - name: SUPPORT_REDIS_URL
+              value: {{ .Values.redis.url | quote }}
+            {{- end }}
             {{- if .Values.telegram.existingSecret }}
             - name: SUPPORT_TELEGRAM_BOT_TOKEN
               valueFrom:
@@ -86,6 +102,21 @@ spec:
                   name: {{ .Values.telegram.existingSecret | quote }}
                   key: {{ .Values.telegram.webhookSecretTokenSecretKey | quote }}
             {{- end }}
+            - name: SUPPORT_TELEGRAM_CREDENTIAL_PROVIDER
+              value: {{ .Values.telegram.credentialProvider | quote }}
+            {{- if .Values.telegram.secretNamespace }}
+            - name: SUPPORT_TELEGRAM_SECRET_NAMESPACE
+              value: {{ .Values.telegram.secretNamespace | quote }}
+            {{- else }}
+            - name: SUPPORT_TELEGRAM_SECRET_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- end }}
+            - name: SUPPORT_TELEGRAM_BOT_TOKEN_SECRET_KEY
+              value: {{ .Values.telegram.botTokenSecretKey | quote }}
+            - name: SUPPORT_TELEGRAM_WEBHOOK_SECRET_TOKEN_SECRET_KEY
+              value: {{ .Values.telegram.webhookSecretTokenSecretKey | quote }}
             {{- if .Values.whatsapp.existingSecret }}
             - name: SUPPORT_WHATSAPP_ACCESS_TOKEN
               valueFrom:
@@ -124,10 +155,16 @@ spec:
               value: {{ .Values.langsmith.LANGSMITH_TRACING | quote }}
             - name: LANGSMITH_TRACING_V2
               value: {{ .Values.langsmith.LANGSMITH_TRACING_V2 | quote }}
+            - name: LANGCHAIN_TRACING_V2
+              value: {{ .Values.langsmith.LANGCHAIN_TRACING_V2 | quote }}
             - name: LANGSMITH_ENDPOINT
               value: {{ .Values.langsmith.LANGSMITH_ENDPOINT | quote }}
             - name: LANGSMITH_PROJECT
               value: {{ .Values.langsmith.LANGSMITH_PROJECT | quote }}
+            {{- if .Values.langsmith.LANGSMITH_WORKSPACE_ID }}
+            - name: LANGSMITH_WORKSPACE_ID
+              value: {{ .Values.langsmith.LANGSMITH_WORKSPACE_ID | quote }}
+            {{- end }}
             {{- if .Values.langsmith.existingSecret }}
             - name: LANGSMITH_API_KEY
               valueFrom:

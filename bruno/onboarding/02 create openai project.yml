@@ -1,0 +1,40 @@
+info:
+  name: 05 create OpenAI project
+  type: http
+  seq: 5
+
+http:
+  method: post
+  url: https://api.openai.com/v1/organization/projects
+  headers:
+    - name: authorization
+      value: Bearer {{openai_admin_key}}
+    - name: content-type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "name": "{{llm_project_name}}"
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        const body = res.body;
+        bru.setVar("llm_project_id", body.id);
+        bru.setVar("llm_project_name", body.name);
+        bru.setVar("openai_project_status", body.status);
+
+settings:
+  encodeUrl: false
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+
+docs: |-
+  Creates an OpenAI project using an OpenAI Admin API key. Only OpenAI organization
+  owners can create and use Admin API keys. The returned project id/name are saved
+  as `llm_project_id` and `llm_project_name` for tenant config.

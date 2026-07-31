@@ -9,6 +9,25 @@ service:
   type: ClusterIP
   port: 8000
 
+tenant:
+  defaultId: default
+  plans:
+    sme:
+      description: Shared small-business onboarding baseline
+      defaultFeatures:
+        - telegram
+        - whatsapp
+      vectorIndexMode: shared
+      hostingModel: shared
+    enterprise:
+      description: Enterprise onboarding baseline
+      defaultFeatures:
+        - telegram
+        - whatsapp
+        - multimedia
+      vectorIndexMode: dedicated
+      hostingModel: dedicated
+
 postgres:
   enabled: true
   image: pgvector/pgvector:pg16
@@ -18,8 +37,17 @@ postgres:
   password: local-only-password
   storage: 1Gi
 
+redis:
+  enabled: true
+  image: redis:7-alpine
+  port: 6379
+  url: ""
+
 retrieval:
   provider: pgvector
+
+vector:
+  collection: customer-support
 
 answer:
   provider: openai
@@ -39,8 +67,14 @@ conversationHistory:
   maxMessages: 100
   greetingLapseMinutes: 60
 
+tenantConfigCache:
+  provider: redis
+  ttlSeconds: 300
+
 telegram:
   existingSecret: "telegram-bot"
+  credentialProvider: kubernetes
+  secretNamespace: ""
   botTokenSecretKey: TELEGRAM_BOT_TOKEN
   webhookSecretTokenSecretKey: TELEGRAM_WEBHOOK_SECRET_TOKEN
 
@@ -71,8 +105,10 @@ logging:
 langsmith:
   LANGSMITH_TRACING: "true"
   LANGSMITH_TRACING_V2: "true"
+  LANGCHAIN_TRACING_V2: "true"
   LANGSMITH_ENDPOINT: "https://eu.api.smith.langchain.com"
-  LANGSMITH_PROJECT: "customer-support"
+  LANGSMITH_PROJECT: "customer-service-dev2"
+  LANGSMITH_WORKSPACE_ID: ""
   existingSecret: "api-keys"
   secretKey: LANGSMITH_API_KEY
 

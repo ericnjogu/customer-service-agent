@@ -46,9 +46,53 @@ This project currently uses increment-based milestones instead of semantic versi
 - Helm values for OpenAI `text-embedding-3-small` embeddings with 1536 dimensions.
 - Seed KB chunking via LangChain `RecursiveCharacterTextSplitter`, configured with
   `SUPPORT_KNOWLEDGE_CHUNK_SIZE` and `SUPPORT_KNOWLEDGE_CHUNK_OVERLAP`.
-
+- Tenant id foundation for inbound messages, conversation records, replies, tenant-scoped
+  conversation lookup, tenant-scoped message idempotency, and tenant-specific seed KB
+  namespaces.
+- `SUPPORT_DEFAULT_TENANT_ID` / `tenant.defaultId` configuration for local/default tenant
+  routing.
+- Tenant prompt configuration storage and API endpoints for per-tenant answer and planner
+  prompt instruction overlays.
+- Dedicated tenant API router and tenant config request validation for supported plans,
+  features, LLM providers, vector providers, isolation modes, and LLM base URLs.
+- Tenant opt-in feature flags, plus tenant control-plane fields for LLM project
+  metadata, LangSmith project names, tenant LLM provider metadata, and generic vector
+  provider/collection/namespace settings.
+- Tenant selected plan reference (`sme` or `enterprise`) for onboarding/audit context,
+  with plan templates in Helm values instead of runtime inference.
+- Redis-backed tenant config read-through cache with memory fallback for local/non-Redis
+  runs.
+- Tenant channel credential references for one Telegram Secret and one WhatsApp Secret per
+  tenant, without storing secret values in Postgres.
+- Tenant-specific Telegram credential resolution from Kubernetes Secrets, including
+  tenant webhook secret validation and tenant bot-token selection for outbound replies.
+- Bruno onboarding steps for creating tenant Telegram Kubernetes Secrets and registering
+  Telegram webhooks, plus Telegram utility requests for inspecting and deleting a bot
+  webhook.
+- `SUPPORT_VECTOR_COLLECTION` / `vector.collection` configuration for the shared vector
+  collection or index default used by tenant records.
+- Documentation clarifying that `llm_project_id` and `llm_project_name` are stable,
+  provider-neutral tenant metadata fields that can map to a workspace, account scope,
+  billing project, or equivalent grouping for non-OpenAI LLM providers.
+- Basic RAG and human handover are treated as inbuilt capabilities, not opt-in tenant
+  features.
+- Tenant records with generated immutable `tnt_...` tenant ids, readable unique slugs,
+  and `POST /tenants` / `GET /tenants/{tenant_id}` API endpoints. Tenant config is
+  created separately with `PUT /tenants/{tenant_id}/config`.
+- Tenant creation returns `409 Conflict` when the derived/explicit slug already exists,
+  while `GET /tenants/by-slug/{slug}` provides deliberate existing-tenant lookup for
+  onboarding flows.
+- Bruno tenant config creation uses the tenant slug for provider-facing project names and
+  vector namespaces (`customer-service-<slug>` and `<slug>:seed-knowledge`).
+- Bruno onboarding requests for creating a tenant, creating provider projects, capturing
+  runtime variables from responses, and creating the tenant config from those values.
+- LangSmith tracing now targets the deployment-level `LANGSMITH_PROJECT`; tenant
+  LangSmith/project fields are retained as tags/metadata for filtering and audit.
 ### Changed
 
+- Removed the over-scoped PDF upload ingestion path, ingestion worker, S3/MinIO object
+  store wiring, and scanned-PDF OCR dependencies so future online-source or
+  cloud-document connectors can be added behind a smaller, deliberate boundary.
 - Collapsed conversation status handling into one routing state: `BOT_ACTIVE`,
   `HUMAN_REQUESTED`, and `HUMAN_ACTIVE`.
 - Low-confidence graph replies now return `low_confidence: true` without changing the

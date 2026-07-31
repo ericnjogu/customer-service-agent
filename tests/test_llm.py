@@ -9,10 +9,15 @@ from app.adapters.llm import (
     LlmHumanRequestDetector,
     LlmQuestionPlanner,
     format_age,
+    langsmith_client,
+    langsmith_runnable_config,
+    langsmith_tracing_enabled,
+    tenant_trace_metadata,
+    tenant_trace_tags,
 )
 from app.config import Settings
 from app.container import create_container
-from app.models import ConversationPromptMetadata, IncomingMessage, StoredMessage
+from app.models import ConversationPromptMetadata, IncomingMessage, StoredMessage, TenantConfig
 
 
 class FakeChatModel:
@@ -20,10 +25,12 @@ class FakeChatModel:
         self.content = content
         self.calls = 0
         self.last_messages = None
+        self.last_config = None
 
-    async def ainvoke(self, messages):
+    async def ainvoke(self, messages, config=None):
         self.calls += 1
         self.last_messages = messages
+        self.last_config = config
         return AIMessage(content=self.content)
 
 
@@ -34,6 +41,119 @@ def test_format_age_uses_readable_units() -> None:
     assert format_age(now - timedelta(minutes=26), now) == "26 minutes ago"
     assert format_age(now - timedelta(hours=2), now) == "2 hours ago"
     assert format_age(now - timedelta(days=2), now) == "2 days ago"
+
+
+def test_tenant_trace_metadata_includes_provider_project_context() -> None:
+    tenant_config = TenantConfig.with_defaults(
+        "tenant-a",
+        selected_plan="enterprise",
+        enabled_features=["telegram", "whatsapp"],
+        llm_project_id="proj_tenant_a",
+        llm_provider="langchain-compatible",
+        llm_model="deepseek-chat",
+        llm_base_url="https://api.deepseek.com",
+        vector_collection="customer-support",
+        telegram_secret_name="tenant-a-telegram",
+        whatsapp_secret_name="tenant-a-whatsapp",
+    )
+
+    assert tenant_trace_metadata(tenant_config) == {
+        "tenant_id": "tenant-a",
+        "selected_plan": "enterprise",
+        "enabled_features": "telegram,whatsapp",
+        "llm_provider": "langchain-compatible",
+        "llm_model": "deepseek-chat",
+        "llm_base_url": "https://api.deepseek.com",
+        "vector_provider": "pgvector",
+        "vector_isolation_mode": "shared_collection",
+        "vector_collection": "customer-support",
+        "vector_namespace": "tenant-a:seed-knowledge",
+        "langsmith_project": "customer-support-tenant-a",
+        "llm_project_name": "customer-support-tenant-a",
+        "llm_project_id": "proj_tenant_a",
+        "telegram_secret_name": "tenant-a-telegram",
+        "whatsapp_secret_name": "tenant-a-whatsapp",
+    }
+    assert tenant_trace_tags(tenant_config) == [
+        "tenant:tenant-a",
+        "tenant-plan:enterprise",
+    ]
+
+
+def test_langsmith_tracing_enabled_requires_api_key(monkeypatch) -> None:
+    monkeypatch.delenv("LANGSMITH_API_KEY", raising=False)
+    monkeypatch.setenv("LANGSMITH_TRACING", "true")
+
+    assert langsmith_tracing_enabled() is False
+
+    monkeypatch.setenv("LANGSMITH_API_KEY", "test-key")
+
+    assert langsmith_tracing_enabled() is True
+
+
+def test_langsmith_tracing_enabled_honors_disabled_env(monkeypatch) -> None:
+    monkeypatch.setenv("LANGSMITH_API_KEY", "test-key")
+    monkeypatch.setenv("LANGSMITH_TRACING", "false")
+
+    assert langsmith_tracing_enabled() is False
+
+
+def test_langsmith_client_uses_endpoint_and_workspace(monkeypatch) -> None:
+    captured = {}
+
+    class FakeLangSmithClient:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr("app.adapters.llm.LangSmithClient", FakeLangSmithClient)
+    langsmith_client.cache_clear()
+    monkeypatch.setenv("LANGSMITH_API_KEY", "test-key")
+    monkeypatch.setenv("LANGSMITH_ENDPOINT", "https://eu.api.smith.langchain.com")
+    monkeypatch.setenv("LANGSMITH_WORKSPACE_ID", "workspace-id")
+
+    client = langsmith_client()
+
+    assert client is not None
+    assert captured == {
+        "api_key": "test-key",
+        "api_url": "https://eu.api.smith.langchain.com",
+        "workspace_id": "workspace-id",
+    }
+
+    langsmith_client.cache_clear()
+
+
+def test_langsmith_runnable_config_uses_env_project_destination(monkeypatch) -> None:
+    captured_tracer = {}
+
+    class FakeLangSmithClient:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+    class FakeLangChainTracer:
+        def __init__(self, **kwargs) -> None:
+            captured_tracer.update(kwargs)
+
+    monkeypatch.setattr("app.adapters.llm.LangSmithClient", FakeLangSmithClient)
+    monkeypatch.setattr("app.adapters.llm.LangChainTracer", FakeLangChainTracer)
+    langsmith_client.cache_clear()
+    monkeypatch.setenv("LANGSMITH_API_KEY", "test-key")
+    monkeypatch.setenv("LANGSMITH_TRACING", "true")
+    monkeypatch.setenv("LANGSMITH_PROJECT", "customer-service-local")
+
+    tenant_config = TenantConfig.with_defaults(
+        "tenant-a",
+        langsmith_project="customer-service-tenant-a",
+    )
+
+    config = langsmith_runnable_config("answer_generation", tenant_config)
+
+    assert config is not None
+    assert "project_name" not in captured_tracer
+    assert "tenant:tenant-a" in config["tags"]
+    assert config["metadata"]["langsmith_project"] == "customer-service-tenant-a"
+
+    langsmith_client.cache_clear()
 
 
 async def test_llm_answer_generator_returns_grounded_confidence() -> None:
@@ -112,6 +232,28 @@ async def test_llm_answer_generator_instructs_model_to_reply_in_customer_languag
     assert "Use the language of the latest customer question below" in prompt
     assert "Ignore the language of conversation history" in prompt
     assert "Latest customer question:\nMnafunga saa ngapi?" in prompt
+
+
+async def test_llm_answer_generator_includes_tenant_answer_instructions() -> None:
+    chat_model = FakeChatModel(
+        '{"answer": "Karibu to Tenant A.", "confidence": 0.82, "grounded": true}'
+    )
+    generator = LlmAnswerGenerator(chat_model)
+
+    await generator.generate(
+        "What do you serve?",
+        [Document(page_content="Tenant A serves tea.")],
+        tenant_config=TenantConfig(
+            tenant_id="tenant-a",
+            answer_prompt_instructions="Use Tenant A's warm brand voice.",
+        ),
+    )
+
+    system_prompt = chat_model.last_messages[0].content
+    prompt = chat_model.last_messages[1].content
+    assert "Tenant-specific answer instructions may customize" in system_prompt
+    assert "Tenant-specific answer instructions" in prompt
+    assert "Use Tenant A's warm brand voice." in prompt
 
 
 async def test_llm_answer_generator_caps_ungrounded_confidence() -> None:
@@ -382,6 +524,34 @@ async def test_llm_question_planner_returns_structured_plan() -> None:
     assert "greeting_reason: active conversation; avoid repeated greeting" in (
         chat_model.last_messages[1].content
     )
+
+
+async def test_llm_question_planner_includes_tenant_planner_instructions() -> None:
+    chat_model = FakeChatModel(
+        '{"in_scope": true, "needs_conversation_history": false, '
+        '"explanation": "tenant planner config"}'
+    )
+    planner = LlmQuestionPlanner(chat_model)
+
+    await planner.plan(
+        IncomingMessage(
+            tenant_id="tenant-a",
+            event_id="plan-tenant",
+            external_chat_id="chat-1",
+            external_user_id="user-1",
+            text="Do you serve tea?",
+        ),
+        tenant_config=TenantConfig(
+            tenant_id="tenant-a",
+            planner_prompt_instructions="Tenant A menu questions are in scope.",
+        ),
+    )
+
+    system_prompt = chat_model.last_messages[0].content
+    prompt = chat_model.last_messages[1].content
+    assert "Tenant-specific planner instructions may customize" in system_prompt
+    assert "Tenant-specific planner instructions" in prompt
+    assert "Tenant A menu questions are in scope." in prompt
 
 
 async def test_llm_question_planner_prompt_keeps_contextual_followups_in_scope() -> None:

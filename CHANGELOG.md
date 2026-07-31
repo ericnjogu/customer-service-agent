@@ -11,14 +11,14 @@ This project currently uses increment-based milestones instead of semantic versi
 
 - Startup logging for seed knowledge loading, mounted KB file discovery, and pgvector
   document upserts, with KB file/upsert traces visible at `INFO`.
-- `SUPPORT_LOG_LEVEL` / `logging.level` configuration for controlling application logs.
-- `SUPPORT_LOG_FORMAT` / `logging.format` configuration using Python logging `{}` style.
+- `AGENT_LOG_LEVEL` / `logging.level` configuration for controlling application logs.
+- `AGENT_LOG_FORMAT` / `logging.format` configuration using Python logging `{}` style.
 - Logging filter that suppresses noisy Uvicorn access logs for `/healthz` probes.
 - Local deploy helper script for Rancher Desktop Kubernetes rebuilds and rollouts.
 - Conversation state API for reading conversations and updating routing state.
 - State event persistence in PostgreSQL for conversation routing changes.
 - Customer-message API endpoint at `POST /messages/customer`.
-- Optional OpenAI/LangChain answer provider behind `SUPPORT_ANSWER_PROVIDER=openai`.
+- Optional OpenAI/LangChain answer provider behind `AGENT_ANSWER_PROVIDER=openai`.
 - Helm values and environment variables for model, temperature, and OpenAI API key secret.
 - Local run/deploy scripts can accept `OPENAI_API_KEY` and enable the OpenAI answer provider.
 - Helm values for LangSmith tracing environment variables, including Secret-backed API key
@@ -36,19 +36,19 @@ This project currently uses increment-based milestones instead of semantic versi
 - Question planner boundary with local rule-based and OpenAI/LLM-backed implementations
   for deciding whether the latest message is in scope and whether conversation history
   is needed.
-- `SUPPORT_QUESTION_PLANNER_PROVIDER` / `questionPlanner.provider` configuration for
+- `AGENT_QUESTION_PLANNER_PROVIDER` / `questionPlanner.provider` configuration for
   choosing `rules` or `llm`.
-- `SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER` / `humanRequestDetector.provider`
+- `AGENT_HUMAN_REQUEST_DETECTOR_PROVIDER` / `humanRequestDetector.provider`
   configuration for choosing `rules` or `llm`.
 - Embedding provider boundary with local hash embeddings and OpenAI semantic embeddings.
-- `SUPPORT_EMBEDDING_PROVIDER`, `SUPPORT_EMBEDDING_MODEL`, and
-  `SUPPORT_EMBEDDING_DIMENSIONS` configuration.
+- `AGENT_EMBEDDING_PROVIDER`, `AGENT_EMBEDDING_MODEL`, and
+  `AGENT_EMBEDDING_DIMENSIONS` configuration.
 - Helm values for OpenAI `text-embedding-3-small` embeddings with 1536 dimensions.
 - Knowledge chunking helper via LangChain `RecursiveCharacterTextSplitter`.
 - Tenant id foundation for inbound messages, conversation records, replies, tenant-scoped
   conversation lookup, tenant-scoped message idempotency, and tenant-specific seed KB
   namespaces.
-- `SUPPORT_DEFAULT_TENANT_ID` / `tenant.defaultId` configuration for local/default tenant
+- `AGENT_DEFAULT_TENANT_ID` / `tenant.defaultId` configuration for local/default tenant
   routing.
 - Tenant prompt configuration storage and API endpoints for per-tenant answer and planner
   prompt instruction overlays.
@@ -68,7 +68,7 @@ This project currently uses increment-based milestones instead of semantic versi
 - Bruno onboarding steps for creating tenant Telegram Kubernetes Secrets and registering
   Telegram webhooks, plus Telegram utility requests for inspecting and deleting a bot
   webhook.
-- `SUPPORT_VECTOR_COLLECTION` / `vector.collection` configuration for the shared vector
+- `AGENT_VECTOR_COLLECTION` / `vector.collection` configuration for the shared vector
   collection or index default used by tenant records.
 - Documentation clarifying that `llm_project_id` and `llm_project_name` are stable,
   provider-neutral tenant metadata fields that can map to a workspace, account scope,
@@ -87,8 +87,11 @@ This project currently uses increment-based milestones instead of semantic versi
   runtime variables from responses, and creating the tenant config from those values.
 - LangSmith tracing now targets the deployment-level `LANGSMITH_PROJECT`; tenant
   LangSmith/project fields are retained as tags/metadata for filtering and audit.
+
 ### Changed
 
+- Renamed the application configuration environment prefix from `SUPPORT_` to `AGENT_`,
+  including the tenant header from `X-Support-Tenant-Id` to `X-Agent-Tenant-Id`.
 - Removed the over-scoped PDF upload ingestion path, ingestion worker, S3/MinIO object
   store wiring, and scanned-PDF OCR dependencies so future online-source or
   cloud-document connectors can be added behind a smaller, deliberate boundary.
@@ -130,7 +133,7 @@ This project currently uses increment-based milestones instead of semantic versi
   embeddings.
 - pgvector KB storage now stores one vector row per chunk using stable chunk ids instead
   of one vector row per source file.
-- Support reply citations now return chunk ids when available, falling back to source only
+- Service reply citations now return chunk ids when available, falling back to source only
   for documents without chunk metadata.
 - Retrieved KB chunks passed to the LLM now include chunk id, source, and pgvector
   creation timestamp metadata.
@@ -150,7 +153,7 @@ This project currently uses increment-based milestones instead of semantic versi
 
 - File-based knowledge-base loading from `.md` and `.txt` files.
 - Helm support for mounting an existing ConfigMap as the startup KB directory.
-- `SUPPORT_KNOWLEDGE_PATH` configuration for external KB directories.
+- `AGENT_KNOWLEDGE_PATH` configuration for external KB directories.
 - `knowledge` Helm values for ConfigMap name, mount path, and startup seeding.
 - Shared `SEED_KNOWLEDGE_NAMESPACE` constant set to `seed-knowledge`.
 - Regression test for loading KB documents from a directory.
@@ -196,5 +199,5 @@ This project currently uses increment-based milestones instead of semantic versi
 
 - Telegram and WhatsApp webhook adapters.
 - Durable conversation memory retrieval.
-- Support issue state transitions.
+- Service issue state transitions.
 - Human handover and support group forwarding.

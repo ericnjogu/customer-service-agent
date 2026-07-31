@@ -5,9 +5,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="SUPPORT_", env_file=".env")
+    model_config = SettingsConfigDict(env_prefix="AGENT_", env_file=".env")
 
-    app_name: str = "customer-support-agent"
+    app_name: str = "customer-service-agent"
     default_tenant_id: str = Field(default="default", min_length=1)
     database_url: str | None = None
     retrieval_provider: str = "memory"
@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     tenant_config_cache_provider: str = "memory"
     tenant_config_cache_ttl_seconds: int = Field(default=300, gt=0)
     redis_url: str | None = None
-    vector_collection: str = Field(default="customer-support", min_length=1)
+    vector_collection: str = Field(default="customer-service", min_length=1)
     telegram_bot_token: str | None = None
     telegram_webhook_secret_token: str | None = None
     telegram_credential_provider: str = "static"

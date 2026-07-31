@@ -5,7 +5,7 @@ DEFAULT_TENANT_ID = "default"
 DEFAULT_TENANT_PLAN = "sme"
 DEFAULT_VECTOR_PROVIDER = "pgvector"
 DEFAULT_VECTOR_ISOLATION_MODE = "shared_collection"
-DEFAULT_VECTOR_COLLECTION = "customer-support"
+DEFAULT_VECTOR_COLLECTION = "customer-service"
 SEED_KNOWLEDGE_NAMESPACE = "seed-knowledge"
 
 
@@ -24,11 +24,11 @@ def generate_tenant_id() -> str:
 
 
 def default_llm_project_name(tenant_id: str) -> str:
-    return f"customer-support-{tenant_slug(tenant_id)}"
+    return f"customer-service-{tenant_slug(tenant_id)}"
 
 
 def default_langsmith_project(tenant_id: str) -> str:
-    return f"customer-support-{tenant_slug(tenant_id)}"
+    return f"customer-service-{tenant_slug(tenant_id)}"
 
 
 def default_vector_namespace(tenant_id: str) -> str:

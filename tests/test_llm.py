@@ -52,7 +52,7 @@ def test_tenant_trace_metadata_includes_provider_project_context() -> None:
         llm_provider="langchain-compatible",
         llm_model="deepseek-chat",
         llm_base_url="https://api.deepseek.com",
-        vector_collection="customer-support",
+        vector_collection="customer-service",
         telegram_secret_name="tenant-a-telegram",
         whatsapp_secret_name="tenant-a-whatsapp",
     )
@@ -66,10 +66,10 @@ def test_tenant_trace_metadata_includes_provider_project_context() -> None:
         "llm_base_url": "https://api.deepseek.com",
         "vector_provider": "pgvector",
         "vector_isolation_mode": "shared_collection",
-        "vector_collection": "customer-support",
+        "vector_collection": "customer-service",
         "vector_namespace": "tenant-a:seed-knowledge",
-        "langsmith_project": "customer-support-tenant-a",
-        "llm_project_name": "customer-support-tenant-a",
+        "langsmith_project": "customer-service-tenant-a",
+        "llm_project_name": "customer-service-tenant-a",
         "llm_project_id": "proj_tenant_a",
         "telegram_secret_name": "tenant-a-telegram",
         "whatsapp_secret_name": "tenant-a-whatsapp",
@@ -620,9 +620,9 @@ async def test_openai_embedding_provider_requires_api_key() -> None:
         await create_container(Settings(embedding_provider="openai"))
 
 
-def test_settings_read_openai_api_key_without_support_prefix(monkeypatch) -> None:
+def test_settings_read_openai_api_key_without_agent_prefix(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    monkeypatch.setenv("SUPPORT_OPENAI_API_KEY", "ignored-key")
+    monkeypatch.setenv("AGENT_OPENAI_API_KEY", "ignored-key")
 
     settings = Settings()
 

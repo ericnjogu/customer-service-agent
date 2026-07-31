@@ -2,9 +2,9 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "customer-support.fullname" . }}-redis
+  name: {{ include "customer-service.fullname" . }}-redis
   labels:
-    {{- include "customer-support.labels" . | nindent 4 }}
+    {{- include "customer-service.labels" . | nindent 4 }}
 spec:
   selector:
     app.kubernetes.io/component: redis
@@ -17,9 +17,9 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "customer-support.fullname" . }}-redis
+  name: {{ include "customer-service.fullname" . }}-redis
   labels:
-    {{- include "customer-support.labels" . | nindent 4 }}
+    {{- include "customer-service.labels" . | nindent 4 }}
 spec:
   replicas: 1
   selector:

@@ -177,7 +177,7 @@ class MemoryRetrievalStore:
 
 
 class MemoryTenantConfigRepository:
-    def __init__(self, default_vector_collection: str = "customer-support") -> None:
+    def __init__(self, default_vector_collection: str = "customer-service") -> None:
         self.default_vector_collection = default_vector_collection
         self.configs: dict[str, TenantConfig] = {}
 
@@ -360,7 +360,7 @@ class RuleBasedHumanRequestDetector:
         "talk to someone",
         "speak to someone",
         "support team member",
-        "customer support agent",
+        "customer service agent",
         "manager",
     )
 

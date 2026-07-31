@@ -122,7 +122,7 @@ def test_customer_message_endpoint_accepts_tenant_header() -> None:
     with TestClient(app) as client:
         response = client.post(
             "/messages/customer",
-            headers={"X-Support-Tenant-Id": "tenant-a"},
+            headers={"X-Agent-Tenant-Id": "tenant-a"},
             json={
                 "event_id": "api-tenant-event-1",
                 "external_chat_id": "api-tenant-chat-1",
@@ -206,14 +206,14 @@ def test_tenant_config_can_be_read_and_updated() -> None:
                 "answer_prompt_instructions": "Use Tenant A's concise tone.",
                 "planner_prompt_instructions": "Tenant A bookings are in scope.",
                 "llm_project_id": "proj_tenant_a",
-                "llm_project_name": "customer-support-tenant-a",
-                "langsmith_project": "customer-support-tenant-a",
+                "llm_project_name": "customer-service-tenant-a",
+                "langsmith_project": "customer-service-tenant-a",
                 "llm_provider": "langchain-compatible",
                 "llm_model": "deepseek-chat",
                 "llm_base_url": "https://api.deepseek.com",
                 "vector_provider": "pgvector",
                 "vector_isolation_mode": "shared_collection",
-                "vector_collection": "customer-support",
+                "vector_collection": "customer-service",
                 "vector_namespace": "tenant-a:seed-knowledge",
                 "telegram_secret_name": "tenant-a-telegram",
                 "whatsapp_secret_name": "tenant-a-whatsapp",
@@ -442,7 +442,7 @@ def test_telegram_webhook_ignores_non_text_updates() -> None:
 
 
 def test_whatsapp_webhook_verification_accepts_matching_verify_token(monkeypatch) -> None:
-    monkeypatch.setenv("SUPPORT_WHATSAPP_VERIFY_TOKEN", "expected-token")
+    monkeypatch.setenv("AGENT_WHATSAPP_VERIFY_TOKEN", "expected-token")
 
     with TestClient(app) as client:
         response = client.get(
@@ -459,7 +459,7 @@ def test_whatsapp_webhook_verification_accepts_matching_verify_token(monkeypatch
 
 
 def test_whatsapp_webhook_verification_rejects_invalid_verify_token(monkeypatch) -> None:
-    monkeypatch.setenv("SUPPORT_WHATSAPP_VERIFY_TOKEN", "expected-token")
+    monkeypatch.setenv("AGENT_WHATSAPP_VERIFY_TOKEN", "expected-token")
 
     with TestClient(app) as client:
         response = client.get(

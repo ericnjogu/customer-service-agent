@@ -9,8 +9,8 @@ from app.models import (
     ConversationRecord,
     IncomingMessage,
     QuestionPlan,
+    ServiceReply,
     StoredMessage,
-    SupportReply,
     TenantConfig,
 )
 from app.ports import (
@@ -23,7 +23,7 @@ from app.ports import (
 )
 
 
-class SupportState(TypedDict, total=False):
+class ServiceState(TypedDict, total=False):
     message: IncomingMessage
     conversation: ConversationRecord
     tenant_config: TenantConfig
@@ -38,7 +38,7 @@ class SupportState(TypedDict, total=False):
     human_requested: bool
 
 
-def build_support_graph(
+def build_service_graph(
     conversations: ConversationRepository,
     tenant_configs: TenantConfigRepository,
     retrieval: RetrievalStore,
@@ -49,7 +49,7 @@ def build_support_graph(
     conversation_history_max_messages: int,
     greeting_lapse_minutes: int,
 ):
-    async def persist_message(state: SupportState) -> dict:
+    async def persist_message(state: ServiceState) -> dict:
         conversation = await conversations.get_or_create(state["message"])
         await conversations.save_message(
             StoredMessage(
@@ -62,11 +62,11 @@ def build_support_graph(
         )
         return {"conversation": conversation}
 
-    async def load_tenant_config(state: SupportState) -> dict:
+    async def load_tenant_config(state: ServiceState) -> dict:
         tenant_config = await tenant_configs.get(state["conversation"].tenant_id)
         return {"tenant_config": tenant_config}
 
-    async def plan_question(state: SupportState) -> dict:
+    async def plan_question(state: ServiceState) -> dict:
         minutes_since_last_customer_message = (
             await conversations.minutes_since_previous_customer_message(
                 state["conversation"].id,
@@ -86,11 +86,11 @@ def build_support_graph(
         )
         return {"question_plan": plan, "conversation_metadata": metadata}
 
-    async def detect_human_request(state: SupportState) -> dict:
+    async def detect_human_request(state: ServiceState) -> dict:
         human_requested = await human_request_detector.detect(state["message"])
         return {"human_requested": human_requested}
 
-    async def apply_human_request_state(state: SupportState) -> dict:
+    async def apply_human_request_state(state: ServiceState) -> dict:
         conversation = state["conversation"]
         if state.get("human_requested") and conversation.state == "BOT_ACTIVE":
             conversation = await conversations.update_state(
@@ -100,7 +100,7 @@ def build_support_graph(
             )
         return {"conversation": conversation}
 
-    async def load_conversation_history(state: SupportState) -> dict:
+    async def load_conversation_history(state: ServiceState) -> dict:
         conversation = state["conversation"]
         history = await conversations.list_messages_since(
             conversation.id,
@@ -109,10 +109,10 @@ def build_support_graph(
         )
         return {"conversation_history": history}
 
-    async def skip_conversation_history(state: SupportState) -> dict:
+    async def skip_conversation_history(state: ServiceState) -> dict:
         return {"conversation_history": []}
 
-    async def build_conversation_metadata(state: SupportState) -> dict:
+    async def build_conversation_metadata(state: ServiceState) -> dict:
         if "conversation_metadata" in state:
             return {"conversation_metadata": state["conversation_metadata"]}
 
@@ -131,7 +131,7 @@ def build_support_graph(
             )
         return {"conversation_metadata": metadata}
 
-    async def retrieve(state: SupportState) -> dict:
+    async def retrieve(state: ServiceState) -> dict:
         tenant_config = state.get("tenant_config")
         namespace = (
             tenant_config.vector_namespace
@@ -144,7 +144,7 @@ def build_support_graph(
         )
         return {"documents": documents}
 
-    async def answer_out_of_scope(state: SupportState) -> dict:
+    async def answer_out_of_scope(state: ServiceState) -> dict:
         metadata = state.get("conversation_metadata") or build_prompt_metadata_without_history(
             state["message"],
             should_greet_customer=False,
@@ -160,7 +160,7 @@ def build_support_graph(
             "conversation_metadata": metadata,
         }
 
-    async def answer(state: SupportState) -> dict:
+    async def answer(state: ServiceState) -> dict:
         if state["conversation"].state == "HUMAN_ACTIVE":
             return {
                 "answer": "This conversation is currently being handled by human support.",
@@ -186,17 +186,17 @@ def build_support_graph(
             "low_confidence": confidence < confidence_threshold,
         }
 
-    def route_after_plan(state: SupportState) -> str:
+    def route_after_plan(state: ServiceState) -> str:
         return "in_scope" if state["question_plan"].in_scope else "out_of_scope"
 
-    def route_history(state: SupportState) -> str:
+    def route_history(state: ServiceState) -> str:
         return (
             "load_history"
             if state["question_plan"].needs_conversation_history
             else "skip_history"
         )
 
-    async def persist_reply(state: SupportState) -> dict:
+    async def persist_reply(state: ServiceState) -> dict:
         conversation = state["conversation"]
         await conversations.save_message(
             StoredMessage(
@@ -209,7 +209,7 @@ def build_support_graph(
         )
         return {"conversation": conversation}
 
-    workflow = StateGraph(SupportState)
+    workflow = StateGraph(ServiceState)
     workflow.add_node("persist_message", persist_message)
     workflow.add_node("load_tenant_config", load_tenant_config)
     workflow.add_node("plan_question", plan_question)
@@ -346,9 +346,9 @@ def customer_first_name(sender_name: str | None) -> str | None:
     return parts[0] if parts else None
 
 
-async def invoke_support_graph(graph, message: IncomingMessage) -> SupportReply:
+async def invoke_service_graph(graph, message: IncomingMessage) -> ServiceReply:
     state = await graph.ainvoke({"message": message})
-    return SupportReply(
+    return ServiceReply(
         tenant_id=state["conversation"].tenant_id,
         conversation_id=state["conversation"].id,
         answer=state["answer"],

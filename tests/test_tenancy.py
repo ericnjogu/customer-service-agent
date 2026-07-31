@@ -32,8 +32,8 @@ def test_tenant_slug_uses_default_when_no_alphanumeric_characters_remain() -> No
 
 
 def test_default_project_names_use_tenant_slug() -> None:
-    assert default_llm_project_name("Hustle HQ") == "customer-support-hustle-hq"
-    assert default_langsmith_project("Hustle HQ") == "customer-support-hustle-hq"
+    assert default_llm_project_name("Hustle HQ") == "customer-service-hustle-hq"
+    assert default_langsmith_project("Hustle HQ") == "customer-service-hustle-hq"
 
 
 def test_default_vector_namespace_preserves_default_tenant_namespace() -> None:

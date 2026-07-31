@@ -37,7 +37,7 @@ from app.adapters.tenant_cache import (
 )
 from app.adapters.whatsapp import WhatsAppCloudClient, WhatsAppSender
 from app.config import Settings
-from app.graph import build_support_graph
+from app.graph import build_service_graph
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ async def create_container(settings: Settings) -> Container:
         embeddings = LocalHashEmbeddingProvider(settings.embedding_dimensions)
     elif settings.embedding_provider == "openai":
         if not settings.openai_api_key:
-            raise ValueError("OPENAI_API_KEY is required when SUPPORT_EMBEDDING_PROVIDER=openai")
+            raise ValueError("OPENAI_API_KEY is required when AGENT_EMBEDDING_PROVIDER=openai")
         embeddings = OpenAIEmbeddingProvider(
             api_key=settings.openai_api_key,
             model=settings.embedding_model,
@@ -87,7 +87,7 @@ async def create_container(settings: Settings) -> Container:
 
     if settings.retrieval_provider == "pgvector":
         if not settings.database_url:
-            raise ValueError("SUPPORT_DATABASE_URL is required when using pgvector")
+            raise ValueError("AGENT_DATABASE_URL is required when using pgvector")
         database = PostgresDatabase(
             settings.database_url,
             embedding_dimensions=embeddings.dimensions,
@@ -113,8 +113,8 @@ async def create_container(settings: Settings) -> Container:
     if settings.tenant_config_cache_provider == "redis":
         if not settings.redis_url:
             raise ValueError(
-                "SUPPORT_REDIS_URL is required when "
-                "SUPPORT_TENANT_CONFIG_CACHE_PROVIDER=redis"
+                "AGENT_REDIS_URL is required when "
+                "AGENT_TENANT_CONFIG_CACHE_PROVIDER=redis"
             )
         tenant_configs = RedisTenantConfigRepository(
             tenant_configs,
@@ -141,7 +141,7 @@ async def create_container(settings: Settings) -> Container:
     elif settings.answer_provider == "openai":
         if not settings.openai_api_key:
             raise ValueError(
-                "OPENAI_API_KEY is required when SUPPORT_ANSWER_PROVIDER=openai"
+                "OPENAI_API_KEY is required when AGENT_ANSWER_PROVIDER=openai"
             )
         logger.info("using openai answer generator")
         generator = create_openai_answer_generator(
@@ -159,7 +159,7 @@ async def create_container(settings: Settings) -> Container:
     elif settings.question_planner_provider == "llm":
         if not settings.openai_api_key:
             raise ValueError(
-                "OPENAI_API_KEY is required when SUPPORT_QUESTION_PLANNER_PROVIDER=llm"
+                "OPENAI_API_KEY is required when AGENT_QUESTION_PLANNER_PROVIDER=llm"
             )
         question_planner = create_openai_question_planner(
             api_key=settings.openai_api_key,
@@ -177,7 +177,7 @@ async def create_container(settings: Settings) -> Container:
     elif settings.human_request_detector_provider == "llm":
         if not settings.openai_api_key:
             raise ValueError(
-                "OPENAI_API_KEY is required when SUPPORT_HUMAN_REQUEST_DETECTOR_PROVIDER=llm"
+                "OPENAI_API_KEY is required when AGENT_HUMAN_REQUEST_DETECTOR_PROVIDER=llm"
             )
         human_request_detector = create_openai_human_request_detector(
             api_key=settings.openai_api_key,
@@ -190,7 +190,7 @@ async def create_container(settings: Settings) -> Container:
             f"{settings.human_request_detector_provider}"
         )
 
-    graph = build_support_graph(
+    graph = build_service_graph(
         conversations,
         tenant_configs,
         retrieval,

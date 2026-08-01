@@ -31,15 +31,11 @@ This project currently uses increment-based milestones instead of semantic versi
   validation and outbound `sendMessage` replies.
 - WhatsApp Cloud API customer webhook adapter for text messages, with Meta webhook
   verification and outbound text replies.
-- Human-request detector boundary with local rule-based and OpenAI/LLM-backed
-  implementations.
 - Question planner boundary with local rule-based and OpenAI/LLM-backed implementations
-  for deciding whether the latest message is in scope and whether conversation history
-  is needed.
+  for deciding whether the latest message is in scope, whether conversation history is
+  needed, and whether the customer explicitly requested a human agent.
 - `AGENT_QUESTION_PLANNER_PROVIDER` / `questionPlanner.provider` configuration for
   choosing `rules` or `llm`.
-- `AGENT_HUMAN_REQUEST_DETECTOR_PROVIDER` / `humanRequestDetector.provider`
-  configuration for choosing `rules` or `llm`.
 - Embedding provider boundary with local hash embeddings and OpenAI semantic embeddings.
 - `AGENT_EMBEDDING_PROVIDER`, `AGENT_EMBEDDING_MODEL`, and
   `AGENT_EMBEDDING_DIMENSIONS` configuration.
@@ -90,6 +86,8 @@ This project currently uses increment-based milestones instead of semantic versi
 
 ### Changed
 
+- Collapsed explicit human-request detection into the question planner, removing the
+  separate human-request detector graph node and configuration.
 - Renamed the application configuration environment prefix from `SUPPORT_` to `AGENT_`,
   including the tenant header from `X-Support-Tenant-Id` to `X-Agent-Tenant-Id`.
 - Removed global Telegram bot Secret/env fallback wiring; Telegram replies now use

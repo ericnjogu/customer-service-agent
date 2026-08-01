@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from app.adapters.embeddings import LocalHashEmbeddingProvider, OpenAIEmbeddingProvider
 from app.adapters.llm import (
     create_openai_answer_generator,
-    create_openai_human_request_detector,
     create_openai_question_planner,
 )
 from app.adapters.memory import (
@@ -13,7 +12,6 @@ from app.adapters.memory import (
     MemoryRetrievalStore,
     MemoryTenantConfigRepository,
     MemoryTenantRepository,
-    RuleBasedHumanRequestDetector,
     RuleBasedQuestionPlanner,
 )
 from app.adapters.postgres import (
@@ -157,7 +155,6 @@ async def create_container(settings: Settings) -> Container:
     else:
         raise ValueError(f"Unsupported answer provider: {settings.answer_provider}")
 
-    logger.info("human request detector provider '%s'", settings.human_request_detector_provider)
     logger.info("question planner provider '%s'", settings.question_planner_provider)
     if settings.question_planner_provider == "rules":
         question_planner = RuleBasedQuestionPlanner()
@@ -177,31 +174,12 @@ async def create_container(settings: Settings) -> Container:
             f"{settings.question_planner_provider}"
         )
 
-    if settings.human_request_detector_provider == "rules":
-        human_request_detector = RuleBasedHumanRequestDetector()
-    elif settings.human_request_detector_provider == "llm":
-        if not settings.openai_api_key:
-            raise ValueError(
-                "OPENAI_API_KEY is required when AGENT_HUMAN_REQUEST_DETECTOR_PROVIDER=llm"
-            )
-        human_request_detector = create_openai_human_request_detector(
-            api_key=settings.openai_api_key,
-            model=settings.llm_model,
-            temperature=0.0,
-        )
-    else:
-        raise ValueError(
-            "Unsupported human request detector provider: "
-            f"{settings.human_request_detector_provider}"
-        )
-
     graph = build_service_graph(
         conversations,
         tenant_configs,
         retrieval,
         generator,
         question_planner,
-        human_request_detector,
         settings.confidence_threshold,
         settings.conversation_history_max_messages,
         settings.greeting_lapse_minutes,

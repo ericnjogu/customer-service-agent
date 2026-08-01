@@ -16,7 +16,6 @@ from app.models import (
 from app.ports import (
     AnswerGenerator,
     ConversationRepository,
-    HumanRequestDetector,
     QuestionPlanner,
     RetrievalStore,
     TenantConfigRepository,
@@ -35,7 +34,6 @@ class ServiceState(TypedDict, total=False):
     confidence: float
     citations: list[str]
     low_confidence: bool
-    human_requested: bool
 
 
 def build_service_graph(
@@ -44,7 +42,6 @@ def build_service_graph(
     retrieval: RetrievalStore,
     generator: AnswerGenerator,
     question_planner: QuestionPlanner,
-    human_request_detector: HumanRequestDetector,
     confidence_threshold: float,
     conversation_history_max_messages: int,
     greeting_lapse_minutes: int,
@@ -86,13 +83,12 @@ def build_service_graph(
         )
         return {"question_plan": plan, "conversation_metadata": metadata}
 
-    async def detect_human_request(state: ServiceState) -> dict:
-        human_requested = await human_request_detector.detect(state["message"])
-        return {"human_requested": human_requested}
-
     async def apply_human_request_state(state: ServiceState) -> dict:
         conversation = state["conversation"]
-        if state.get("human_requested") and conversation.state == "BOT_ACTIVE":
+        if (
+            state["question_plan"].explicit_human_request
+            and conversation.state == "BOT_ACTIVE"
+        ):
             conversation = await conversations.update_state(
                 conversation.id,
                 state="HUMAN_REQUESTED",
@@ -213,7 +209,6 @@ def build_service_graph(
     workflow.add_node("persist_message", persist_message)
     workflow.add_node("load_tenant_config", load_tenant_config)
     workflow.add_node("plan_question", plan_question)
-    workflow.add_node("detect_human_request", detect_human_request)
     workflow.add_node("apply_human_request_state", apply_human_request_state)
     workflow.add_node("load_conversation_history", load_conversation_history)
     workflow.add_node("skip_conversation_history", skip_conversation_history)
@@ -228,9 +223,8 @@ def build_service_graph(
     workflow.add_conditional_edges(
         "plan_question",
         route_after_plan,
-        {"in_scope": "detect_human_request", "out_of_scope": "answer_out_of_scope"},
+        {"in_scope": "apply_human_request_state", "out_of_scope": "answer_out_of_scope"},
     )
-    workflow.add_edge("detect_human_request", "apply_human_request_state")
     workflow.add_conditional_edges(
         "apply_human_request_state",
         route_history,

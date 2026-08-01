@@ -73,8 +73,6 @@ spec:
               value: {{ .Values.embedding.dimensions | quote }}
             - name: AGENT_QUESTION_PLANNER_PROVIDER
               value: {{ .Values.questionPlanner.provider | quote }}
-            - name: AGENT_HUMAN_REQUEST_DETECTOR_PROVIDER
-              value: {{ .Values.humanRequestDetector.provider | quote }}
             - name: AGENT_CONVERSATION_HISTORY_MAX_MESSAGES
               value: {{ .Values.conversationHistory.maxMessages | quote }}
             - name: AGENT_GREETING_LAPSE_MINUTES

@@ -6,7 +6,6 @@ from langchain_core.messages import AIMessage
 
 from app.adapters.llm import (
     LlmAnswerGenerator,
-    LlmHumanRequestDetector,
     LlmQuestionPlanner,
     format_age,
     langsmith_client,
@@ -449,11 +448,14 @@ async def test_llm_answer_generator_does_not_call_model_without_documents() -> N
     assert chat_model.calls == 0
 
 
-async def test_llm_human_request_detector_detects_explicit_request() -> None:
-    chat_model = FakeChatModel('{"explicit_human_request": true}')
-    detector = LlmHumanRequestDetector(chat_model)
+async def test_llm_question_planner_detects_explicit_human_request() -> None:
+    chat_model = FakeChatModel(
+        '{"in_scope": true, "needs_conversation_history": false, '
+        '"explicit_human_request": true, "explanation": "customer asked for a human"}'
+    )
+    planner = LlmQuestionPlanner(chat_model)
 
-    detected = await detector.detect(
+    plan = await planner.plan(
         IncomingMessage(
             event_id="detect-1",
             external_chat_id="chat-1",
@@ -462,33 +464,18 @@ async def test_llm_human_request_detector_detects_explicit_request() -> None:
         )
     )
 
-    assert detected is True
+    assert plan.in_scope is True
+    assert plan.explicit_human_request is True
     assert chat_model.calls == 1
-    assert "explicitly asks to speak with a human support person" in (
+    assert "Return explicit_human_request=true only when" in (
         chat_model.last_messages[0].content
     )
-
-
-async def test_llm_human_request_detector_defaults_false_for_invalid_json() -> None:
-    chat_model = FakeChatModel("not-json")
-    detector = LlmHumanRequestDetector(chat_model)
-
-    detected = await detector.detect(
-        IncomingMessage(
-            event_id="detect-2",
-            external_chat_id="chat-1",
-            external_user_id="user-1",
-            text="This is not helpful.",
-        )
-    )
-
-    assert detected is False
 
 
 async def test_llm_question_planner_returns_structured_plan() -> None:
     chat_model = FakeChatModel(
         '{"in_scope": true, "needs_conversation_history": false, '
-        '"explanation": "standalone location question"}'
+        '"explicit_human_request": false, "explanation": "standalone location question"}'
     )
     planner = LlmQuestionPlanner(chat_model)
 
@@ -511,6 +498,7 @@ async def test_llm_question_planner_returns_structured_plan() -> None:
 
     assert plan.in_scope is True
     assert plan.needs_conversation_history is False
+    assert plan.explicit_human_request is False
     assert plan.explanation == "standalone location question"
     assert "Decide using only the latest customer message" in (
         chat_model.last_messages[0].content
@@ -529,7 +517,7 @@ async def test_llm_question_planner_returns_structured_plan() -> None:
 async def test_llm_question_planner_includes_tenant_planner_instructions() -> None:
     chat_model = FakeChatModel(
         '{"in_scope": true, "needs_conversation_history": false, '
-        '"explanation": "tenant planner config"}'
+        '"explicit_human_request": false, "explanation": "tenant planner config"}'
     )
     planner = LlmQuestionPlanner(chat_model)
 
@@ -557,7 +545,7 @@ async def test_llm_question_planner_includes_tenant_planner_instructions() -> No
 async def test_llm_question_planner_prompt_keeps_contextual_followups_in_scope() -> None:
     chat_model = FakeChatModel(
         '{"in_scope": true, "needs_conversation_history": true, '
-        '"explanation": "current conversation follow-up"}'
+        '"explicit_human_request": false, "explanation": "current conversation follow-up"}'
     )
     planner = LlmQuestionPlanner(chat_model)
 
@@ -580,6 +568,7 @@ async def test_llm_question_planner_prompt_keeps_contextual_followups_in_scope()
     system_prompt = chat_model.last_messages[0].content
     assert plan.in_scope is True
     assert plan.needs_conversation_history is True
+    assert plan.explicit_human_request is False
     assert '"Why did you speak that language?"' in system_prompt
     assert "Do not tell the customer that their message" in system_prompt
     assert "depends on previous messages" in system_prompt

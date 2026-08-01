@@ -122,14 +122,6 @@ class AnswerGenerator(Protocol):
     ) -> tuple[str, float]: ...
 
 
-class HumanRequestDetector(Protocol):
-    async def detect(
-        self,
-        message: IncomingMessage,
-        conversation_history: list[StoredMessage] | None = None,
-    ) -> bool: ...
-
-
 class QuestionPlanner(Protocol):
     async def plan(
         self,

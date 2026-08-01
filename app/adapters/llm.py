@@ -64,16 +64,6 @@ Return JSON with:
 - grounded: boolean
 """
 
-HUMAN_REQUEST_DETECTION_PROMPT = """Determine whether the customer's latest message
-explicitly asks to speak with a human support person.
-Return true only when the customer clearly asks for a human agent, real person, support
-team member, manager, or escalation to a person.
-Return false for low-confidence situations, unanswered questions, complaints,
-frustration, or negative sentiment that do not ask for a person.
-Return JSON only with:
-- explicit_human_request: boolean
-"""
-
 QUESTION_PLANNING_PROMPT = """You are routing a customer service message before any
 knowledge-base retrieval or conversation-history lookup.
 Decide using only the latest customer message.
@@ -102,9 +92,15 @@ was that message sent?", "what did I ask earlier?", or "what did you say before?
 Return false for standalone questions such as location, opening hours, menu items,
 contact information, policies, or prices.
 
-Use conversation metadata to decide whether explanation should greet the customer. Greet
-only when should_greet_customer=true. If should_greet_customer=false, do not open with a
-greeting and do not address the customer by name just because sender_name is available.
+Return explicit_human_request=true only when the customer clearly asks for a human agent,
+real person, support team member, manager, or escalation to a person. Return false for
+low-confidence situations, unanswered questions, complaints, frustration, or negative
+sentiment that do not ask for a person. A clear request for a human is in scope because
+it is about the support process.
+
+Use the Conversation metadata block only when writing explanation. If
+should_greet_customer is false, do not open the explanation with a greeting and do not
+address the customer by name just because sender_name is available.
 
 Return explanation as a short human-readable sentence in the language of the latest
 customer message. If the latest message is not understood and its language is unknown or
@@ -121,6 +117,7 @@ depends on previous messages. Instead, set in_scope=true and needs_conversation_
 Return JSON only with:
 - in_scope: boolean
 - needs_conversation_history: boolean
+- explicit_human_request: boolean
 - explanation: string
 """
 
@@ -363,43 +360,6 @@ class LlmAnswerGenerator:
             return answer, min(confidence, 0.3)
         return answer, max(0.0, min(confidence, 0.95))
 
-class LlmHumanRequestDetector:
-    def __init__(self, chat_model: Any) -> None:
-        self.chat_model = chat_model
-
-    async def detect(
-        self,
-        message: IncomingMessage,
-        conversation_history: list[StoredMessage] | None = None,
-    ) -> bool:
-        history = conversation_history or []
-        messages = [
-            SystemMessage(content=HUMAN_REQUEST_DETECTION_PROMPT),
-            HumanMessage(
-                content=(
-                    "Conversation history for the current issue:\n"
-                    f"{format_conversation_history(history)}\n\n"
-                    "Latest customer message:\n"
-                    f"{message.text}"
-                )
-            ),
-        ]
-        response = await self.chat_model.ainvoke(
-            messages,
-            config=langsmith_runnable_config("human_request_detection", None),
-        )
-        await flush_langsmith_traces()
-        content = str(response.content)
-
-        try:
-            payload = json.loads(content)
-        except json.JSONDecodeError:
-            logger.warning("LLM human-request detection was not valid JSON; defaulting false")
-            return False
-
-        return bool(payload.get("explicit_human_request", False))
-
-
 class LlmQuestionPlanner:
     def __init__(self, chat_model: Any) -> None:
         self.chat_model = chat_model
@@ -441,6 +401,7 @@ class LlmQuestionPlanner:
             return QuestionPlan(
                 in_scope=True,
                 needs_conversation_history=True,
+                explicit_human_request=False,
                 explanation="planner returned invalid JSON",
             )
 
@@ -449,6 +410,7 @@ class LlmQuestionPlanner:
             needs_conversation_history=bool(
                 payload.get("needs_conversation_history", True)
             ),
+            explicit_human_request=bool(payload.get("explicit_human_request", False)),
             explanation=str(payload.get("explanation", "")).strip() or None,
         )
 
@@ -468,23 +430,6 @@ def create_openai_answer_generator(
         model_kwargs={"response_format": {"type": "json_object"}},
     )
     return LlmAnswerGenerator(chat_model)
-
-
-def create_openai_human_request_detector(
-    *,
-    api_key: str,
-    model: str,
-    temperature: float,
-) -> LlmHumanRequestDetector:
-    from langchain_openai import ChatOpenAI
-
-    chat_model = ChatOpenAI(
-        api_key=api_key,
-        model=model,
-        temperature=temperature,
-        model_kwargs={"response_format": {"type": "json_object"}},
-    )
-    return LlmHumanRequestDetector(chat_model)
 
 
 def create_openai_question_planner(

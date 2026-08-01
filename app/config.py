@@ -16,7 +16,6 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = Field(default=64, gt=0)
     question_planner_provider: str = "rules"
-    human_request_detector_provider: str = "rules"
     llm_model: str = "gpt-4.1-mini"
     openai_api_key: str | None = Field(default=None, validation_alias="OPENAI_API_KEY")
     llm_temperature: float = 0.0

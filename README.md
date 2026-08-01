@@ -6,7 +6,7 @@ generation, and configurable retrieval/answer boundaries. Helm deploys the servi
 PostgreSQL and pgvector. No external LLM key is needed for the default local path: a
 deterministic extractive generator and local hash embeddings make the workflow inspectable
 and reproducible.
-
+f
 ## What works
 
 - Customer message ingestion through `POST /messages/customer`.
@@ -416,11 +416,11 @@ Provider project/index fields are tenant control-plane metadata:
   collection and namespace/tenant to payload filters or a dedicated collection.
 - Telegram credentials can be resolved from one Secret reference per tenant. Secret values
   are not stored in Postgres; `telegram_secret_name` points at the Kubernetes Secret used
-  for that tenant's bot token and webhook secret token. If no tenant Secret is configured,
-  the app falls back to the global Telegram env/Helm Secret values.
-- WhatsApp credentials are currently modeled as one Secret reference per tenant, but the
-  runtime still uses the global WhatsApp env/Helm Secret values until tenant-specific
-  WhatsApp resolution is wired.
+  for that tenant's bot token and webhook secret token.
+- WhatsApp credentials can be resolved from one Secret reference per tenant. Secret values
+  are not stored in Postgres; `whatsapp_secret_name` points at the Kubernetes Secret used
+  for that tenant's access token, phone number id, webhook verify token, and optional
+  Graph API version.
 
 Telegram tenant Secret keys:
 
@@ -495,32 +495,15 @@ POST /webhooks/telegram
 ```
 
 The endpoint currently handles text messages. Non-text updates are acknowledged and ignored.
-If a tenant config has `telegram_secret_name`, the app reads that Kubernetes Secret,
-validates the incoming `X-Telegram-Bot-Api-Secret-Token` against the tenant-specific
+Telegram credentials are tenant-scoped. If a tenant config has `telegram_secret_name`,
+the app reads that Kubernetes Secret, validates the incoming
+`X-Telegram-Bot-Api-Secret-Token` against the tenant-specific
 `TELEGRAM_WEBHOOK_SECRET_TOKEN`, and sends the reply with the tenant-specific
-`TELEGRAM_BOT_TOKEN`. If no tenant Secret is configured, the app falls back to
-`AGENT_TELEGRAM_BOT_TOKEN` and `AGENT_TELEGRAM_WEBHOOK_SECRET_TOKEN`.
+`TELEGRAM_BOT_TOKEN`. If no tenant Secret is configured, the webhook is still processed
+but no Telegram reply is sent.
 
-Create a Secret for the bot token and webhook secret token:
-
-```bash
-kubectl create secret generic telegram-bot \
-  --namespace customer-service \
-  --from-literal=TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
-  --from-literal=TELEGRAM_WEBHOOK_SECRET_TOKEN="$TELEGRAM_WEBHOOK_SECRET_TOKEN"
-```
-
-Deploy with the Secret:
-
-```bash
-helm upgrade --install cs-local helm/customer-service \
-  --namespace customer-service \
-  --set telegram.existingSecret=telegram-bot
-```
-
-For tenant-specific Telegram credentials, create a Secret with the same keys and store its
-name in the tenant config. The Bruno onboarding flow can create this Secret through
-`kubectl proxy`; manually, it looks like:
+Create a tenant Secret and store its name in the tenant config. The Bruno onboarding flow
+can create this Secret through `kubectl proxy`; manually, it looks like:
 
 ```bash
 kubectl create secret generic tenant-hustle-hq-telegram \
@@ -536,8 +519,7 @@ kubectl create secret generic tenant-hustle-hq-telegram \
 ```
 
 Local Helm enables `telegram.credentialProvider=kubernetes`, so the app ServiceAccount is
-allowed to read tenant Telegram Secrets in its namespace. Use
-`telegram.credentialProvider=static` for env-only local runs.
+allowed to read tenant Telegram Secrets in its namespace.
 
 Register the Telegram webhook after the app has a public HTTPS URL:
 
@@ -559,29 +541,28 @@ GET /webhooks/whatsapp
 POST /webhooks/whatsapp
 ```
 
-The `GET` endpoint verifies the Meta WhatsApp webhook using
-`AGENT_WHATSAPP_VERIFY_TOKEN`. The `POST` endpoint currently handles customer text
-messages from the WhatsApp Cloud API payload. Non-text updates are acknowledged and
-ignored. If `AGENT_WHATSAPP_ACCESS_TOKEN` and `AGENT_WHATSAPP_PHONE_NUMBER_ID` are
-configured, the app sends the graph reply back to the customer using the WhatsApp Cloud
-API `messages` endpoint.
+The `GET` endpoint verifies the Meta WhatsApp webhook using the tenant-specific
+`WHATSAPP_VERIFY_TOKEN`. The `POST` endpoint currently handles customer text messages
+from the WhatsApp Cloud API payload. Non-text updates are acknowledged and ignored. If
+the resolved tenant Secret contains `WHATSAPP_ACCESS_TOKEN` and
+`WHATSAPP_PHONE_NUMBER_ID`, the app sends the graph reply back to the customer using the
+WhatsApp Cloud API `messages` endpoint.
 
-Create a Secret for the WhatsApp Cloud API values:
+Create a tenant Secret for the WhatsApp Cloud API values and store its name in the
+tenant config:
 
 ```bash
-kubectl create secret generic whatsapp-cloud \
+kubectl create secret generic tenant-hustle-hq-whatsapp \
   --namespace customer-service \
   --from-literal=WHATSAPP_ACCESS_TOKEN="$WHATSAPP_ACCESS_TOKEN" \
   --from-literal=WHATSAPP_PHONE_NUMBER_ID="$WHATSAPP_PHONE_NUMBER_ID" \
   --from-literal=WHATSAPP_VERIFY_TOKEN="$WHATSAPP_VERIFY_TOKEN"
 ```
 
-Deploy with the Secret:
-
-```bash
-helm upgrade --install cs-local helm/customer-service \
-  --namespace customer-service \
-  --set whatsapp.existingSecret=whatsapp-cloud
+```json
+{
+  "whatsapp_secret_name": "tenant-hustle-hq-whatsapp"
+}
 ```
 
 Register the WhatsApp webhook in Meta's app dashboard after the app has a public HTTPS URL:
@@ -616,16 +597,16 @@ Application configuration uses the `AGENT_` prefix. LangSmith uses its native
 | `AGENT_TENANT_CONFIG_CACHE_TTL_SECONDS` | `300` | TTL for Redis tenant config cache entries |
 | `AGENT_REDIS_URL` | unset | Redis URL required when `AGENT_TENANT_CONFIG_CACHE_PROVIDER=redis`; Helm points this at the bundled Redis service |
 | `AGENT_VECTOR_COLLECTION` | `customer-service` | Default vector collection/index name used by tenant config defaults; tenant namespaces isolate data |
-| `AGENT_TELEGRAM_BOT_TOKEN` | unset | Telegram bot token used to send replies with `sendMessage` |
-| `AGENT_TELEGRAM_WEBHOOK_SECRET_TOKEN` | unset | Optional Telegram webhook secret token checked against `X-Telegram-Bot-Api-Secret-Token` |
-| `AGENT_TELEGRAM_CREDENTIAL_PROVIDER` | `static` | `static` for env-backed Telegram credentials, or `kubernetes` for tenant-specific Secret lookup |
+| `AGENT_TELEGRAM_CREDENTIAL_PROVIDER` | `kubernetes` | Telegram credential provider; only tenant-specific Kubernetes Secret lookup is currently supported |
 | `AGENT_TELEGRAM_SECRET_NAMESPACE` | unset | Kubernetes namespace used for tenant Telegram Secret lookup; Helm defaults this to the pod namespace |
 | `AGENT_TELEGRAM_BOT_TOKEN_SECRET_KEY` | `TELEGRAM_BOT_TOKEN` | Secret key containing a tenant Telegram bot token |
 | `AGENT_TELEGRAM_WEBHOOK_SECRET_TOKEN_SECRET_KEY` | `TELEGRAM_WEBHOOK_SECRET_TOKEN` | Secret key containing a tenant Telegram webhook secret token |
-| `AGENT_WHATSAPP_ACCESS_TOKEN` | unset | WhatsApp Cloud API access token used to send replies |
-| `AGENT_WHATSAPP_PHONE_NUMBER_ID` | unset | WhatsApp Cloud API phone number id used for outbound messages |
-| `AGENT_WHATSAPP_VERIFY_TOKEN` | unset | WhatsApp webhook verification token checked during Meta webhook setup |
-| `AGENT_WHATSAPP_GRAPH_API_VERSION` | `v20.0` | Meta Graph API version used for WhatsApp outbound messages |
+| `AGENT_WHATSAPP_SECRET_NAMESPACE` | unset | Kubernetes namespace used for tenant WhatsApp Secret lookup; Helm defaults this to the pod namespace |
+| `AGENT_WHATSAPP_ACCESS_TOKEN_SECRET_KEY` | `WHATSAPP_ACCESS_TOKEN` | Secret key containing a tenant WhatsApp Cloud API access token |
+| `AGENT_WHATSAPP_PHONE_NUMBER_ID_SECRET_KEY` | `WHATSAPP_PHONE_NUMBER_ID` | Secret key containing a tenant WhatsApp phone number id |
+| `AGENT_WHATSAPP_VERIFY_TOKEN_SECRET_KEY` | `WHATSAPP_VERIFY_TOKEN` | Secret key containing a tenant WhatsApp webhook verify token |
+| `AGENT_WHATSAPP_GRAPH_API_VERSION_SECRET_KEY` | `WHATSAPP_GRAPH_API_VERSION` | Optional Secret key containing a tenant WhatsApp Graph API version |
+| `AGENT_WHATSAPP_GRAPH_API_VERSION` | `v20.0` | Default Meta Graph API version used when the tenant Secret does not provide one |
 | `AGENT_LOG_LEVEL` | `INFO` | Application log level, for example `DEBUG` |
 | `AGENT_LOG_FORMAT` | `{asctime} - {levelname}:{name}:{message}` | Python logging format using `{}` style |
 | `LANGSMITH_TRACING` | `true` | Enable LangSmith tracing |

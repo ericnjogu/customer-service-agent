@@ -27,15 +27,15 @@ class Settings(BaseSettings):
     tenant_config_cache_ttl_seconds: int = Field(default=300, gt=0)
     redis_url: str | None = None
     vector_collection: str = Field(default="customer-service", min_length=1)
-    telegram_bot_token: str | None = None
-    telegram_webhook_secret_token: str | None = None
-    telegram_credential_provider: str = "static"
+    telegram_credential_provider: str = "kubernetes"
     telegram_secret_namespace: str | None = None
     telegram_bot_token_secret_key: str = "TELEGRAM_BOT_TOKEN"
     telegram_webhook_secret_token_secret_key: str = "TELEGRAM_WEBHOOK_SECRET_TOKEN"
-    whatsapp_access_token: str | None = None
-    whatsapp_phone_number_id: str | None = None
-    whatsapp_verify_token: str | None = None
+    whatsapp_secret_namespace: str | None = None
+    whatsapp_access_token_secret_key: str = "WHATSAPP_ACCESS_TOKEN"
+    whatsapp_phone_number_id_secret_key: str = "WHATSAPP_PHONE_NUMBER_ID"
+    whatsapp_verify_token_secret_key: str = "WHATSAPP_VERIFY_TOKEN"
+    whatsapp_graph_api_version_secret_key: str = "WHATSAPP_GRAPH_API_VERSION"
     whatsapp_graph_api_version: str = "v20.0"
     log_level: str = "INFO"
     log_format: str = "{asctime} - {levelname}:{name}:{message}"

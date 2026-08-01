@@ -130,16 +130,23 @@ async def telegram_webhook(
 
 @app.get("/webhooks/whatsapp")
 async def verify_whatsapp_webhook(
+    request: Request,
+    tenant_id: str | None = Query(default=None),
     hub_mode: str | None = Query(default=None, alias="hub.mode"),
     hub_challenge: str | None = Query(default=None, alias="hub.challenge"),
     hub_verify_token: str | None = Query(default=None, alias="hub.verify_token"),
+    x_agent_tenant_id: str | None = Header(default=None),
 ) -> Response:
     settings = get_settings()
+    resolved_tenant_id = tenant_id or x_agent_tenant_id or settings.default_tenant_id
+    whatsapp_credentials = await request.app.state.container.whatsapp_credentials.resolve(
+        resolved_tenant_id
+    )
     if (
         hub_mode == "subscribe"
         and hub_challenge
-        and settings.whatsapp_verify_token
-        and hub_verify_token == settings.whatsapp_verify_token
+        and whatsapp_credentials.verify_token
+        and hub_verify_token == whatsapp_credentials.verify_token
     ):
         return Response(content=hub_challenge, media_type="text/plain")
 
@@ -164,7 +171,11 @@ async def whatsapp_webhook(
         message = with_tenant(message, tenant_id or x_agent_tenant_id, settings.default_tenant_id)
         reply = await invoke_service_graph(request.app.state.container.graph, message)
         if whatsapp_sender:
-            await whatsapp_sender.send_message(message.external_chat_id, whatsapp_reply_text(reply))
+            await whatsapp_sender.send_message(
+                message.external_chat_id,
+                whatsapp_reply_text(reply),
+                tenant_id=message.tenant_id,
+            )
         replies.append(reply.model_dump(mode="json"))
 
     return {"ok": True, "replies": replies}

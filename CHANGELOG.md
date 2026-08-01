@@ -92,6 +92,10 @@ This project currently uses increment-based milestones instead of semantic versi
 
 - Renamed the application configuration environment prefix from `SUPPORT_` to `AGENT_`,
   including the tenant header from `X-Support-Tenant-Id` to `X-Agent-Tenant-Id`.
+- Removed global Telegram bot Secret/env fallback wiring; Telegram replies now use
+  tenant-scoped Kubernetes Secrets referenced by `telegram_secret_name`.
+- Removed global WhatsApp Cloud API Secret/env wiring; WhatsApp webhook verification and
+  replies now use tenant-scoped Kubernetes Secrets referenced by `whatsapp_secret_name`.
 - Removed the over-scoped PDF upload ingestion path, ingestion worker, S3/MinIO object
   store wiring, and scanned-PDF OCR dependencies so future online-source or
   cloud-document connectors can be added behind a smaller, deliberate boundary.

@@ -90,18 +90,6 @@ spec:
             - name: AGENT_REDIS_URL
               value: {{ .Values.redis.url | quote }}
             {{- end }}
-            {{- if .Values.telegram.existingSecret }}
-            - name: AGENT_TELEGRAM_BOT_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.telegram.existingSecret | quote }}
-                  key: {{ .Values.telegram.botTokenSecretKey | quote }}
-            - name: AGENT_TELEGRAM_WEBHOOK_SECRET_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.telegram.existingSecret | quote }}
-                  key: {{ .Values.telegram.webhookSecretTokenSecretKey | quote }}
-            {{- end }}
             - name: AGENT_TELEGRAM_CREDENTIAL_PROVIDER
               value: {{ .Values.telegram.credentialProvider | quote }}
             {{- if .Values.telegram.secretNamespace }}
@@ -117,23 +105,23 @@ spec:
               value: {{ .Values.telegram.botTokenSecretKey | quote }}
             - name: AGENT_TELEGRAM_WEBHOOK_SECRET_TOKEN_SECRET_KEY
               value: {{ .Values.telegram.webhookSecretTokenSecretKey | quote }}
-            {{- if .Values.whatsapp.existingSecret }}
-            - name: AGENT_WHATSAPP_ACCESS_TOKEN
+            {{- if .Values.whatsapp.secretNamespace }}
+            - name: AGENT_WHATSAPP_SECRET_NAMESPACE
+              value: {{ .Values.whatsapp.secretNamespace | quote }}
+            {{- else }}
+            - name: AGENT_WHATSAPP_SECRET_NAMESPACE
               valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.whatsapp.existingSecret | quote }}
-                  key: {{ .Values.whatsapp.accessTokenSecretKey | quote }}
-            - name: AGENT_WHATSAPP_PHONE_NUMBER_ID
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.whatsapp.existingSecret | quote }}
-                  key: {{ .Values.whatsapp.phoneNumberIdSecretKey | quote }}
-            - name: AGENT_WHATSAPP_VERIFY_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.whatsapp.existingSecret | quote }}
-                  key: {{ .Values.whatsapp.verifyTokenSecretKey | quote }}
+                fieldRef:
+                  fieldPath: metadata.namespace
             {{- end }}
+            - name: AGENT_WHATSAPP_ACCESS_TOKEN_SECRET_KEY
+              value: {{ .Values.whatsapp.accessTokenSecretKey | quote }}
+            - name: AGENT_WHATSAPP_PHONE_NUMBER_ID_SECRET_KEY
+              value: {{ .Values.whatsapp.phoneNumberIdSecretKey | quote }}
+            - name: AGENT_WHATSAPP_VERIFY_TOKEN_SECRET_KEY
+              value: {{ .Values.whatsapp.verifyTokenSecretKey | quote }}
+            - name: AGENT_WHATSAPP_GRAPH_API_VERSION_SECRET_KEY
+              value: {{ .Values.whatsapp.graphApiVersionSecretKey | quote }}
             - name: AGENT_WHATSAPP_GRAPH_API_VERSION
               value: {{ .Values.whatsapp.graphApiVersion | quote }}
             - name: AGENT_LLM_MODEL

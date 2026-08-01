@@ -46,10 +46,15 @@ class FakeTelegramSender:
 
 class FakeWhatsAppSender:
     def __init__(self) -> None:
-        self.sent_messages: list[tuple[str, str]] = []
+        self.sent_messages: list[tuple[str, str, str]] = []
 
-    async def send_message(self, to: str, text: str) -> None:
-        self.sent_messages.append((to, text))
+    async def send_message(
+        self,
+        to: str,
+        text: str,
+        tenant_id: str = "default",
+    ) -> None:
+        self.sent_messages.append((to, text, tenant_id))
 
 
 class FakeTelegramCredentials:
@@ -66,6 +71,24 @@ class FakeTelegramCredentialResolver:
     async def resolve(self, tenant_id: str) -> FakeTelegramCredentials:
         self.tenant_ids.append(tenant_id)
         return FakeTelegramCredentials(self.webhook_secret_token)
+
+
+class FakeWhatsAppCredentials:
+    def __init__(self, verify_token: str | None = None) -> None:
+        self.access_token = "fake-token"
+        self.phone_number_id = "fake-phone-number-id"
+        self.verify_token = verify_token
+        self.graph_api_version = "v20.0"
+
+
+class FakeWhatsAppCredentialResolver:
+    def __init__(self, verify_token: str | None = None) -> None:
+        self.verify_token = verify_token
+        self.tenant_ids: list[str] = []
+
+    async def resolve(self, tenant_id: str) -> FakeWhatsAppCredentials:
+        self.tenant_ids.append(tenant_id)
+        return FakeWhatsAppCredentials(self.verify_token)
 
 
 @pytest.fixture(autouse=True)
@@ -441,13 +464,15 @@ def test_telegram_webhook_ignores_non_text_updates() -> None:
     assert response.json() == {"ok": True, "ignored": True}
 
 
-def test_whatsapp_webhook_verification_accepts_matching_verify_token(monkeypatch) -> None:
-    monkeypatch.setenv("AGENT_WHATSAPP_VERIFY_TOKEN", "expected-token")
+def test_whatsapp_webhook_verification_accepts_matching_verify_token() -> None:
+    resolver = FakeWhatsAppCredentialResolver(verify_token="expected-token")
 
     with TestClient(app) as client:
+        client.app.state.container.whatsapp_credentials = resolver
         response = client.get(
             "/webhooks/whatsapp",
             params={
+                "tenant_id": "tenant-a",
                 "hub.mode": "subscribe",
                 "hub.challenge": "challenge-value",
                 "hub.verify_token": "expected-token",
@@ -456,15 +481,18 @@ def test_whatsapp_webhook_verification_accepts_matching_verify_token(monkeypatch
 
     assert response.status_code == 200
     assert response.text == "challenge-value"
+    assert resolver.tenant_ids == ["tenant-a"]
 
 
-def test_whatsapp_webhook_verification_rejects_invalid_verify_token(monkeypatch) -> None:
-    monkeypatch.setenv("AGENT_WHATSAPP_VERIFY_TOKEN", "expected-token")
+def test_whatsapp_webhook_verification_rejects_invalid_verify_token() -> None:
+    resolver = FakeWhatsAppCredentialResolver(verify_token="expected-token")
 
     with TestClient(app) as client:
+        client.app.state.container.whatsapp_credentials = resolver
         response = client.get(
             "/webhooks/whatsapp",
             params={
+                "tenant_id": "tenant-a",
                 "hub.mode": "subscribe",
                 "hub.challenge": "challenge-value",
                 "hub.verify_token": "wrong-token",
@@ -472,6 +500,7 @@ def test_whatsapp_webhook_verification_rejects_invalid_verify_token(monkeypatch)
         )
 
     assert response.status_code == 403
+    assert resolver.tenant_ids == ["tenant-a"]
 
 
 def test_whatsapp_webhook_receives_customer_message_and_sends_reply() -> None:
@@ -517,7 +546,11 @@ def test_whatsapp_webhook_receives_customer_message_and_sends_reply() -> None:
     assert response.json()["ok"] is True
     assert response.json()["replies"][0]["citations"] == ["kb/refunds.txt#0000"]
     assert sender.sent_messages == [
-        ("254700000001", "Refund requests can be submitted within 30 days of purchase.")
+        (
+            "254700000001",
+            "Refund requests can be submitted within 30 days of purchase.",
+            "default",
+        )
     ]
 
 

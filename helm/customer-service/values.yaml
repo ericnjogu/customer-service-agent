@@ -72,17 +72,17 @@ tenantConfigCache:
   ttlSeconds: 300
 
 telegram:
-  existingSecret: "telegram-bot"
   credentialProvider: kubernetes
   secretNamespace: ""
   botTokenSecretKey: TELEGRAM_BOT_TOKEN
   webhookSecretTokenSecretKey: TELEGRAM_WEBHOOK_SECRET_TOKEN
 
 whatsapp:
-  existingSecret: whatsapp-cloud
+  secretNamespace: ""
   accessTokenSecretKey: WHATSAPP_ACCESS_TOKEN
   phoneNumberIdSecretKey: WHATSAPP_PHONE_NUMBER_ID
   verifyTokenSecretKey: WHATSAPP_VERIFY_TOKEN
+  graphApiVersionSecretKey: WHATSAPP_GRAPH_API_VERSION
   graphApiVersion: v20.0
 
 llm:

@@ -25,7 +25,6 @@ from app.adapters.postgres import (
 )
 from app.adapters.telegram import (
     KubernetesSecretTelegramCredentialResolver,
-    StaticTelegramCredentialResolver,
     TelegramCredentialResolver,
     TelegramSender,
     TenantAwareTelegramSender,
@@ -35,7 +34,12 @@ from app.adapters.tenant_cache import (
     RedisTenantConfigRepository,
     create_redis_client,
 )
-from app.adapters.whatsapp import WhatsAppCloudClient, WhatsAppSender
+from app.adapters.whatsapp import (
+    KubernetesSecretWhatsAppCredentialResolver,
+    TenantAwareWhatsAppSender,
+    WhatsAppCredentialResolver,
+    WhatsAppSender,
+)
 from app.config import Settings
 from app.graph import build_service_graph
 
@@ -50,6 +54,7 @@ class Container:
     retrieval: object
     graph: object
     telegram_credentials: TelegramCredentialResolver
+    whatsapp_credentials: WhatsAppCredentialResolver
     telegram_sender: TelegramSender | None = None
     whatsapp_sender: WhatsAppSender | None = None
     database: PostgresDatabase | None = None
@@ -201,35 +206,29 @@ async def create_container(settings: Settings) -> Container:
         settings.conversation_history_max_messages,
         settings.greeting_lapse_minutes,
     )
-    static_telegram_credentials = StaticTelegramCredentialResolver(
-        bot_token=settings.telegram_bot_token,
-        webhook_secret_token=settings.telegram_webhook_secret_token,
-    )
     if settings.telegram_credential_provider == "kubernetes":
         telegram_credentials = KubernetesSecretTelegramCredentialResolver(
             tenant_configs=tenant_configs,
-            fallback=static_telegram_credentials,
             namespace=settings.telegram_secret_namespace,
             bot_token_key=settings.telegram_bot_token_secret_key,
             webhook_secret_token_key=settings.telegram_webhook_secret_token_secret_key,
         )
-    elif settings.telegram_credential_provider == "static":
-        telegram_credentials = static_telegram_credentials
     else:
         raise ValueError(
             "Unsupported Telegram credential provider: "
             f"{settings.telegram_credential_provider}"
         )
     telegram_sender = TenantAwareTelegramSender(telegram_credentials)
-    whatsapp_sender = (
-        WhatsAppCloudClient(
-            settings.whatsapp_access_token,
-            settings.whatsapp_phone_number_id,
-            settings.whatsapp_graph_api_version,
-        )
-        if settings.whatsapp_access_token and settings.whatsapp_phone_number_id
-        else None
+    whatsapp_credentials = KubernetesSecretWhatsAppCredentialResolver(
+        tenant_configs=tenant_configs,
+        namespace=settings.whatsapp_secret_namespace,
+        access_token_key=settings.whatsapp_access_token_secret_key,
+        phone_number_id_key=settings.whatsapp_phone_number_id_secret_key,
+        verify_token_key=settings.whatsapp_verify_token_secret_key,
+        graph_api_version_key=settings.whatsapp_graph_api_version_secret_key,
+        default_graph_api_version=settings.whatsapp_graph_api_version,
     )
+    whatsapp_sender = TenantAwareWhatsAppSender(whatsapp_credentials)
     return Container(
         conversations=conversations,
         tenants=tenants,
@@ -237,6 +236,7 @@ async def create_container(settings: Settings) -> Container:
         retrieval=retrieval,
         graph=graph,
         telegram_credentials=telegram_credentials,
+        whatsapp_credentials=whatsapp_credentials,
         telegram_sender=telegram_sender,
         whatsapp_sender=whatsapp_sender,
         database=database,

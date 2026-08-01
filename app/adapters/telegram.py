@@ -44,28 +44,11 @@ class TelegramBotClient:
             response.raise_for_status()
 
 
-class StaticTelegramCredentialResolver:
-    def __init__(
-        self,
-        *,
-        bot_token: str | None = None,
-        webhook_secret_token: str | None = None,
-    ) -> None:
-        self.credentials = TelegramCredentials(
-            bot_token=bot_token,
-            webhook_secret_token=webhook_secret_token,
-        )
-
-    async def resolve(self, tenant_id: str) -> TelegramCredentials:
-        return self.credentials
-
-
 class KubernetesSecretTelegramCredentialResolver:
     def __init__(
         self,
         *,
         tenant_configs: TenantConfigRepository,
-        fallback: TelegramCredentialResolver,
         namespace: str | None = None,
         bot_token_key: str = "TELEGRAM_BOT_TOKEN",
         webhook_secret_token_key: str = "TELEGRAM_WEBHOOK_SECRET_TOKEN",
@@ -79,7 +62,6 @@ class KubernetesSecretTelegramCredentialResolver:
         namespace_path: str = "/var/run/secrets/kubernetes.io/serviceaccount/namespace",
     ) -> None:
         self.tenant_configs = tenant_configs
-        self.fallback = fallback
         self.namespace = namespace or read_optional_text(namespace_path)
         self.bot_token_key = bot_token_key
         self.webhook_secret_token_key = webhook_secret_token_key
@@ -92,7 +74,12 @@ class KubernetesSecretTelegramCredentialResolver:
         tenant_config = await self.tenant_configs.get(tenant_id)
         secret_name = tenant_config.telegram_secret_name
         if not secret_name:
-            return await self.fallback.resolve(tenant_id)
+            logger.info(
+                "Skipping Telegram credential lookup because tenant_id=%s has no "
+                "telegram_secret_name configured",
+                tenant_id,
+            )
+            return TelegramCredentials()
 
         if secret_name in self.cache:
             return self.cache[secret_name]

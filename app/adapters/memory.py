@@ -121,6 +121,7 @@ class MemoryConversationRepository:
                 message
                 for message in self.messages.values()
                 if message.conversation_id == conversation_id and message.created_at >= since
+                and message.in_scope
             ),
             key=lambda message: message.created_at,
         )

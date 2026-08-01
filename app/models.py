@@ -61,6 +61,7 @@ class StoredMessage(BaseModel):
     event_id: str
     sender_type: Literal["CUSTOMER", "BOT", "AGENT", "SYSTEM"]
     body: str
+    in_scope: bool = True
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 

@@ -211,6 +211,9 @@ current conversation since `conversation.created_at`.
 
 Loaded history is bounded by `AGENT_CONVERSATION_HISTORY_MAX_MESSAGES` so very long open
 chats do not overfill the LLM context.
+Customer messages that the planner marks out of scope, and the corresponding bot replies,
+are still persisted with `in_scope=false` for audit/debugging, but they are excluded from
+future conversation-history context sent to the LLM.
 
 The graph also derives compact greeting metadata for the LLM. By default,
 `AGENT_GREETING_LAPSE_MINUTES=60`, so the prompt tells the LLM to greet the customer on

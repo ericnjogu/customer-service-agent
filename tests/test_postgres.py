@@ -48,6 +48,7 @@ def test_postgres_schema_scopes_conversations_and_events_by_tenant() -> None:
     ddl = schema(1536)
 
     assert "tenant_id text NOT NULL DEFAULT 'default'" in ddl
+    assert "in_scope boolean NOT NULL DEFAULT true" in ddl
     assert "UNIQUE(tenant_id, channel, external_chat_id)" in ddl
     assert "UNIQUE(tenant_id, event_id)" in ddl
     assert "conversations_tenant_channel_chat_idx" in ddl

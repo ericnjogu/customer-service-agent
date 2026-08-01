@@ -57,6 +57,22 @@ class StaticQuestionPlanner:
         return self.plan_value
 
 
+class SequenceQuestionPlanner:
+    def __init__(self, plans: list[QuestionPlan]) -> None:
+        self.plans = plans
+        self.calls = 0
+
+    async def plan(
+        self,
+        message: IncomingMessage,
+        conversation_metadata: ConversationPromptMetadata | None = None,
+        tenant_config: TenantConfig | None = None,
+    ) -> QuestionPlan:
+        plan = self.plans[min(self.calls, len(self.plans) - 1)]
+        self.calls += 1
+        return plan
+
+
 async def test_grounded_question_returns_citation() -> None:
     container = await create_container(Settings())
     await container.retrieval.upsert(
@@ -363,6 +379,70 @@ async def test_graph_uses_question_plan_explanation_for_out_of_scope_reply() -> 
     assert reply.confidence == 0
     assert reply.low_confidence is True
     assert reply.citations == []
+
+
+async def test_graph_marks_out_of_scope_messages_and_excludes_them_from_history() -> None:
+    container = await create_container(Settings())
+    generator = RecordingAnswerGenerator()
+    planner = SequenceQuestionPlanner(
+        [
+            QuestionPlan(
+                in_scope=False,
+                needs_conversation_history=False,
+                explanation="I can help with questions about Hustle HQ.",
+            ),
+            QuestionPlan(
+                in_scope=True,
+                needs_conversation_history=True,
+                explanation="customer asks an in-scope follow-up",
+            ),
+        ]
+    )
+    graph = build_service_graph(
+        container.conversations,
+        container.tenant_configs,
+        container.retrieval,
+        generator,
+        planner,
+        confidence_threshold=0.60,
+        conversation_history_max_messages=10,
+        greeting_lapse_minutes=60,
+    )
+
+    first_reply = await invoke_service_graph(
+        graph,
+        IncomingMessage(
+            event_id="scoped-history-event-1",
+            external_chat_id="scoped-history-chat",
+            external_user_id="scoped-history-user",
+            text="1+1?",
+        ),
+    )
+    await invoke_service_graph(
+        graph,
+        IncomingMessage(
+            event_id="scoped-history-event-2",
+            external_chat_id="scoped-history-chat",
+            external_user_id="scoped-history-user",
+            text="Can you help with my order?",
+        ),
+    )
+
+    stored_messages = sorted(
+        container.conversations.messages.values(),
+        key=lambda message: message.event_id,
+    )
+    out_of_scope_messages = [
+        message
+        for message in stored_messages
+        if message.event_id in {"scoped-history-event-1", "reply:scoped-history-event-1"}
+    ]
+    assert len(out_of_scope_messages) == 2
+    assert all(message.in_scope is False for message in out_of_scope_messages)
+    assert first_reply.answer == "I can help with questions about Hustle HQ."
+    assert [message.body for message in generator.histories[-1]] == [
+        "Can you help with my order?",
+    ]
 
 
 async def test_graph_passes_no_greet_metadata_to_planner_for_active_conversation() -> None:

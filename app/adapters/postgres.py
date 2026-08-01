@@ -192,15 +192,17 @@ class PostgresConversationRepository:
                 event_id,
                 sender_type,
                 body,
+                in_scope,
                 created_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (tenant_id, event_id) DO NOTHING
+            VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (tenant_id, event_id) DO NOTHING
             """,
             message.tenant_id,
             message.conversation_id,
             message.event_id,
             message.sender_type,
             message.body,
+            message.in_scope,
             message.created_at,
         )
         return result == "INSERT 0 1"
@@ -214,9 +216,9 @@ class PostgresConversationRepository:
         assert self.database.pool
         rows = await self.database.pool.fetch(
             """
-            SELECT tenant_id, conversation_id, event_id, sender_type, body, created_at
+            SELECT tenant_id, conversation_id, event_id, sender_type, body, in_scope, created_at
             FROM messages
-            WHERE conversation_id = $1 AND created_at >= $2
+            WHERE conversation_id = $1 AND created_at >= $2 AND in_scope = true
             ORDER BY created_at DESC
             LIMIT $3
             """,
@@ -680,6 +682,7 @@ CREATE TABLE IF NOT EXISTS messages (
     event_id text NOT NULL,
     sender_type text NOT NULL,
     body text NOT NULL,
+    in_scope boolean NOT NULL DEFAULT true,
     created_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE(tenant_id, event_id)
 );
@@ -766,6 +769,9 @@ ADD COLUMN IF NOT EXISTS tenant_id text NOT NULL DEFAULT 'default';
 
 ALTER TABLE messages
 ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+
+ALTER TABLE messages
+ADD COLUMN IF NOT EXISTS in_scope boolean NOT NULL DEFAULT true;
 
 ALTER TABLE tenants
 ADD COLUMN IF NOT EXISTS slug text;

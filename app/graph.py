@@ -46,8 +46,12 @@ def build_service_graph(
     conversation_history_max_messages: int,
     greeting_lapse_minutes: int,
 ):
-    async def persist_message(state: ServiceState) -> dict:
+    async def get_or_create_conversation(state: ServiceState) -> dict:
         conversation = await conversations.get_or_create(state["message"])
+        return {"conversation": conversation}
+
+    async def persist_customer_message(state: ServiceState) -> dict:
+        conversation = state["conversation"]
         await conversations.save_message(
             StoredMessage(
                 tenant_id=state["message"].tenant_id,
@@ -55,6 +59,7 @@ def build_service_graph(
                 event_id=state["message"].event_id,
                 sender_type="CUSTOMER",
                 body=state["message"].text,
+                in_scope=state["question_plan"].in_scope,
             )
         )
         return {"conversation": conversation}
@@ -201,14 +206,16 @@ def build_service_graph(
                 event_id=f"reply:{state['message'].event_id}",
                 sender_type="BOT",
                 body=state["answer"],
+                in_scope=state["question_plan"].in_scope,
             )
         )
         return {"conversation": conversation}
 
     workflow = StateGraph(ServiceState)
-    workflow.add_node("persist_message", persist_message)
+    workflow.add_node("get_or_create_conversation", get_or_create_conversation)
     workflow.add_node("load_tenant_config", load_tenant_config)
     workflow.add_node("plan_question", plan_question)
+    workflow.add_node("persist_customer_message", persist_customer_message)
     workflow.add_node("apply_human_request_state", apply_human_request_state)
     workflow.add_node("load_conversation_history", load_conversation_history)
     workflow.add_node("skip_conversation_history", skip_conversation_history)
@@ -217,11 +224,12 @@ def build_service_graph(
     workflow.add_node("answer_out_of_scope", answer_out_of_scope)
     workflow.add_node("answer", answer)
     workflow.add_node("persist_reply", persist_reply)
-    workflow.add_edge(START, "persist_message")
-    workflow.add_edge("persist_message", "load_tenant_config")
+    workflow.add_edge(START, "get_or_create_conversation")
+    workflow.add_edge("get_or_create_conversation", "load_tenant_config")
     workflow.add_edge("load_tenant_config", "plan_question")
+    workflow.add_edge("plan_question", "persist_customer_message")
     workflow.add_conditional_edges(
-        "plan_question",
+        "persist_customer_message",
         route_after_plan,
         {"in_scope": "apply_human_request_state", "out_of_scope": "answer_out_of_scope"},
     )

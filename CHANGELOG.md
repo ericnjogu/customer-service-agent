@@ -83,6 +83,9 @@ This project currently uses increment-based milestones instead of semantic versi
   runtime variables from responses, and creating the tenant config from those values.
 - LangSmith tracing now targets the deployment-level `LANGSMITH_PROJECT`; tenant
   LangSmith/project fields are retained as tags/metadata for filtering and audit.
+- Message scope persistence marks out-of-scope customer messages and their bot replies so
+  they can be retained for audit/debugging without being loaded into future LLM
+  conversation-history context.
 
 ### Changed
 

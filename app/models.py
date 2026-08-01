@@ -75,6 +75,7 @@ class ConversationPromptMetadata(BaseModel):
 class QuestionPlan(BaseModel):
     in_scope: bool = True
     needs_conversation_history: bool = True
+    explicit_human_request: bool = False
     explanation: str | None = None
 
 

@@ -352,7 +352,7 @@ class ExtractiveAnswerGenerator:
         confidence = min(0.95, 0.55 + overlap)
         return answer, confidence
 
-class RuleBasedHumanRequestDetector:
+class RuleBasedQuestionPlanner:
     human_request_phrases = (
         "human agent",
         "human support",
@@ -363,17 +363,6 @@ class RuleBasedHumanRequestDetector:
         "customer service agent",
         "manager",
     )
-
-    async def detect(
-        self,
-        message: IncomingMessage,
-        conversation_history: list[StoredMessage] | None = None,
-    ) -> bool:
-        text = message.text.lower()
-        return any(phrase in text for phrase in self.human_request_phrases)
-
-
-class RuleBasedQuestionPlanner:
     out_of_scope_phrases = (
         "tell me a riddle",
         "write code",
@@ -409,12 +398,16 @@ class RuleBasedQuestionPlanner:
         tenant_config: TenantConfig | None = None,
     ) -> QuestionPlan:
         text = message.text.lower().strip()
+        explicit_human_request = any(
+            phrase in text for phrase in self.human_request_phrases
+        )
         if self._is_arithmetic_question(text) or any(
             phrase in text for phrase in self.out_of_scope_phrases
         ):
             return QuestionPlan(
                 in_scope=False,
                 needs_conversation_history=False,
+                explicit_human_request=explicit_human_request,
                 explanation=(
                     "I can help with questions about this business, its services, "
                     "orders, bookings, policies, or support."
@@ -427,6 +420,7 @@ class RuleBasedQuestionPlanner:
                 any(cue in tokenize(text) for cue in self.history_cues)
                 or any(phrase in text for phrase in self.conversation_history_phrases)
             ),
+            explicit_human_request=explicit_human_request,
             explanation="local heuristic planner",
         )
 

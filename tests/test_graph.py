@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from langchain_core.documents import Document
 
-from app.adapters.memory import RuleBasedHumanRequestDetector, RuleBasedQuestionPlanner
+from app.adapters.memory import RuleBasedQuestionPlanner
 from app.config import Settings
 from app.container import create_container
 from app.graph import build_prompt_metadata, build_service_graph, invoke_service_graph
@@ -251,7 +251,6 @@ async def test_graph_passes_tenant_prompt_config_to_planner_and_answer_generator
         container.retrieval,
         generator,
         planner,
-        RuleBasedHumanRequestDetector(),
         confidence_threshold=0.60,
         conversation_history_max_messages=2,
         greeting_lapse_minutes=60,
@@ -303,7 +302,6 @@ async def test_graph_passes_current_conversation_history_with_safety_cap() -> No
         container.retrieval,
         generator,
         RuleBasedQuestionPlanner(),
-        RuleBasedHumanRequestDetector(),
         confidence_threshold=0.60,
         conversation_history_max_messages=2,
         greeting_lapse_minutes=60,
@@ -343,7 +341,6 @@ async def test_graph_uses_question_plan_explanation_for_out_of_scope_reply() -> 
         container.retrieval,
         generator,
         planner,
-        RuleBasedHumanRequestDetector(),
         confidence_threshold=0.60,
         conversation_history_max_messages=2,
         greeting_lapse_minutes=60,
@@ -384,7 +381,6 @@ async def test_graph_passes_no_greet_metadata_to_planner_for_active_conversation
         container.retrieval,
         generator,
         planner,
-        RuleBasedHumanRequestDetector(),
         confidence_threshold=0.60,
         conversation_history_max_messages=2,
         greeting_lapse_minutes=60,
@@ -442,7 +438,6 @@ async def test_graph_skips_conversation_history_for_standalone_question() -> Non
         container.retrieval,
         generator,
         planner,
-        RuleBasedHumanRequestDetector(),
         confidence_threshold=0.60,
         conversation_history_max_messages=10,
         greeting_lapse_minutes=60,

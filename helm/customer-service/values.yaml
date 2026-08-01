@@ -60,9 +60,6 @@ embedding:
 questionPlanner:
   provider: llm
 
-humanRequestDetector:
-  provider: llm
-
 conversationHistory:
   maxMessages: 100
   greetingLapseMinutes: 60

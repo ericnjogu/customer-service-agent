@@ -21,9 +21,8 @@ f
 - Optional OpenAI/LangChain answer provider behind `AGENT_ANSWER_PROVIDER=openai`.
 - Optional OpenAI semantic embeddings behind `AGENT_EMBEDDING_PROVIDER=openai`.
 - Optional question planner behind `AGENT_QUESTION_PLANNER_PROVIDER=llm` that routes
-  out-of-scope questions and decides whether conversation history is needed.
-- Optional LLM-backed human-request detection behind
-  `AGENT_HUMAN_REQUEST_DETECTOR_PROVIDER=llm`.
+  out-of-scope questions, decides whether conversation history is needed, detects
+  explicit human-agent requests, and uses greeting metadata for out-of-scope explanations.
 - Helm chart validation and API/graph tests.
 
 Telegram/WhatsApp support group creation, admin KB/source management UI, live source tools,
@@ -202,7 +201,8 @@ For each incoming customer message, the graph first runs a question planner. The
 receives the latest customer message, the optional sender name, and compact greeting
 metadata derived from the minute delta since the previous customer message. It does not
 receive full conversation history at this stage. The planner decides whether the question
-is in scope for customer service and whether conversation history is needed. If a question
+is in scope for customer service, whether conversation history is needed, and whether the
+customer explicitly requested a human agent. If a question
 is out of scope, the graph uses the planner's `explanation` as the customer-facing reply
 and does not call the answer-generation LLM. If the question is standalone, such as a
 location or menu question, the graph skips loading history and answers from KB context
@@ -448,7 +448,6 @@ The default answer provider is still deterministic and local:
 ```env
 AGENT_ANSWER_PROVIDER=extractive
 AGENT_QUESTION_PLANNER_PROVIDER=rules
-AGENT_HUMAN_REQUEST_DETECTOR_PROVIDER=rules
 ```
 
 Run the API locally with the OpenAI answer provider:
@@ -584,9 +583,8 @@ Application configuration uses the `AGENT_` prefix. LangSmith uses its native
 | `AGENT_EMBEDDING_PROVIDER` | `local` | `local` or `openai`; Helm defaults to `openai` for pgvector |
 | `AGENT_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding model when `AGENT_EMBEDDING_PROVIDER=openai` |
 | `AGENT_EMBEDDING_DIMENSIONS` | `64` | pgvector embedding size; Helm defaults to `1536` for OpenAI embeddings |
-| `AGENT_QUESTION_PLANNER_PROVIDER` | `rules` | `rules` or `llm`; planner receives the latest customer message plus compact greeting metadata and decides scope/history routing |
-| `AGENT_HUMAN_REQUEST_DETECTOR_PROVIDER` | `rules` | `rules` or `llm`; `llm` uses OpenAI to detect explicit human-agent requests |
-| `OPENAI_API_KEY` | unset | Required when `AGENT_ANSWER_PROVIDER=openai`, `AGENT_EMBEDDING_PROVIDER=openai`, `AGENT_QUESTION_PLANNER_PROVIDER=llm`, or `AGENT_HUMAN_REQUEST_DETECTOR_PROVIDER=llm` |
+| `AGENT_QUESTION_PLANNER_PROVIDER` | `rules` | `rules` or `llm`; planner receives the latest customer message plus compact greeting metadata and decides scope, history routing, and explicit human requests |
+| `OPENAI_API_KEY` | unset | Required when `AGENT_ANSWER_PROVIDER=openai`, `AGENT_EMBEDDING_PROVIDER=openai`, or `AGENT_QUESTION_PLANNER_PROVIDER=llm` |
 | `AGENT_LLM_MODEL` | `gpt-4.1-mini` | OpenAI chat model used by the LLM answer provider |
 | `AGENT_LLM_TEMPERATURE` | `0.0` | LLM sampling temperature |
 | `AGENT_DATABASE_URL` | unset | PostgreSQL connection string |

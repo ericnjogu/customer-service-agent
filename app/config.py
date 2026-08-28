@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,12 +30,46 @@ class Settings(BaseSettings):
     telegram_secret_namespace: str | None = None
     telegram_bot_token_secret_key: str = "TELEGRAM_BOT_TOKEN"
     telegram_webhook_secret_token_secret_key: str = "TELEGRAM_WEBHOOK_SECRET_TOKEN"
+    telegram_webhook_public_base_url: str | None = None
     whatsapp_secret_namespace: str | None = None
     whatsapp_access_token_secret_key: str = "WHATSAPP_ACCESS_TOKEN"
     whatsapp_phone_number_id_secret_key: str = "WHATSAPP_PHONE_NUMBER_ID"
     whatsapp_verify_token_secret_key: str = "WHATSAPP_VERIFY_TOKEN"
     whatsapp_graph_api_version_secret_key: str = "WHATSAPP_GRAPH_API_VERSION"
     whatsapp_graph_api_version: str = "v20.0"
+    web_public_base_url: str = "http://localhost:5173"
+    onboarding_action_token_ttl_minutes: int = Field(default=60, gt=0)
+    onboarding_email_verification_token_ttl_minutes: int = Field(default=60, gt=0)
+    onboarding_require_admin_email_domain_match: bool = True
+    onboarding_website_analysis_provider: str = "openai"
+    onboarding_website_fetch_timeout_seconds: int = Field(default=10, gt=0)
+    platform_web_search_provider: str = "none"
+    platform_web_search_project_id: str = "ristoh-css"
+    platform_web_search_max_results: int = Field(default=3, gt=0)
+    platform_web_search_timeout_seconds: int = Field(default=15, gt=0)
+    platform_web_search_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "AGENT_PLATFORM_WEB_SEARCH_API_KEY",
+            "TAVILY_API_KEY",
+        ),
+    )
+    provider_project_provisioner: str = "metadata"
+    openai_admin_key: str | None = Field(default=None, validation_alias="OPENAI_ADMIN_KEY")
+    langsmith_api_key: str | None = Field(default=None, validation_alias="LANGSMITH_API_KEY")
+    langsmith_endpoint: str = Field(
+        default="https://api.smith.langchain.com",
+        validation_alias="LANGSMITH_ENDPOINT",
+    )
+    langsmith_workspace_id: str | None = Field(
+        default=None,
+        validation_alias="LANGSMITH_WORKSPACE_ID",
+    )
+    email_provider: str = "log"
+    email_from: str | None = None
+    onboarding_review_email: str | None = None
+    resend_api_key: str | None = Field(default=None, validation_alias="RESEND_API_KEY")
+    cors_allow_origins: str = "*"
     log_level: str = "INFO"
     log_format: str = "{asctime} - {levelname}:{name}:{message}"
 

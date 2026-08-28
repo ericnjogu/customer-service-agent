@@ -1,11 +1,17 @@
 import logging
+import secrets
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.adapters.telegram import telegram_reply_text, telegram_update_to_incoming_message
 from app.adapters.whatsapp import whatsapp_reply_text, whatsapp_update_to_incoming_messages
+from app.api.onboarding_jobs import router as onboarding_jobs_router
+from app.api.onboarding_sessions import router as onboarding_sessions_router
 from app.api.tenants import router as tenants_router
 from app.config import get_settings
 from app.container import create_container
@@ -16,6 +22,9 @@ from app.models import (
     IncomingMessage,
     ServiceReply,
 )
+
+logger = logging.getLogger(__name__)
+ERROR_ID_HEADER = "X-Error-Id"
 
 
 class HealthzAccessLogFilter(logging.Filter):
@@ -43,6 +52,23 @@ def configure_logging(log_level: str, log_format: str) -> None:
     uvicorn_access_logger.addFilter(HealthzAccessLogFilter())
 
 
+def parse_cors_origins(value: str) -> list[str]:
+    origins = [origin.strip() for origin in value.split(",") if origin.strip()]
+    return origins or ["*"]
+
+
+def new_error_id() -> str:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+    return f"ERR-{timestamp}-{secrets.token_hex(4).upper()}"
+
+
+def internal_error_payload(error_id: str) -> dict[str, str]:
+    return {
+        "detail": f"An internal error has occurred. Reference: {error_id}",
+        "error_id": error_id,
+    }
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -58,7 +84,64 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Customer Service Agent", version="0.1.0", lifespan=lifespan)
+settings = get_settings()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=parse_cors_origins(settings.cors_allow_origins),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.include_router(onboarding_jobs_router)
+app.include_router(onboarding_sessions_router)
 app.include_router(tenants_router)
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    headers = dict(exc.headers or {})
+
+    if exc.status_code < 500:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+            headers=headers,
+        )
+
+    error_id = new_error_id()
+    headers[ERROR_ID_HEADER] = error_id
+    logger.error(
+        "HTTPException returned internal error error_id=%s method=%s path=%s "
+        "status_code=%s detail=%s",
+        error_id,
+        request.method,
+        request.url.path,
+        exc.status_code,
+        exc.detail,
+    )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=internal_error_payload(error_id),
+        headers=headers,
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    error_id = new_error_id()
+    logger.exception(
+        "Unhandled internal error error_id=%s method=%s path=%s",
+        error_id,
+        request.method,
+        request.url.path,
+    )
+    return JSONResponse(
+        status_code=500,
+        content=internal_error_payload(error_id),
+        headers={
+            ERROR_ID_HEADER: error_id,
+        },
+    )
 
 
 @app.get("/healthz")

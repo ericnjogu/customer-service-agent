@@ -3,6 +3,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+from urllib.parse import urlencode
 
 import httpx
 
@@ -31,6 +32,26 @@ class TelegramCredentialResolver(Protocol):
     async def resolve(self, tenant_id: str) -> TelegramCredentials: ...
 
 
+class TelegramWebhookRegistrar(Protocol):
+    async def register_webhook(
+        self,
+        *,
+        tenant_id: str,
+        bot_token: str,
+        webhook_secret_token: str,
+    ) -> str | None: ...
+
+
+class TelegramSecretWriter(Protocol):
+    async def write_secret(
+        self,
+        *,
+        secret_name: str,
+        bot_token: str,
+        webhook_secret_token: str,
+    ) -> None: ...
+
+
 class TelegramBotClient:
     def __init__(self, bot_token: str) -> None:
         self.bot_token = bot_token
@@ -42,6 +63,168 @@ class TelegramBotClient:
                 json={"chat_id": chat_id, "text": text},
             )
             response.raise_for_status()
+
+
+class TelegramBotWebhookRegistrar:
+    def __init__(
+        self,
+        *,
+        public_base_url: str | None,
+        timeout_seconds: float = 10.0,
+    ) -> None:
+        self.public_base_url = public_base_url.strip().rstrip("/") if public_base_url else ""
+        self.timeout_seconds = timeout_seconds
+
+    async def register_webhook(
+        self,
+        *,
+        tenant_id: str,
+        bot_token: str,
+        webhook_secret_token: str,
+    ) -> str | None:
+        if not self.public_base_url:
+            logger.info(
+                "Skipping Telegram webhook registration because no public base URL "
+                "is configured tenant_id=%s",
+                tenant_id,
+            )
+            return None
+
+        webhook_url = (
+            f"{self.public_base_url}/webhooks/telegram?"
+            f"{urlencode({'tenant_id': tenant_id})}"
+        )
+        logger.info(
+            "Registering Telegram webhook tenant_id=%s webhook_url=%s",
+            tenant_id,
+            webhook_url,
+        )
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            response = await client.post(
+                f"https://api.telegram.org/bot{bot_token}/setWebhook",
+                json={
+                    "url": webhook_url,
+                    "secret_token": webhook_secret_token,
+                    "allowed_updates": ["message"],
+                },
+            )
+            response.raise_for_status()
+
+        body = response.json()
+        if not isinstance(body, dict) or body.get("ok") is not True:
+            description = body.get("description") if isinstance(body, dict) else None
+            raise RuntimeError(
+                "Telegram setWebhook failed"
+                + (f": {description}" if description else "")
+            )
+        logger.info(
+            "Registered Telegram webhook tenant_id=%s webhook_url=%s",
+            tenant_id,
+            webhook_url,
+        )
+        return webhook_url
+
+
+class KubernetesSecretTelegramSecretWriter:
+    def __init__(
+        self,
+        *,
+        namespace: str | None = None,
+        bot_token_key: str = "TELEGRAM_BOT_TOKEN",
+        webhook_secret_token_key: str = "TELEGRAM_WEBHOOK_SECRET_TOKEN",
+        api_server: str = "https://kubernetes.default.svc",
+        service_account_token_path: str = (
+            "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        ),
+        service_account_ca_path: str = (
+            "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+        ),
+        namespace_path: str = "/var/run/secrets/kubernetes.io/serviceaccount/namespace",
+    ) -> None:
+        self.namespace = namespace or read_optional_text(namespace_path)
+        self.bot_token_key = bot_token_key
+        self.webhook_secret_token_key = webhook_secret_token_key
+        self.api_server = api_server.rstrip("/")
+        self.service_account_token_path = service_account_token_path
+        self.service_account_ca_path = service_account_ca_path
+
+    async def write_secret(
+        self,
+        *,
+        secret_name: str,
+        bot_token: str,
+        webhook_secret_token: str,
+    ) -> None:
+        if not self.namespace:
+            logger.info(
+                "Skipping Telegram Secret creation because Kubernetes namespace "
+                "is unavailable secret_name=%s",
+                secret_name,
+            )
+            return
+
+        token = read_optional_text(self.service_account_token_path)
+        if not token:
+            logger.info(
+                "Skipping Telegram Secret creation because Kubernetes service account "
+                "token is unavailable secret_name=%s namespace=%s",
+                secret_name,
+                self.namespace,
+            )
+            return
+
+        verify: str | bool = (
+            self.service_account_ca_path
+            if Path(self.service_account_ca_path).exists()
+            else True
+        )
+        url = (
+            f"{self.api_server}/api/v1/namespaces/{self.namespace}/secrets/"
+            f"{secret_name}"
+        )
+        headers = {"authorization": f"Bearer {token}"}
+        payload = {
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "metadata": {"name": secret_name},
+            "type": "Opaque",
+            "stringData": {
+                self.bot_token_key: bot_token,
+                self.webhook_secret_token_key: webhook_secret_token,
+            },
+        }
+        async with httpx.AsyncClient(timeout=10.0, verify=verify) as client:
+            response = await client.post(
+                f"{self.api_server}/api/v1/namespaces/{self.namespace}/secrets",
+                headers=headers,
+                json=payload,
+            )
+            if response.status_code == 409:
+                logger.info(
+                    "Updating existing tenant Telegram Secret secret_name=%s namespace=%s",
+                    secret_name,
+                    self.namespace,
+                )
+                response = await client.patch(
+                    url,
+                    headers={
+                        **headers,
+                        "content-type": "application/merge-patch+json",
+                    },
+                    json={"stringData": payload["stringData"]},
+                )
+            else:
+                logger.info(
+                    "Creating tenant Telegram Secret secret_name=%s namespace=%s",
+                    secret_name,
+                    self.namespace,
+                )
+            response.raise_for_status()
+        logger.info(
+            "Tenant Telegram Secret is ready secret_name=%s namespace=%s",
+            secret_name,
+            self.namespace,
+        )
 
 
 class KubernetesSecretTelegramCredentialResolver:

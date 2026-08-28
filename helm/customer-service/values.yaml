@@ -9,6 +9,18 @@ service:
   type: ClusterIP
   port: 8000
 
+web:
+  enabled: true
+  image:
+    repository: customer-service-web
+    tag: local
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+  publicBaseUrl: "http://localhost:5173"
+  apiBaseUrl: "/api"
+
 tenant:
   defaultId: default
   plans:
@@ -43,6 +55,63 @@ redis:
   port: 6379
   url: ""
 
+n8n:
+  enabled: false
+  image: n8nio/n8n:2.33.7
+  port: 5678
+  storage: 1Gi
+  timezone: Europe/Amsterdam
+  webhookUrl: ""
+  editorBaseUrl: ""
+  encryptionKey:
+    existingSecret: "n8n-owner"
+    secretKey: N8N_ENCRYPTION_KEY
+  owner:
+    managedByEnv: false
+    email: ""
+    firstName: ""
+    lastName: ""
+    existingSecret: ""
+    passwordHashSecretKey: N8N_INSTANCE_OWNER_PASSWORD_HASH
+  email:
+    resendApiKeySecretName: "api-keys"
+    resendApiKeySecretKey: RESEND_API_KEY
+    onboardingEmail: ""
+  code:
+    allowBuiltinModules: url
+  database:
+    type: postgresdb
+    schema: public
+    tablePrefix: n8n_
+  resources: {}
+
+onboarding:
+  actionTokenTtlMinutes: 60
+  emailVerificationTokenTtlMinutes: 60
+  requireAdminEmailDomainMatch: true
+  websiteAnalysisProvider: openai
+  websiteFetchTimeoutSeconds: 10
+
+platform:
+  webSearchProvider: tavily
+  webSearchProjectId: ristoh-css
+  webSearchMaxResults: 3
+  webSearchTimeoutSeconds: 15
+  webSearchApiKeySecretName: "api-keys"
+  webSearchApiKeySecretKey: PLATFORM_TAVILY_API_KEY
+
+providerProjects:
+  provisioner: api
+  openaiAdminKeySecretName: "api-keys"
+  openaiAdminKeySecretKey: OPENAI_ADMIN_KEY
+
+email:
+  provider: resend
+  from: ""
+  onboardingReviewEmail: ""
+  resendApiKeySecretName: "api-keys"
+  resendApiKeySecretKey: RESEND_API_KEY
+
 retrieval:
   provider: pgvector
 
@@ -73,6 +142,7 @@ telegram:
   secretNamespace: ""
   botTokenSecretKey: TELEGRAM_BOT_TOKEN
   webhookSecretTokenSecretKey: TELEGRAM_WEBHOOK_SECRET_TOKEN
+  webhookPublicBaseUrl: ""
 
 whatsapp:
   secretNamespace: ""
@@ -83,7 +153,7 @@ whatsapp:
   graphApiVersion: v20.0
 
 llm:
-  model: gpt-4.1-mini
+  model: gpt-5-mini
   temperature: "0"
   existingSecret: "api-keys"
   secretKey: OPENAI_API_KEY
@@ -101,5 +171,6 @@ langsmith:
   LANGSMITH_WORKSPACE_ID: ""
   existingSecret: "api-keys"
   secretKey: LANGSMITH_API_KEY
+  workspaceIdSecretKey: LANGSMITH_WORKSPACE_ID
 
 resources: {}

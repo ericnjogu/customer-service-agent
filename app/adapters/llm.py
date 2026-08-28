@@ -2,22 +2,30 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime
+import time
+from datetime import datetime, timezone
 from functools import lru_cache
+from html.parser import HTMLParser
 from typing import Any
+from urllib.parse import urljoin, urlparse
 
+import httpx
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tracers.langchain import LangChainTracer, wait_for_all_tracers
 from langsmith import Client as LangSmithClient
-from langsmith.run_helpers import tracing_context
+from langsmith.run_helpers import traceable, tracing_context
 
 from app.models import (
     ConversationPromptMetadata,
     IncomingMessage,
+    OnboardingSessionRecord,
     QuestionPlan,
     StoredMessage,
     TenantConfig,
+    WebsiteAnalysisResult,
+    WebsiteResearchResult,
+    WebsiteResearchSource,
 )
 
 logger = logging.getLogger(__name__)
@@ -120,6 +128,321 @@ Return JSON only with:
 - explicit_human_request: boolean
 - explanation: string
 """
+
+WEBSITE_ANALYSIS_PROMPT = """You analyze a business website for customer-service
+onboarding.
+Use the provided website research notes only. Do not visit any of the links.
+If a field cannot be determined from the provided website information,
+return an empty string rather than guessing.
+
+Return JSON only with:
+- business_profile:
+  - business_name: string
+  - website_url: string
+  - location_name: string
+  - physical_location: string
+  - business_phone: string
+  - business_email: string
+  - google_place_url: string or null
+- agent_name: string
+- agent_description: string
+- answer_prompt_instructions: string
+- contact_info: array of contact-point objects with:
+  - kind: string
+  - label: string
+  - value: string or null
+  - url: string or null
+  - is_primary: boolean
+
+Use contact_info for all public contact information found on the page: website
+links, social profiles, email addresses, telephone numbers, WhatsApp links, map
+links, and similar contact points. For email and phone values, prefer mailto: and
+tel: URLs when appropriate, and also keep the readable value when useful. Include
+the website itself as a primary website link. Do not include duplicate contact
+points.
+"""
+
+WEBSITE_ANALYSIS_RESPONSE_FORMAT = {
+    "format": {
+        "type": "json_object",
+    }
+}
+
+WEBSITE_RESEARCH_PROMPT = (
+    "comprehensive info about this business including its profile, physical location, "
+    "products or services, and public contact information"
+)
+
+
+class WebsiteLinkParser(HTMLParser):
+    def __init__(self, base_url: str) -> None:
+        super().__init__()
+        self.base_url = base_url
+        self.links: list[tuple[str, str]] = []
+        self._current_href: str | None = None
+        self._current_text: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "a":
+            return
+        href = dict(attrs).get("href")
+        if href:
+            self._current_href = urljoin(self.base_url, href)
+            self._current_text = []
+
+    def handle_data(self, data: str) -> None:
+        if self._current_href:
+            self._current_text.append(data.strip())
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "a" and self._current_href:
+            label = " ".join(part for part in self._current_text if part)
+            self.links.append((label, self._current_href))
+            self._current_href = None
+            self._current_text = []
+
+
+def interesting_link_kind(url: str, *, base_url: str | None = None) -> str | None:
+    clean_url = unwrap_markdown_link(url)
+    lowered = clean_url.lower()
+    if lowered.startswith("mailto:"):
+        return "email"
+    if lowered.startswith("tel:"):
+        return "telephone"
+    if "wa.me/" in lowered or "whatsapp.com" in lowered:
+        return "whatsapp"
+    if "maps.google." in lowered or "google.com/maps" in lowered:
+        return "google_maps"
+    social_domains = {
+        "facebook.com": "facebook",
+        "instagram.com": "instagram",
+        "linkedin.com": "linkedin",
+        "x.com": "x",
+        "twitter.com": "x",
+        "tiktok.com": "tiktok",
+        "youtube.com": "youtube",
+    }
+    parsed = urlparse(clean_url)
+    host = parsed.netloc.lower().removeprefix("www.")
+    for domain, kind in social_domains.items():
+        if host == domain or host.endswith(f".{domain}"):
+            return kind
+    if base_url and same_site_url(clean_url, base_url) and homepage_url(clean_url):
+        return "website"
+    return None
+
+
+def format_extracted_links(
+    links: list[tuple[str, str]],
+    *,
+    base_url: str | None = None,
+) -> str:
+    lines = []
+    seen = set()
+    for label, url in links:
+        clean_url = unwrap_markdown_link(url)
+        kind = interesting_link_kind(clean_url, base_url=base_url)
+        identity = contact_point_identity(url=clean_url, value=None)
+        if not kind or not identity or identity in seen:
+            continue
+        seen.add(identity)
+        lines.append(f"- kind={kind} label={label or 'none'} url={clean_url}")
+    return "\n".join(lines) or "No social, map, WhatsApp, phone, or email links were found."
+
+
+async def fetch_and_extract_contact_links(
+    website_url: str,
+    *,
+    timeout_seconds: float,
+) -> str:
+    async with httpx.AsyncClient(timeout=timeout_seconds, follow_redirects=True) as client:
+        response = await client.get(website_url)
+        response.raise_for_status()
+    parser = WebsiteLinkParser(str(response.url))
+    parser.feed(response.text)
+    return format_extracted_links(parser.links, base_url=str(response.url))
+
+
+def traced_contact_link_extraction_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "website_url": inputs.get("website_url"),
+        "timeout_seconds": inputs.get("timeout_seconds"),
+    }
+
+
+def traced_text_outputs(output: Any) -> dict[str, Any]:
+    if isinstance(output, WebsiteResearchResult):
+        return {
+            "output_text": output.notes,
+            "output_text_chars": len(output.notes),
+            "source_count": len(output.sources),
+        }
+    text = str(output)
+    return {
+        "output_text": text,
+        "output_text_chars": len(text),
+    }
+
+
+@traceable(
+    name="onboarding_contact_link_extraction",
+    run_type="tool",
+    process_inputs=traced_contact_link_extraction_inputs,
+    process_outputs=traced_text_outputs,
+)
+async def traced_fetch_and_extract_contact_links(
+    website_url: str,
+    *,
+    timeout_seconds: float,
+) -> str:
+    return await fetch_and_extract_contact_links(
+        website_url,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def traced_tavily_research_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "website_url": inputs.get("website_url"),
+        "project_id": inputs.get("project_id"),
+        "max_results": inputs.get("max_results"),
+        "timeout_seconds": inputs.get("timeout_seconds"),
+        "api_key": "[redacted]" if inputs.get("api_key") else None,
+    }
+
+
+def format_website_research_sources(sources: list[WebsiteResearchSource]) -> str:
+    lines = []
+    for source in sources:
+        lines.append(f"- title={source.title or 'unknown'} url={source.url}")
+        if source.text:
+            lines.append(f"  text={source.text}")
+    return "\n".join(lines)
+
+
+def tavily_sources_from_results(data: dict[str, Any]) -> list[WebsiteResearchSource]:
+    retrieved_at = datetime.now(timezone.utc)
+    sources = []
+    for result in data.get("results") or []:
+        url = str(result.get("url") or "").strip()
+        if not url:
+            continue
+        text_parts = []
+        raw_content = str(result.get("raw_content") or "").strip()
+        if raw_content:
+            text_parts.append(raw_content)
+        content = str(result.get("content") or "").strip()
+        if content and content != raw_content:
+            text_parts.append(content)
+        sources.append(
+            WebsiteResearchSource(
+                url=url,
+                title=str(result.get("title") or "").strip() or None,
+                text="\n\n".join(text_parts),
+                provider="tavily",
+                retrieved_at=retrieved_at,
+            )
+        )
+    return sources
+
+
+@traceable(
+    name="tavily_website_research",
+    run_type="retriever",
+    process_inputs=traced_tavily_research_inputs,
+    process_outputs=traced_text_outputs,
+)
+async def traced_tavily_website_research(
+    *,
+    api_key: str,
+    project_id: str,
+    max_results: int,
+    timeout_seconds: float,
+    website_url: str,
+) -> WebsiteResearchResult:
+    started_at = time.perf_counter()
+    domain = urlparse(website_url).netloc.removeprefix("www.")
+    payload = {
+        "query": f"{WEBSITE_RESEARCH_PROMPT} Website: {website_url}",
+        "search_depth": "advanced",
+        "max_results": max_results,
+        "include_answer": False,
+        "include_raw_content": "markdown",
+        "include_domains": [domain] if domain else None,
+    }
+    payload = {key: value for key, value in payload.items() if value is not None}
+    logger.info(
+        "Calling Tavily website research API website_url=%s domain=%s project_id=%s "
+        "max_results=%s timeout_seconds=%s",
+        website_url,
+        domain,
+        project_id,
+        max_results,
+        timeout_seconds,
+    )
+    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+        request_started_at = time.perf_counter()
+        response = await client.post(
+            "https://api.tavily.com/search",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "X-Project-ID": project_id,
+            },
+            json=payload,
+        )
+        request_elapsed = time.perf_counter() - request_started_at
+        response.raise_for_status()
+    data = response.json()
+    sources = tavily_sources_from_results(data)
+    logger.info(
+        "Received Tavily website search response website_url=%s status_code=%s "
+        "project_id=%s result_count=%s http_elapsed_seconds=%.3f "
+        "elapsed_seconds=%.3f",
+        website_url,
+        response.status_code,
+        project_id,
+        len(sources),
+        request_elapsed,
+        time.perf_counter() - started_at,
+    )
+    notes = format_website_research_sources(sources)
+    return WebsiteResearchResult(
+        notes=notes or "No Tavily website research results were returned.",
+        sources=sources,
+    )
+
+
+class TavilyWebsiteResearcher:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        project_id: str,
+        max_results: int,
+        timeout_seconds: float,
+    ) -> None:
+        self.api_key = api_key
+        self.project_id = project_id
+        self.max_results = max_results
+        self.timeout_seconds = timeout_seconds
+
+    async def research(self, website_url: str) -> WebsiteResearchResult:
+        return await traced_tavily_website_research(
+            api_key=self.api_key,
+            project_id=self.project_id,
+            max_results=self.max_results,
+            timeout_seconds=self.timeout_seconds,
+            website_url=website_url,
+        )
+
+
+class NoopWebsiteResearcher:
+    async def research(self, website_url: str) -> WebsiteResearchResult:
+        return WebsiteResearchResult(
+            notes="No platform web search provider is configured.",
+            sources=[],
+        )
 
 
 def format_context(documents: list[Document]) -> str:
@@ -415,6 +738,382 @@ class LlmQuestionPlanner:
         )
 
 
+class OpenAIWebsiteAnalyzer:
+    def __init__(
+        self,
+        responses_client: Any,
+        *,
+        model: str,
+        temperature: float | None = None,
+        website_researcher: Any | None = None,
+        link_extractor: Any | None = None,
+        fetch_timeout_seconds: float = 10,
+    ) -> None:
+        self.responses_client = responses_client
+        self.model = model
+        self.temperature = temperature
+        self.website_researcher = website_researcher or NoopWebsiteResearcher()
+        self.link_extractor = link_extractor or traced_fetch_and_extract_contact_links
+        self.fetch_timeout_seconds = fetch_timeout_seconds
+
+    async def analyze(self, session: OnboardingSessionRecord) -> WebsiteAnalysisResult:
+        try:
+            return await traced_onboarding_website_analysis(self, session)
+        finally:
+            await flush_langsmith_traces()
+
+    async def _analyze(self, session: OnboardingSessionRecord) -> WebsiteAnalysisResult:
+        analysis_started_at = time.perf_counter()
+        logger.info(
+            "Starting onboarding website analysis session_id=%s website_url=%s",
+            session.session_id,
+            session.website_url,
+        )
+
+        try:
+            extraction_started_at = time.perf_counter()
+            extracted_links = await self.link_extractor(
+                str(session.website_url),
+                timeout_seconds=self.fetch_timeout_seconds,
+            )
+            extraction_elapsed = time.perf_counter() - extraction_started_at
+        except Exception:
+            extraction_elapsed = time.perf_counter() - extraction_started_at
+            logger.exception(
+                "Local onboarding website link extraction failed "
+                "session_id=%s website_url=%s elapsed_seconds=%.3f",
+                session.session_id,
+                session.website_url,
+                extraction_elapsed,
+            )
+            extracted_links = "Local website contact-link extraction failed."
+
+        logger.info(
+            "Completed local onboarding website link extraction "
+            "session_id=%s response_chars=%s elapsed_seconds=%.3f",
+            session.session_id,
+            len(extracted_links),
+            extraction_elapsed,
+        )
+
+        try:
+            research_started_at = time.perf_counter()
+            research_result = await self.website_researcher.research(str(session.website_url))
+            research_elapsed = time.perf_counter() - research_started_at
+        except Exception:
+            research_elapsed = time.perf_counter() - research_started_at
+            logger.exception(
+                "Platform onboarding website research failed "
+                "session_id=%s website_url=%s researcher=%s elapsed_seconds=%.3f",
+                session.session_id,
+                session.website_url,
+                type(self.website_researcher).__name__,
+                research_elapsed,
+            )
+            research_result = WebsiteResearchResult(
+                notes="Platform web search failed.",
+                sources=[],
+            )
+        if isinstance(research_result, str):
+            research_result = WebsiteResearchResult(notes=research_result, sources=[])
+
+        logger.info(
+            "Completed platform onboarding website research "
+            "session_id=%s researcher=%s response_chars=%s source_count=%s "
+            "elapsed_seconds=%.3f",
+            session.session_id,
+            type(self.website_researcher).__name__,
+            len(research_result.notes),
+            len(research_result.sources),
+            research_elapsed,
+        )
+
+        structure_request = {
+            "model": self.model,
+            "instructions": WEBSITE_ANALYSIS_PROMPT,
+            "input": (
+                f"Website URL: {session.website_url}\n\n"
+                f"Locally extracted contact links:\n{extracted_links}\n\n"
+                f"Platform web search notes:\n{research_result.notes}\n\n"
+                "Return JSON only using the requested website analysis schema."
+            ),
+            "text": WEBSITE_ANALYSIS_RESPONSE_FORMAT,
+        }
+        if self.temperature is not None:
+            structure_request["temperature"] = self.temperature
+
+        llm_started_at = time.perf_counter()
+        try:
+            structure_response = await traced_openai_responses_create(
+                self.responses_client,
+                structure_request,
+            )
+        except Exception:
+            logger.exception(
+                "LLM onboarding website analysis call failed session_id=%s "
+                "model=%s elapsed_seconds=%.3f total_elapsed_seconds=%.3f",
+                session.session_id,
+                self.model,
+                time.perf_counter() - llm_started_at,
+                time.perf_counter() - analysis_started_at,
+            )
+            raise
+        llm_elapsed = time.perf_counter() - llm_started_at
+        content = str(structure_response.output_text)
+        logger.info(
+            "Received LLM onboarding website analysis session_id=%s model=%s "
+            "response_chars=%s elapsed_seconds=%.3f",
+            session.session_id,
+            self.model,
+            len(content),
+            llm_elapsed,
+        )
+        parse_started_at = time.perf_counter()
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError as error:
+            logger.warning(
+                "LLM onboarding website analysis returned invalid JSON session_id=%s "
+                "parse_elapsed_seconds=%.3f total_elapsed_seconds=%.3f",
+                session.session_id,
+                time.perf_counter() - parse_started_at,
+                time.perf_counter() - analysis_started_at,
+            )
+            raise ValueError("LLM website analysis returned invalid JSON") from error
+
+        normalized_payload = normalize_website_analysis_payload(
+            payload,
+            fallback_website_url=str(session.website_url),
+        )
+        analysis = WebsiteAnalysisResult.model_validate(normalized_payload)
+        parse_elapsed = time.perf_counter() - parse_started_at
+        logger.info(
+            "Completed onboarding website analysis normalization "
+            "session_id=%s business_name=%s contact_info=%s knowledge_sources=%s "
+            "parse_elapsed_seconds=%.3f total_elapsed_seconds=%.3f",
+            session.session_id,
+            analysis.business_profile.business_name,
+            len(analysis.contact_info),
+            len(research_result.sources),
+            parse_elapsed,
+            time.perf_counter() - analysis_started_at,
+        )
+        return analysis.model_copy(
+            update={"knowledge_sources": research_result.sources}
+        )
+
+
+def traced_website_analysis_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
+    analyzer = inputs.get("analyzer")
+    session = inputs.get("session")
+    return {
+        "session_id": getattr(session, "session_id", None),
+        "website_url": str(getattr(session, "website_url", "")),
+        "model": getattr(analyzer, "model", None),
+        "researcher": type(getattr(analyzer, "website_researcher", None)).__name__,
+    }
+
+
+def traced_website_analysis_outputs(output: WebsiteAnalysisResult) -> dict[str, Any]:
+    return {
+        "business_name": output.business_profile.business_name,
+        "website_url": str(output.business_profile.website_url),
+        "agent_name": output.agent_name,
+        "contact_info_count": len(output.contact_info),
+    }
+
+
+@traceable(
+    name="onboarding_website_analysis",
+    run_type="chain",
+    process_inputs=traced_website_analysis_inputs,
+    process_outputs=traced_website_analysis_outputs,
+)
+async def traced_onboarding_website_analysis(
+    analyzer: OpenAIWebsiteAnalyzer,
+    session: OnboardingSessionRecord,
+) -> WebsiteAnalysisResult:
+    return await analyzer._analyze(session)
+
+
+def traced_responses_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
+    request = dict(inputs.get("request") or {})
+    request["instructions"] = "[redacted]"
+    return {"request": request}
+
+
+def traced_responses_outputs(output: Any) -> dict[str, Any]:
+    output_text = str(getattr(output, "output_text", ""))
+    return {
+        "response_id": getattr(output, "id", None),
+        "output_text": output_text,
+        "output_text_chars": len(output_text),
+    }
+
+
+@traceable(
+    name="openai_responses_website_analysis",
+    run_type="llm",
+    process_inputs=traced_responses_inputs,
+    process_outputs=traced_responses_outputs,
+)
+async def traced_openai_responses_create(responses_client: Any, request: dict[str, Any]):
+    return await responses_client.create(**request)
+
+
+class MissingOpenAIWebsiteAnalyzer:
+    async def analyze(self, session: OnboardingSessionRecord) -> WebsiteAnalysisResult:
+        raise ValueError(
+            "OPENAI_API_KEY is required when "
+            "AGENT_ONBOARDING_WEBSITE_ANALYSIS_PROVIDER=openai"
+        )
+
+
+def normalize_website_analysis_payload(
+    payload: dict[str, Any],
+    *,
+    fallback_website_url: str,
+) -> dict[str, Any]:
+    business_profile = dict(payload.get("business_profile") or {})
+    business_profile.setdefault("website_url", fallback_website_url)
+    for field in [
+        "business_name",
+        "location_name",
+        "physical_location",
+        "business_phone",
+        "business_email",
+    ]:
+        if not str(business_profile.get(field) or "").strip():
+            business_profile[field] = ""
+
+    for field in ["agent_name", "agent_description", "answer_prompt_instructions"]:
+        if not str(payload.get(field) or "").strip():
+            payload[field] = ""
+
+    contact_info = normalize_contact_points(
+        payload.get("contact_info") or payload.get("social_links") or [],
+        base_url=fallback_website_url,
+    )
+    fallback_identity = contact_point_identity(url=fallback_website_url, value=None)
+    if not any(
+        contact_point_identity(
+            url=str(link.get("url") or "") or None,
+            value=str(link.get("value") or "") or None,
+        )
+        == fallback_identity
+        for link in contact_info
+    ):
+        contact_info.insert(
+            0,
+            {
+                "kind": "website",
+                "label": "Website",
+                "url": fallback_website_url,
+                "is_primary": True,
+            },
+        )
+
+    return {
+        **payload,
+        "business_profile": business_profile,
+        "contact_info": contact_info,
+    }
+
+
+def normalize_contact_points(
+    contact_points: list[dict[str, Any]],
+    *,
+    base_url: str | None = None,
+) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for point in contact_points:
+        contact = dict(point)
+        kind = str(contact.get("kind") or "contact").strip() or "contact"
+        label = str(contact.get("label") or kind).strip() or kind
+        value = str(contact.get("value") or "").strip() or None
+        value = unwrap_markdown_link(value) if value else None
+        url = str(contact.get("url") or "").strip() or None
+        url = unwrap_markdown_link(url) if url else None
+
+        if (
+            kind == "website"
+            and url
+            and base_url
+            and same_site_url(url, base_url)
+            and not homepage_url(url)
+        ):
+            continue
+
+        identity = contact_point_identity(url=url, value=value)
+        if not identity or identity in seen:
+            continue
+
+        seen.add(identity)
+        normalized.append(
+            {
+                **contact,
+                "kind": kind,
+                "label": label,
+                "value": value,
+                "url": url,
+            }
+        )
+
+    return normalized
+
+
+def contact_point_identity(*, url: str | None, value: str | None) -> str:
+    candidate = unwrap_markdown_link(url or value or "")
+    if not candidate:
+        return ""
+
+    parsed = urlparse(candidate)
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        scheme = parsed.scheme.lower()
+        hostname = (parsed.hostname or "").lower()
+        port = f":{parsed.port}" if parsed.port else ""
+        path = parsed.path.rstrip("/")
+        query = f"?{parsed.query}" if parsed.query else ""
+        fragment = f"#{parsed.fragment}" if parsed.fragment else ""
+        return f"{scheme}://{hostname}{port}{path}{query}{fragment}"
+
+    if parsed.scheme:
+        return candidate.lower()
+
+    return " ".join(candidate.lower().split())
+
+
+def unwrap_markdown_link(value: str | None) -> str:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return ""
+    if candidate.startswith("[") and "](" in candidate and candidate.endswith(")"):
+        label, target = candidate[1:-1].split("](", 1)
+        if target.strip():
+            return target.strip()
+        return label.strip()
+    return candidate
+
+
+def same_site_url(url: str, base_url: str) -> bool:
+    parsed = urlparse(url)
+    base = urlparse(base_url)
+    return domain_without_www(parsed.hostname or "") == domain_without_www(
+        base.hostname or ""
+    )
+
+
+def homepage_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.path in {"", "/"} and not parsed.query and not parsed.fragment
+
+
+def domain_without_www(value: str) -> str:
+    return value.strip().lower().removeprefix("www.")
+
+
 def create_openai_answer_generator(
     *,
     api_key: str,
@@ -447,3 +1146,25 @@ def create_openai_question_planner(
         model_kwargs={"response_format": {"type": "json_object"}},
     )
     return LlmQuestionPlanner(chat_model)
+
+
+def create_openai_website_analyzer(
+    *,
+    api_key: str,
+    model: str,
+    temperature: float | None = None,
+    website_researcher: Any | None = None,
+    fetch_timeout_seconds: float = 10,
+) -> OpenAIWebsiteAnalyzer:
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(
+        api_key=api_key,
+    )
+    return OpenAIWebsiteAnalyzer(
+        client.responses,
+        model=model,
+        temperature=temperature,
+        website_researcher=website_researcher,
+        fetch_timeout_seconds=fetch_timeout_seconds,
+    )

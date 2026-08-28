@@ -84,6 +84,306 @@ kubectl get pods --namespace customer-service
 kubectl logs deployment/support-customer-service-app --namespace customer-service
 ```
 
+### React onboarding wizard
+
+The Helm chart can also deploy the React/Vite onboarding wizard as a separate web service.
+The wizard talks to FastAPI for validation, draft state, website analysis, Telegram setup
+tokens, and final provisioning.
+
+Website analysis is LLM-backed, with a faster first pass before the final model call.
+FastAPI fetches the submitted website directly and extracts exact contact links such as
+social profiles, Google Maps links, WhatsApp links, email addresses, and telephone links.
+If `AGENT_PLATFORM_WEB_SEARCH_PROVIDER=tavily`, FastAPI also uses Tavily to collect
+concise business-profile, location, service, and contact notes under the configured
+platform project id. The extracted links and Tavily notes are then sent to OpenAI to
+produce the editable business profile, agent name, agent
+description, prompt instructions, and contact information. `OPENAI_API_KEY` must be
+configured before `POST /onboarding/sessions/{session_id}/analyze-website` can complete
+when `onboarding.websiteAnalysisProvider=openai`.
+
+To tune the live hybrid website analysis flow, run the opt-in integration test:
+
+```bash
+AGENT_RUN_LIVE_OPENAI_TESTS=true \
+OPENAI_API_KEY="$OPENAI_API_KEY" \
+AGENT_PLATFORM_WEB_SEARCH_PROVIDER=tavily \
+AGENT_PLATFORM_WEB_SEARCH_API_KEY="$TAVILY_API_KEY" \
+AGENT_PLATFORM_WEB_SEARCH_PROJECT_ID=ristoh-css \
+OPENAI_WEBSITE_RESEARCH_URL="https://ristoh.co.ke/" \
+OPENAI_WEBSITE_RESEARCH_EXPECTED_SOCIAL_URLS="facebook.com" \
+uv run pytest tests/test_onboarding_website_research_live.py -q -s --log-cli-level=INFO
+```
+
+To compare that against OpenAI Responses API web discovery on its own, run the separate
+business-profile discovery test:
+
+```bash
+AGENT_RUN_LIVE_OPENAI_TESTS=true \
+OPENAI_API_KEY="$OPENAI_API_KEY" \
+OPENAI_RESPONSES_BUSINESS_PROFILE_URL="https://ristoh.co.ke/" \
+OPENAI_RESPONSES_BUSINESS_PROFILE_EXPECTED_TERMS="ristoh,customer service" \
+uv run pytest tests/test_openai_responses_business_profile_live.py -q -s --log-cli-level=INFO
+```
+
+For local development:
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+Then open http://localhost:5173. Vite proxies `/api/*` to FastAPI at
+`http://localhost:8000`, so the browser does not need CORS for wizard API calls.
+
+Run the React form tests with:
+
+```bash
+cd web
+npm test
+```
+
+For Kubernetes:
+
+```bash
+kubectl port-forward service/support-customer-service-app 8000:8000 \
+  --namespace customer-service
+kubectl port-forward service/support-customer-service-web 5173:8080 \
+  --namespace customer-service
+```
+
+The local deploy script builds both images. Use these variables when the browser-facing
+URLs differ from the defaults:
+
+```bash
+WEB_PUBLIC_BASE_URL=http://localhost:5173 \
+WEB_API_BASE_URL=/api \
+./scripts/deploy-local.sh
+```
+
+By default, onboarding requires the admin email domain to match the website domain. For
+local demos or cases where the business owner uses a different email domain, disable that
+validation with:
+
+```bash
+AGENT_ONBOARDING_REQUIRE_ADMIN_EMAIL_DOMAIN_MATCH=false \
+./scripts/deploy-local.sh
+```
+
+To enable Tavily during local Kubernetes deploys, create or update a Secret containing
+the shared platform Tavily API key, then pass the Secret reference and platform project
+id to Helm through the deploy script:
+
+```bash
+kubectl create secret generic api-keys \
+  --namespace customer-service \
+  --from-literal=PLATFORM_TAVILY_API_KEY="$TAVILY_API_KEY" \
+  --dry-run=client \
+  -o yaml | kubectl apply -f -
+
+AGENT_PLATFORM_WEB_SEARCH_PROVIDER=tavily \
+AGENT_PLATFORM_WEB_SEARCH_PROJECT_ID=ristoh-css \
+AGENT_PLATFORM_WEB_SEARCH_API_KEY_SECRET_NAME=api-keys \
+AGENT_PLATFORM_WEB_SEARCH_API_KEY_SECRET_KEY=PLATFORM_TAVILY_API_KEY \
+./scripts/deploy-local.sh
+```
+
+The web nginx container proxies `/api/*` to the FastAPI Service inside Kubernetes.
+FastAPI CORS is still configured for direct API calls, but the wizard normally uses
+same-origin `/api` requests. For an ngrok test, set the web public URL to the
+browser-facing tunnel URL:
+
+```bash
+WEB_PUBLIC_BASE_URL=https://your-web-tunnel.ngrok-free.app \
+WEB_API_BASE_URL=/api \
+AGENT_TELEGRAM_WEBHOOK_PUBLIC_BASE_URL=https://your-web-tunnel.ngrok-free.app/api \
+./scripts/deploy-local.sh
+```
+
+The app exposes these wizard APIs:
+
+- `POST /onboarding/sessions`
+- `GET /onboarding/sessions/{session_id}`
+- `PATCH /onboarding/sessions/{session_id}`
+- `PATCH /onboarding/sessions/{session_id}/website`
+- `POST /onboarding/sessions/{session_id}/send-username-email-verification`
+- `POST /onboarding/sessions/{session_id}/verify-username-email`
+- `POST /onboarding/sessions/{session_id}/send-website-email-verification`
+- `POST /onboarding/sessions/{session_id}/verify-website-email`
+- `POST /onboarding/sessions/{session_id}/analyze-website`
+- `POST /onboarding/sessions/{session_id}/request-telegram-setup`
+- `POST /onboarding/sessions/{session_id}/telegram-setup`
+- `POST /onboarding/sessions/{session_id}/submit`
+
+The onboarding wizard now verifies two separate addresses. The account setup step
+sends a real inbox-verification email to `username_email`, which is the future
+dashboard login identity. After that link is opened, the website verification step
+collects `website_url` and `website_verification_email`, then sends a second inbox
+verification email to prove control of the business website/contact domain. Website
+analysis, Telegram setup, and final submit are blocked by FastAPI until both
+`username_email_verified=true` and `website_email_verified=true`.
+
+FastAPI also sends the final onboarding confirmation email after provisioning succeeds.
+The confirmation goes to the tenant admin and to `AGENT_ONBOARDING_REVIEW_EMAIL` when
+configured.
+
+FastAPI also sends the SaaS-admin Telegram setup email. The email contains a signed
+one-time React setup link and an onboarding summary so the SaaS admin can review the
+tenant details before entering Telegram credentials.
+
+For local logging-only email behavior, keep the default:
+
+```bash
+AGENT_EMAIL_PROVIDER=log ./scripts/deploy-local.sh
+```
+
+For real Resend delivery from FastAPI:
+
+```bash
+kubectl create secret generic app-email \
+  --namespace customer-service \
+  --from-literal=RESEND_API_KEY="re_..."
+
+AGENT_EMAIL_PROVIDER=resend \
+AGENT_EMAIL_FROM=onboarding@example.com \
+AGENT_ONBOARDING_REVIEW_EMAIL=onboarding-review@example.com \
+AGENT_EMAIL_RESEND_API_KEY_SECRET_NAME=app-email \
+./scripts/deploy-local.sh
+```
+
+The deploy script uses the same `AGENT_EMAIL_*` names as the FastAPI runtime. It passes
+`AGENT_EMAIL_FROM` to Helm as `email.from`, and the Helm template renders it into the
+FastAPI Pod as `AGENT_EMAIL_FROM`.
+`AGENT_ONBOARDING_REVIEW_EMAIL` is the internal/SaaS review recipient for Telegram setup,
+failure, and final confirmation notifications.
+
+### Local n8n workflow service
+
+The n8n chart is retained for local workflow experiments, but it is disabled by default
+and is no longer required for the onboarding wizard. The React/FastAPI app now handles
+tenant-admin email verification, SaaS-admin Telegram setup email, provisioning, and final
+confirmation email.
+
+If you explicitly enable n8n, it uses the bundled PostgreSQL service for workflows,
+credentials metadata, and executions. It still mounts a PVC at `/home/node/.n8n` for n8n
+local files such as encryption/settings data.
+
+Enable n8n locally with:
+
+```bash
+N8N_ENABLED=true ./scripts/deploy-local.sh
+```
+
+Open n8n locally with:
+
+```bash
+kubectl port-forward service/support-customer-service-n8n 5678:5678 \
+  --namespace customer-service
+```
+
+Then open http://localhost:5678.
+
+To skip the n8n setup wizard in local Kubernetes, create a Secret containing a bcrypt
+password hash for the owner account. Do not store the password or hash in this repo.
+
+```bash
+N8N_OWNER_PASSWORD_HASH="$(
+  htpasswd -bnBC 10 "" "local-only-password" |
+    tr -d ':\n' |
+    sed 's/^\$2y\$/\$2a\$/'
+)"
+N8N_ENCRYPTION_KEY="$(openssl rand -hex 32)"
+
+kubectl create secret generic n8n-owner \
+  --namespace customer-service \
+  --from-literal=N8N_INSTANCE_OWNER_PASSWORD_HASH="${N8N_OWNER_PASSWORD_HASH}" \
+  --from-literal=N8N_ENCRYPTION_KEY="${N8N_ENCRYPTION_KEY}"
+```
+
+If you want to paste the generated hash directly into a shell script or wrapper as an
+environment variable, escape the `$` characters first:
+
+```bash
+htpasswd -bnBC 10 "" "local-only-password" |
+  tr -d ':\n' |
+  sed 's/^\$2y\$/\$2a\$/' |
+  sed 's/\$/\\$/g'
+```
+
+Then enable owner provisioning in Helm:
+
+```bash
+helm upgrade --install support helm/customer-service \
+  --namespace customer-service \
+  --set n8n.enabled=true \
+  --set n8n.owner.managedByEnv=true \
+  --set n8n.owner.email=admin@example.com \
+  --set n8n.owner.firstName=Local \
+  --set n8n.owner.lastName=Admin \
+  --set n8n.owner.existingSecret=n8n-owner \
+  --set n8n.encryptionKey.existingSecret=n8n-owner
+```
+
+Or use the local deploy script with the same configuration:
+
+```bash
+N8N_OWNER_MANAGED_BY_ENV=true \
+N8N_OWNER_EMAIL=admin@example.com \
+N8N_OWNER_FIRST_NAME=Local \
+N8N_OWNER_LAST_NAME=Admin \
+N8N_OWNER_SECRET_NAME=n8n-owner \
+N8N_ONBOARDING_EMAIL=onboarding@example.com \
+N8N_ENABLED=true \
+./scripts/deploy-local.sh
+```
+
+The deploy script does not create or update the n8n owner Secret. It expects the Secret
+named by `N8N_OWNER_SECRET_NAME` to already exist, then passes that Secret name into Helm.
+It also passes `N8N_ONBOARDING_EMAIL` to n8n as `ONBOARDING_EMAIL`. The Resend API key
+Secret defaults to `api-keys` / `RESEND_API_KEY`; override it with
+`N8N_EMAIL_RESEND_API_KEY_SECRET_NAME` and `N8N_EMAIL_RESEND_API_KEY_SECRET_KEY` if needed.
+
+If you already completed the setup wizard, reset n8n user management first. This removes
+n8n user accounts, but keeps workflows, credentials, and execution history in the
+database.
+
+```bash
+kubectl exec -n customer-service deploy/support-customer-service-n8n -- \
+  n8n user-management:reset
+
+kubectl rollout restart -n customer-service deployment/support-customer-service-n8n
+```
+
+If n8n needs to receive callbacks from external services, expose it through a tunnel and
+set the public URL during deployment:
+
+```bash
+helm upgrade --install support helm/customer-service \
+  --namespace customer-service \
+  --set n8n.webhookUrl=https://example.ngrok-free.app/ \
+  --set n8n.editorBaseUrl=https://example.ngrok-free.app/
+```
+
+For the initial website onboarding flow design, see
+[local-docs/initial-website.md](local-docs/initial-website.md). The previous importable
+n8n workflow has been removed from the runtime path; use n8n only if a future experiment
+needs an external workflow wrapper.
+
+If an experimental n8n workflow sends email through Resend, the n8n Pod can still receive
+`RESEND_API_KEY` and `ONBOARDING_EMAIL` from Helm:
+
+```bash
+kubectl create secret generic n8n-email \
+  --namespace customer-service \
+  --from-literal=RESEND_API_KEY="re_..."
+
+helm upgrade --install support helm/customer-service \
+  --namespace customer-service \
+  --set n8n.enabled=true \
+  --set n8n.email.resendApiKeySecretName=n8n-email \
+  --set n8n.email.onboardingEmail=onboarding@example.com
+```
+
 ### Redeploy after changing Python code
 
 Helm only recreates Pods when the rendered Kubernetes Pod template changes. Rebuilding
@@ -143,9 +443,11 @@ development and use a secret manager in production.
 ### Knowledge base direction
 
 The app no longer loads startup KB files from a mounted directory or ConfigMap. Tenant KB
-storage and retrieval remain in place through the retrieval/vector store, but knowledge
-should be populated by future source tools, cloud-document connectors, learned support
-answers, or admin workflows rather than static files mounted into the pod.
+storage and retrieval remain in place through the retrieval/vector store. Initial tenant
+knowledge is created by onboarding jobs from reviewed business details and URL-backed
+website research snippets. Additional knowledge should come from future source tools,
+cloud-document connectors, learned support answers, or admin workflows rather than static
+files mounted into the pod.
 
 ## Conversation routing state
 
@@ -250,8 +552,11 @@ Tenant isolation currently covers:
 - tenant records with immutable generated `tenant_id` values and mutable readable slugs;
 - conversations, scoped by `(tenant_id, channel, external_chat_id)`;
 - message idempotency, scoped by `(tenant_id, event_id)`;
-- seed KB retrieval namespaces, using `seed-knowledge` for the default tenant and
-  `<tenant_id>:seed-knowledge` for other tenants;
+- tenant-scoped KB retrieval namespaces, using `default` for the default tenant and
+  tenant slugs such as `<tenant_id>` for other tenants;
+- knowledge grouping via document metadata such as `source_type`, so one tenant
+  namespace can hold onboarding profile docs, website snippets, uploads, and other
+  future source types;
 - tenant prompt configuration for answer and planner instructions;
 - LLM project metadata per tenant;
 - LangSmith trace metadata per tenant, written into one deployment-level LangSmith
@@ -269,8 +574,8 @@ The `bruno/onboarding` folder contains an ordered onboarding flow:
 
 1. create the app tenant;
 2. read the tenant back by slug and populate Bruno runtime variables;
-3. create/update the tenant Telegram Kubernetes Secret;
-4. register the tenant Telegram webhook;
+3. optionally create/update the tenant Telegram Kubernetes Secret manually;
+4. optionally register the tenant Telegram webhook manually;
 5. create an OpenAI project with the OpenAI Admin API;
 6. create/upsert the deployment-level LangSmith tracing project;
 7. create the tenant config from the returned tenant/provider values;
@@ -286,9 +591,12 @@ Before running it, select a Bruno environment and set these variables:
 - `tenant_display_name`: business/customer display name;
 - `tenant_enabled_features_json`: JSON array such as `["telegram","whatsapp"]`.
 - `telegram_bot_token`: tenant Telegram bot token;
-- `telegram_webhook_secret_token`: tenant Telegram webhook secret token;
+- Telegram webhook secret tokens are generated by the app during onboarding, equivalent
+  to `openssl rand -hex 32`;
 - `telegram_webhook_base_url`: public HTTPS base URL for this app, without a trailing
-  slash;
+  slash; the app normally uses `AGENT_TELEGRAM_WEBHOOK_PUBLIC_BASE_URL` during
+  onboarding job processing, while this Bruno variable remains useful for manual
+  webhook debugging;
 - `k8s_proxy_url`: local Kubernetes API proxy URL, for example
   `http://127.0.0.1:8001`;
 - `k8s_namespace`: Kubernetes namespace where tenant Telegram Secrets should be created.
@@ -302,10 +610,85 @@ kubectl proxy --port=8001 --address=127.0.0.1
 The requests use Bruno runtime variables to pass values between steps. Tenant creation
 stores only the generated slug for the explicit lookup step. The slug lookup stores
 `tenant_id`, `tenant_slug`, `llm_project_name`, `langsmith_project`, and the slug-based
-vector namespace. The Telegram Secret request stores `tenant_telegram_secret_name`; the
-provider creation responses then store `llm_project_id`. LangSmith traces are written to
-the deployment-level `LANGSMITH_PROJECT`, while `langsmith_project` remains tenant
-metadata for filtering/audit.
+vector namespace. The app onboarding job derives and creates/updates the Telegram Secret
+name `tenant-<tenant-slug>-telegram`; the Bruno Telegram Secret and webhook requests are
+kept only as manual debugging utilities. Provider creation responses then store
+`llm_project_id`. LangSmith traces are
+written to the deployment-level `LANGSMITH_PROJECT`, while `langsmith_project` remains
+tenant metadata for filtering/audit.
+
+### Website onboarding workflow
+
+Website onboarding is now driven by the React wizard and FastAPI session APIs. FastAPI
+validates the start form, sends the tenant-admin inbox verification email, persists draft
+wizard state, prepares website-analysis draft data, accepts reviewed details, generates
+and emails the SaaS-admin Telegram setup link, and submits the completed session into the
+onboarding job flow after the SaaS admin submits Telegram fields through the React setup
+page. Provider project creation/filling is owned by the onboarding job before tenant
+config is written, so Telegram setup, direct job submissions, and explicit session
+submit retries all use the same boundary. After the job succeeds, FastAPI sends final
+confirmation email to both the tenant admin and the configured onboarding review email
+address.
+
+The onboarding job also creates the tenant's initial KB entries in the tenant vector
+namespace. It stores an approved onboarding profile/contact/instructions document plus
+URL-backed website research snippets gathered during analysis. URL-backed chunks keep
+their `source_url`, provider, retrieval timestamp, and onboarding session id in metadata
+so later retrieval can cite and audit where the information came from.
+
+Provider project provisioning defaults to API-backed behavior in Helm and in
+`scripts/deploy-local.sh`. To create/get provider projects during onboarding job
+processing, provide an OpenAI Admin API key and LangSmith credentials in the configured
+Secret:
+
+```bash
+kubectl create secret generic api-keys \
+  --namespace customer-service \
+  --from-literal=OPENAI_ADMIN_KEY="sk-admin-..." \
+  --from-literal=LANGSMITH_API_KEY="lsv2_..." \
+  --from-literal=LANGSMITH_WORKSPACE_ID="..." \
+  --dry-run=client \
+  -o yaml | kubectl apply -f -
+
+AGENT_PROVIDER_PROJECT_PROVISIONER=api \
+AGENT_OPENAI_ADMIN_KEY_SECRET_NAME=api-keys \
+AGENT_OPENAI_ADMIN_KEY_SECRET_KEY=OPENAI_ADMIN_KEY \
+./scripts/deploy-local.sh
+```
+
+The LangSmith API key, endpoint, and workspace id use the existing LangSmith env/Secret
+settings. To run without external provider admin API calls, set
+`AGENT_PROVIDER_PROJECT_PROVISIONER=metadata`; in that mode the job only generates and
+persists provider-facing project names. With API provisioning enabled, the app:
+
+1. lists active OpenAI projects and reuses a matching project name when found;
+2. creates the OpenAI project when missing and stores the returned `llm_project_id`;
+3. creates/upserts the LangSmith project;
+4. saves `llm_project_id`, `llm_project_name`, `langsmith_project`, and Tavily
+   web-search metadata on tenant config during onboarding job processing.
+
+Tavily uses the shared platform API key for onboarding website research. For future
+customer-facing runtime web search, tenant config records
+`web_search_provider="tavily"` and `web_search_project_name=<tenant-slug>` so runtime
+requests can be tagged with the tenant slug as the Tavily project id. No tenant Tavily
+API key or Kubernetes Secret is created.
+
+The onboarding job runs provider-project provisioning idempotently before tenant config
+is written. If the project fields already exist, they are reused; if they are missing,
+the job fills or creates them before saving tenant config. Transient OpenAI/LangSmith
+network failures are retried with bounded exponential backoff and jitter before the job
+is marked failed.
+
+If the initial provisioning API call fails at the network layer, retry the same
+`POST /admin/onboarding/jobs` request with the same `idempotency_key`. If the app accepts
+the job but provisioning fails, retry it at
+`POST /admin/onboarding/jobs/{job_id}/retry`. Retry is only allowed for failed jobs. The
+retry endpoint reloads the persisted job payload, accepts only
+`telegram.bot_token` in the retry body, generates a fresh webhook secret token, resets
+the failed job to `accepted`, and schedules processing again.
+
+The workflow design is tracked in
+[local-docs/initial-website.md](local-docs/initial-website.md).
 
 Create a tenant record with:
 
@@ -363,7 +746,7 @@ curl -X PUT http://localhost:8000/tenants/tnt_abc123.../config \
     "vector_provider": "pgvector",
     "vector_isolation_mode": "shared_collection",
     "vector_collection": "customer-service",
-    "vector_namespace": "hustle-hq:seed-knowledge",
+    "vector_namespace": "hustle-hq",
     "telegram_secret_name": "tenant-hustle-hq-telegram",
     "whatsapp_secret_name": "tenant-hustle-hq-whatsapp"
   }'
@@ -412,6 +795,10 @@ Provider project/index fields are tenant control-plane metadata:
 - LangSmith traces are written to the deployment-level `LANGSMITH_PROJECT` and tagged
   with tenant metadata. The tenant config's `langsmith_project` value is retained as
   metadata/filtering context, not as the runtime trace destination.
+- Tavily web-search metadata uses the shared platform API key for onboarding and stores
+  `web_search_provider` plus `web_search_project_name` on tenant config. The project
+  name is the tenant slug and can be sent as Tavily's project id in a later
+  customer-facing runtime web-search increment. No tenant web-search Secret is created.
 - Vector storage is modeled generically using `vector_provider`,
   `vector_isolation_mode`, `vector_collection`, and `vector_namespace`. Local Helm
   configures the default collection with `AGENT_VECTOR_COLLECTION`; Pinecone can map
@@ -419,7 +806,10 @@ Provider project/index fields are tenant control-plane metadata:
   collection and namespace/tenant to payload filters or a dedicated collection.
 - Telegram credentials can be resolved from one Secret reference per tenant. Secret values
   are not stored in Postgres; `telegram_secret_name` points at the Kubernetes Secret used
-  for that tenant's bot token and webhook secret token.
+  for that tenant's bot token and webhook secret token. When
+  `AGENT_TELEGRAM_WEBHOOK_PUBLIC_BASE_URL` is configured, onboarding job processing also
+  registers the tenant bot webhook with Telegram using the job's Telegram token and
+  webhook secret token.
 - WhatsApp credentials can be resolved from one Secret reference per tenant. Secret values
   are not stored in Postgres; `whatsapp_secret_name` points at the Kubernetes Secret used
   for that tenant's access token, phone number id, webhook verify token, and optional
@@ -466,7 +856,8 @@ keys:
 kubectl create secret generic api-keys \
   --namespace customer-service \
   --from-literal=OPENAI_API_KEY="key" \
-  --from-literal=key="key"
+  --from-literal=LANGSMITH_API_KEY="key" \
+  --from-literal=LANGSMITH_WORKSPACE_ID="key"
 ```
 
 Then deploy on kubernetes with:
@@ -504,8 +895,9 @@ the app reads that Kubernetes Secret, validates the incoming
 `TELEGRAM_BOT_TOKEN`. If no tenant Secret is configured, the webhook is still processed
 but no Telegram reply is sent.
 
-Create a tenant Secret and store its name in the tenant config. The Bruno onboarding flow
-can create this Secret through `kubectl proxy`; manually, it looks like:
+Create a tenant Secret using the system-derived name `tenant-<tenant-slug>-telegram`.
+The onboarding job stores that derived reference in the tenant config. The Bruno
+onboarding flow can create this Secret through `kubectl proxy`; manually, it looks like:
 
 ```bash
 kubectl create secret generic tenant-hustle-hq-telegram \
@@ -514,22 +906,29 @@ kubectl create secret generic tenant-hustle-hq-telegram \
   --from-literal=TELEGRAM_WEBHOOK_SECRET_TOKEN="$TENANT_TELEGRAM_WEBHOOK_SECRET_TOKEN"
 ```
 
-```json
-{
-  "telegram_secret_name": "tenant-hustle-hq-telegram"
-}
-```
-
 Local Helm enables `telegram.credentialProvider=kubernetes`, so the app ServiceAccount is
 allowed to read tenant Telegram Secrets in its namespace.
 
-Register the Telegram webhook after the app has a public HTTPS URL:
+If `AGENT_TELEGRAM_WEBHOOK_PUBLIC_BASE_URL` / `telegram.webhookPublicBaseUrl` is set,
+the onboarding job registers the Telegram webhook automatically:
+
+```bash
+AGENT_TELEGRAM_WEBHOOK_PUBLIC_BASE_URL=https://your-web-tunnel.ngrok-free.app/api \
+./scripts/deploy-local.sh
+```
+
+Use a direct API base such as `https://api.example.com`, or a web-proxied API base such
+as `https://onboarding.example.com/api`. Do not use `WEB_API_BASE_URL` for this unless
+it is an absolute public URL; local values often set it to the browser-only fragment
+`/api`.
+
+For manual debugging, register the Telegram webhook after the app has a public HTTPS URL:
 
 ```bash
 curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
   -H 'content-type: application/json' \
   -d '{
-    "url": "https://example.com/webhooks/telegram",
+    "url": "https://example.com/webhooks/telegram?tenant_id=tnt_...",
     "secret_token": "'"$TELEGRAM_WEBHOOK_SECRET_TOKEN"'"
   }'
 ```
@@ -588,7 +987,7 @@ Application configuration uses the `AGENT_` prefix. LangSmith uses its native
 | `AGENT_EMBEDDING_DIMENSIONS` | `64` | pgvector embedding size; Helm defaults to `1536` for OpenAI embeddings |
 | `AGENT_QUESTION_PLANNER_PROVIDER` | `rules` | `rules` or `llm`; planner receives the latest customer message plus compact greeting metadata and decides scope, history routing, and explicit human requests |
 | `OPENAI_API_KEY` | unset | Required when `AGENT_ANSWER_PROVIDER=openai`, `AGENT_EMBEDDING_PROVIDER=openai`, or `AGENT_QUESTION_PLANNER_PROVIDER=llm` |
-| `AGENT_LLM_MODEL` | `gpt-4.1-mini` | OpenAI chat model used by the LLM answer provider |
+| `AGENT_LLM_MODEL` | `gpt-4.1-mini` | OpenAI chat model used by LLM-backed answer generation and planning |
 | `AGENT_LLM_TEMPERATURE` | `0.0` | LLM sampling temperature |
 | `AGENT_DATABASE_URL` | unset | PostgreSQL connection string |
 | `AGENT_CONFIDENCE_THRESHOLD` | `0.60` | Below this, mark the response as low confidence |
@@ -602,6 +1001,7 @@ Application configuration uses the `AGENT_` prefix. LangSmith uses its native
 | `AGENT_TELEGRAM_SECRET_NAMESPACE` | unset | Kubernetes namespace used for tenant Telegram Secret lookup; Helm defaults this to the pod namespace |
 | `AGENT_TELEGRAM_BOT_TOKEN_SECRET_KEY` | `TELEGRAM_BOT_TOKEN` | Secret key containing a tenant Telegram bot token |
 | `AGENT_TELEGRAM_WEBHOOK_SECRET_TOKEN_SECRET_KEY` | `TELEGRAM_WEBHOOK_SECRET_TOKEN` | Secret key containing a tenant Telegram webhook secret token |
+| `AGENT_TELEGRAM_WEBHOOK_PUBLIC_BASE_URL` | unset | Public API base URL used by onboarding jobs to register Telegram webhooks; may include `/api` when the public web service proxies API traffic |
 | `AGENT_WHATSAPP_SECRET_NAMESPACE` | unset | Kubernetes namespace used for tenant WhatsApp Secret lookup; Helm defaults this to the pod namespace |
 | `AGENT_WHATSAPP_ACCESS_TOKEN_SECRET_KEY` | `WHATSAPP_ACCESS_TOKEN` | Secret key containing a tenant WhatsApp Cloud API access token |
 | `AGENT_WHATSAPP_PHONE_NUMBER_ID_SECRET_KEY` | `WHATSAPP_PHONE_NUMBER_ID` | Secret key containing a tenant WhatsApp phone number id |
@@ -616,6 +1016,33 @@ Application configuration uses the `AGENT_` prefix. LangSmith uses its native
 | `LANGSMITH_ENDPOINT` | `https://eu.api.smith.langchain.com` | LangSmith endpoint |
 | `LANGSMITH_PROJECT` | `customer-service-local` | Deployment-level LangSmith trace project; tenant identity is represented with tags/metadata |
 | `LANGSMITH_WORKSPACE_ID` | unset | LangSmith workspace id; required for org-scoped API keys or keys linked to multiple workspaces |
+
+The Helm chart also accepts these n8n values:
+
+| Helm value | Default | Purpose |
+|---|---|---|
+| `n8n.enabled` | `false` | Optionally deploy local n8n for workflow experiments |
+| `n8n.image` | `n8nio/n8n:2.33.7` | n8n container image |
+| `n8n.port` | `5678` | Service and container port |
+| `n8n.storage` | `1Gi` | PVC size for `/home/node/.n8n` |
+| `n8n.timezone` | `Europe/Amsterdam` | Sets `GENERIC_TIMEZONE` and `TZ` |
+| `n8n.webhookUrl` | unset | Public base URL for n8n webhooks when using a tunnel |
+| `n8n.editorBaseUrl` | unset | Public editor URL when using a tunnel |
+| `n8n.encryptionKey.existingSecret` | unset | Optional Kubernetes Secret containing `N8N_ENCRYPTION_KEY` |
+| `n8n.encryptionKey.secretKey` | `N8N_ENCRYPTION_KEY` | Secret key used for the n8n encryption key |
+| `n8n.owner.managedByEnv` | `false` | Pre-provision the n8n owner account from environment variables |
+| `n8n.owner.email` | unset | Owner email when pre-provisioning is enabled |
+| `n8n.owner.firstName` | unset | Owner first name when pre-provisioning is enabled |
+| `n8n.owner.lastName` | unset | Owner last name when pre-provisioning is enabled |
+| `n8n.owner.existingSecret` | unset | Kubernetes Secret containing the owner password bcrypt hash |
+| `n8n.owner.passwordHashSecretKey` | `N8N_INSTANCE_OWNER_PASSWORD_HASH` | Secret key used for the owner password hash |
+| `n8n.email.resendApiKeySecretName` | unset | Optional Kubernetes Secret containing `RESEND_API_KEY` for experimental workflow HTTP Request email calls |
+| `n8n.email.resendApiKeySecretKey` | `RESEND_API_KEY` | Secret key used for the Resend API key |
+| `n8n.email.onboardingEmail` | unset | Address exposed to n8n as `ONBOARDING_EMAIL` for experimental workflows |
+| `n8n.code.allowBuiltinModules` | `url` | Built-in Node.js modules allowed in n8n Code nodes via `NODE_FUNCTION_ALLOW_BUILTIN` |
+| `n8n.database.type` | `postgresdb` | n8n database type |
+| `n8n.database.schema` | `public` | Postgres schema used by n8n |
+| `n8n.database.tablePrefix` | `n8n_` | Prefix for n8n tables when sharing the app database |
 
 Changing `AGENT_EMBEDDING_DIMENSIONS` changes the required pgvector column type. Use a
 fresh database, recreate the `knowledge_documents` table, or reindex the KB when moving

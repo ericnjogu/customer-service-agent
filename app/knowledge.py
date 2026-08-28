@@ -1,6 +1,9 @@
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from app.tenancy import SEED_KNOWLEDGE_NAMESPACE, tenant_knowledge_namespace
+from app.tenancy import (
+    SEED_KNOWLEDGE_NAMESPACE,
+    tenant_knowledge_namespace,
+)
 
 __all__ = [
     "SEED_KNOWLEDGE_NAMESPACE",

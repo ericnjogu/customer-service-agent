@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -7,16 +8,29 @@ from langchain_core.messages import AIMessage
 from app.adapters.llm import (
     LlmAnswerGenerator,
     LlmQuestionPlanner,
+    OpenAIWebsiteAnalyzer,
+    TavilyWebsiteResearcher,
     format_age,
+    format_extracted_links,
     langsmith_client,
     langsmith_runnable_config,
     langsmith_tracing_enabled,
+    normalize_website_analysis_payload,
     tenant_trace_metadata,
     tenant_trace_tags,
+    traced_responses_outputs,
 )
 from app.config import Settings
 from app.container import create_container
-from app.models import ConversationPromptMetadata, IncomingMessage, StoredMessage, TenantConfig
+from app.models import (
+    ConversationPromptMetadata,
+    IncomingMessage,
+    OnboardingAdmin,
+    OnboardingSessionRecord,
+    StoredMessage,
+    TenantConfig,
+    WebsiteAnalysisResult,
+)
 
 
 class FakeChatModel:
@@ -31,6 +45,57 @@ class FakeChatModel:
         self.last_messages = messages
         self.last_config = config
         return AIMessage(content=self.content)
+
+
+class FakeResponsesClient:
+    def __init__(self, output_text: str | list[str]) -> None:
+        self.output_texts = (
+            list(output_text) if isinstance(output_text, list) else [output_text]
+        )
+        self.calls = 0
+        self.last_kwargs = None
+        self.call_kwargs: list[dict] = []
+
+    async def create(self, **kwargs):
+        self.calls += 1
+        self.last_kwargs = kwargs
+        self.call_kwargs.append(kwargs)
+        output_text = self.output_texts[min(self.calls - 1, len(self.output_texts) - 1)]
+        return type("FakeResponse", (), {"output_text": output_text})()
+
+
+class FakeWebsiteResearcher:
+    def __init__(self, research_text: str) -> None:
+        self.research_text = research_text
+        self.calls: list[str] = []
+
+    async def research(self, website_url: str) -> str:
+        self.calls.append(website_url)
+        return self.research_text
+
+
+async def fake_link_extractor(website_url: str, *, timeout_seconds: float) -> str:
+    return (
+        f"- kind=facebook label=Facebook url={website_url}/facebook\n"
+        "- kind=whatsapp label=WhatsApp url=https://wa.me/254700000000"
+    )
+
+
+def test_traced_responses_outputs_include_output_text() -> None:
+    output = type(
+        "FakeResponse",
+        (),
+        {
+            "id": "resp_123",
+            "output_text": "Website research notes",
+        },
+    )()
+
+    assert traced_responses_outputs(output) == {
+        "response_id": "resp_123",
+        "output_text": "Website research notes",
+        "output_text_chars": 22,
+    }
 
 
 def test_format_age_uses_readable_units() -> None:
@@ -66,7 +131,7 @@ def test_tenant_trace_metadata_includes_provider_project_context() -> None:
         "vector_provider": "pgvector",
         "vector_isolation_mode": "shared_collection",
         "vector_collection": "customer-service",
-        "vector_namespace": "tenant-a:seed-knowledge",
+        "vector_namespace": "tenant-a",
         "langsmith_project": "customer-service-tenant-a",
         "llm_project_name": "customer-service-tenant-a",
         "llm_project_id": "proj_tenant_a",
@@ -616,3 +681,291 @@ def test_settings_read_openai_api_key_without_agent_prefix(monkeypatch) -> None:
     settings = Settings()
 
     assert settings.openai_api_key == "test-key"
+
+
+def test_website_analysis_keeps_contact_uris() -> None:
+    payload = normalize_website_analysis_payload(
+        {
+            "business_profile": {
+                "business_name": "Hustle HQ",
+                "website_url": "https://hustlehq.example",
+                "location_name": "Hustle HQ",
+                "physical_location": "Enterprise Road",
+                "business_phone": "+254 700 000000",
+                "business_email": "hello@hustlehq.example",
+            },
+            "agent_name": "Hustle HQ Assistant",
+            "agent_description": "Customer service assistant for Hustle HQ.",
+            "answer_prompt_instructions": "Represent Hustle HQ.",
+            "contact_info": [
+                {
+                    "kind": "email",
+                    "label": "Email",
+                    "value": "hello@hustlehq.example",
+                    "url": "mailto:hello@hustlehq.example",
+                    "is_primary": True,
+                },
+                {
+                    "kind": "phone",
+                    "label": "Phone",
+                    "value": "+254 700 000000",
+                    "url": "tel:+254700000000",
+                    "is_primary": True,
+                },
+            ],
+        },
+        fallback_website_url="https://hustlehq.example",
+    )
+
+    assert [link["kind"] for link in payload["contact_info"]] == [
+        "website",
+        "email",
+        "phone",
+    ]
+    assert payload["contact_info"][1]["url"] == "mailto:hello@hustlehq.example"
+    assert payload["contact_info"][2]["url"] == "tel:+254700000000"
+
+    analysis = WebsiteAnalysisResult.model_validate(payload)
+
+    assert analysis.contact_info[1].url == "mailto:hello@hustlehq.example"
+    assert analysis.contact_info[2].url == "tel:+254700000000"
+
+
+def test_website_analysis_deduplicates_equivalent_contact_urls() -> None:
+    payload = normalize_website_analysis_payload(
+        {
+            "business_profile": {
+                "business_name": "Hustle HQ",
+                "website_url": "https://hustlehq.example",
+            },
+            "contact_info": [
+                {
+                    "kind": "website",
+                    "label": "Website",
+                    "url": "[https://hustlehq.example/](https://hustlehq.example/)",
+                },
+                {
+                    "kind": "website",
+                    "label": "Hustle HQ website",
+                    "url": "https://hustlehq.example",
+                },
+                {
+                    "kind": "website",
+                    "label": "Start onboarding",
+                    "url": "https://hustlehq.example/onboarding",
+                },
+                {
+                    "kind": "facebook",
+                    "label": "Facebook",
+                    "url": (
+                        "[https://www.facebook.com/hustlehq]"
+                        "(https://www.facebook.com/hustlehq)"
+                    ),
+                },
+            ],
+        },
+        fallback_website_url="https://hustlehq.example",
+    )
+
+    assert [
+        link["url"] for link in payload["contact_info"] if link["kind"] == "website"
+    ] == ["https://hustlehq.example/"]
+    assert payload["contact_info"][1]["url"] == "https://www.facebook.com/hustlehq"
+
+
+def test_website_analysis_leaves_unknown_fields_blank() -> None:
+    payload = normalize_website_analysis_payload(
+        {
+            "business_profile": {
+                "website_url": "https://hustlehq.example",
+            },
+            "agent_name": "Hustle HQ Assistant",
+            "agent_description": "Customer service assistant for Hustle HQ.",
+            "answer_prompt_instructions": "Represent Hustle HQ.",
+            "contact_info": [],
+        },
+        fallback_website_url="https://hustlehq.example",
+    )
+
+    analysis = WebsiteAnalysisResult.model_validate(payload)
+
+    assert analysis.business_profile.business_name == ""
+    assert analysis.business_profile.location_name == ""
+    assert analysis.business_profile.physical_location == ""
+    assert analysis.business_profile.business_phone == ""
+    assert analysis.business_profile.business_email == ""
+
+
+async def test_website_analysis_prompt_only_includes_website_url() -> None:
+    responses_client = FakeResponsesClient(
+        json.dumps(
+            {
+                "business_profile": {
+                    "website_url": "https://hustlehq.example",
+                },
+                "agent_name": "Hustle HQ Assistant",
+                "agent_description": "Customer service assistant for Hustle HQ.",
+                "answer_prompt_instructions": "Represent Hustle HQ.",
+                "contact_info": [],
+            },
+        )
+    )
+    researcher = FakeWebsiteResearcher("Hustle HQ is a business website.")
+    analyzer = OpenAIWebsiteAnalyzer(
+        responses_client,
+        model="gpt-4.1-mini",
+        website_researcher=researcher,
+        link_extractor=fake_link_extractor,
+    )
+
+    await analyzer.analyze(
+        OnboardingSessionRecord(
+            website_url="https://hustlehq.example",
+            admin=OnboardingAdmin(
+                name="John Doe",
+                email="admin@hustlehq.example",
+                phone_number="+254110101010",
+                role_title="Owner",
+                authority_confirmed=True,
+                terms_accepted=True,
+            ),
+        )
+    )
+
+    structure_call = responses_client.call_kwargs[0]
+    assert responses_client.calls == 1
+    assert researcher.calls == ["https://hustlehq.example"]
+    assert structure_call["input"].startswith("Website URL: https://hustlehq.example")
+    assert "Locally extracted contact links" in structure_call["input"]
+    assert "https://wa.me/254700000000" in structure_call["input"]
+    assert "Platform web search notes" in structure_call["input"]
+    assert "Hustle HQ is a business website." in structure_call["input"]
+    assert "Return JSON only" in structure_call["input"]
+    assert "tools" not in structure_call
+    assert structure_call["text"] == {
+        "format": {
+            "type": "json_object",
+        }
+    }
+    assert structure_call["model"] == "gpt-4.1-mini"
+    assert "temperature" not in structure_call
+    assert "John Doe" not in structure_call["input"]
+    assert "admin@hustlehq.example" not in structure_call["input"]
+
+
+async def test_website_analysis_can_optionally_send_temperature() -> None:
+    responses_client = FakeResponsesClient(
+        json.dumps(
+            {
+                "business_profile": {
+                    "website_url": "https://hustlehq.example",
+                },
+                "agent_name": "",
+                "agent_description": "",
+                "answer_prompt_instructions": "",
+                "contact_info": [],
+            },
+        )
+    )
+    analyzer = OpenAIWebsiteAnalyzer(
+        responses_client,
+        model="gpt-4.1-mini",
+        temperature=0.0,
+        website_researcher=FakeWebsiteResearcher("Hustle HQ is a business website."),
+        link_extractor=fake_link_extractor,
+    )
+
+    await analyzer.analyze(
+        OnboardingSessionRecord(
+            website_url="https://hustlehq.example",
+            admin=OnboardingAdmin(
+                name="John Doe",
+                email="admin@hustlehq.example",
+                phone_number="+254110101010",
+                role_title="Owner",
+                authority_confirmed=True,
+                terms_accepted=True,
+            ),
+        )
+    )
+
+    assert responses_client.call_kwargs[0]["temperature"] == 0.0
+
+
+def test_format_extracted_links_keeps_contact_links_only() -> None:
+    output = format_extracted_links(
+        [
+            ("Home", "https://hustlehq.example/"),
+            ("Facebook", "https://www.facebook.com/hustlehq"),
+            ("Map", "https://maps.google.com/?q=Hustle+HQ"),
+            ("Call", "tel:+254700000000"),
+            ("Email", "mailto:hello@hustlehq.example"),
+            ("Duplicate", "mailto:hello@hustlehq.example"),
+        ]
+    )
+
+    assert "https://www.facebook.com/hustlehq" in output
+    assert "https://maps.google.com/?q=Hustle+HQ" in output
+    assert "tel:+254700000000" in output
+    assert "mailto:hello@hustlehq.example" in output
+    assert "https://hustlehq.example/" not in output
+    assert output.count("mailto:hello@hustlehq.example") == 1
+
+
+async def test_tavily_research_sends_project_id_and_returns_sources(
+    monkeypatch,
+) -> None:
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "results": [
+                    {
+                        "title": "Hustle HQ",
+                        "url": "https://hustlehq.example/about",
+                        "content": "Hustle HQ provides customer service.",
+                        "raw_content": "Contact Hustle HQ on WhatsApp.",
+                    }
+                ]
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def post(self, url: str, **kwargs) -> FakeResponse:
+            calls.append((url, kwargs))
+            return FakeResponse()
+
+    monkeypatch.setattr("app.adapters.llm.httpx.AsyncClient", FakeAsyncClient)
+
+    researcher = TavilyWebsiteResearcher(
+        api_key="test-tavily-key",
+        project_id="ristoh-css",
+        max_results=3,
+        timeout_seconds=15,
+    )
+
+    output = await researcher.research("https://hustlehq.example")
+
+    assert len(calls) == 1
+    assert calls[0][0] == "https://api.tavily.com/search"
+    assert calls[0][1]["headers"]["Authorization"] == "Bearer test-tavily-key"
+    assert calls[0][1]["headers"]["X-Project-ID"] == "ristoh-css"
+    assert calls[0][1]["json"]["include_domains"] == ["hustlehq.example"]
+    assert "Hustle HQ provides customer service." in output.notes
+    assert len(output.sources) == 1
+    assert output.sources[0].provider == "tavily"
+    assert output.sources[0].url == "https://hustlehq.example/about"

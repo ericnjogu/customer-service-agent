@@ -4,3 +4,15 @@ Port-forward the API:
 Port-forward the DB:
   kubectl port-forward service/{{ include "customer-service.fullname" . }}-postgres {{ .Values.postgres.port }}:{{ .Values.postgres.port }} --namespace {{ .Release.Namespace }}
 Then open http://localhost:8000/docs.
+{{- if .Values.web.enabled }}
+
+Port-forward the onboarding web app:
+  kubectl port-forward service/{{ include "customer-service.fullname" . }}-web 5173:{{ .Values.web.service.port }} --namespace {{ .Release.Namespace }}
+Then open http://localhost:5173.
+{{- end }}
+{{- if .Values.n8n.enabled }}
+
+Port-forward n8n:
+  kubectl port-forward service/{{ include "customer-service.fullname" . }}-n8n {{ .Values.n8n.port }}:{{ .Values.n8n.port }} --namespace {{ .Release.Namespace }}
+Then open http://localhost:{{ .Values.n8n.port }}.
+{{- end }}

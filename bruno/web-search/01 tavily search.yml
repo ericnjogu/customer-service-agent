@@ -1,0 +1,50 @@
+info:
+  name: 01 Tavily search
+  type: http
+  seq: 1
+
+http:
+  method: post
+  url: https://api.tavily.com/search
+  headers:
+    - name: authorization
+      value: Bearer {{tavily_api_key}}
+    - name: content-type
+      value: application/json
+    - name: X-Project-ID
+      value: "{{tavily_project_id}}"
+  body:
+    type: json
+    data: |-
+      {
+        "query": "comprehensive info about this business including its profile, physical location, products or services, and public contact information",
+        "search_depth": "basic",
+        "max_results": {{tavily_max_results}},
+        "include_answer": false,
+        "include_raw_content": "markdown",
+        "search_depth": "advanced",
+        "include_domains": [
+          "{{tavily_include_domain}}"
+        ]
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: false
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+
+docs: |-
+  Reproduces the platform Tavily website-research request used by the app during
+  onboarding analysis.
+
+  Define these Bruno environment variables before running:
+
+  - `tavily_api_key`: Tavily API key, for example `tvly-...`.
+  - `tavily_project_id`: project id sent as `X-Project-ID`, for example `ristoh-css`.
+  - `tavily_website_url`: website being analyzed, for example `https://hustlehq.example`.
+  - `tavily_include_domain`: domain to restrict results to, for example `hustlehq.example`.
+  - `tavily_max_results`: result count, for example `3`.
+
+  The API key is intentionally not committed in a Bruno environment file.

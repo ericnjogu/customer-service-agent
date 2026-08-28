@@ -43,6 +43,8 @@ class RecordingTenantConfigRepository:
         vector_namespace: str | None = None,
         telegram_secret_name: str | None = None,
         whatsapp_secret_name: str | None = None,
+        web_search_provider: str | None = None,
+        web_search_project_name: str | None = None,
     ) -> TenantConfig:
         self.upsert_calls += 1
         existing = await self.get(tenant_id)

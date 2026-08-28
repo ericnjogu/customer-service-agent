@@ -103,6 +103,10 @@ spec:
               value: {{ .Values.telegram.botTokenSecretKey | quote }}
             - name: AGENT_TELEGRAM_WEBHOOK_SECRET_TOKEN_SECRET_KEY
               value: {{ .Values.telegram.webhookSecretTokenSecretKey | quote }}
+            {{- if .Values.telegram.webhookPublicBaseUrl }}
+            - name: AGENT_TELEGRAM_WEBHOOK_PUBLIC_BASE_URL
+              value: {{ .Values.telegram.webhookPublicBaseUrl | quote }}
+            {{- end }}
             {{- if .Values.whatsapp.secretNamespace }}
             - name: AGENT_WHATSAPP_SECRET_NAMESPACE
               value: {{ .Values.whatsapp.secretNamespace | quote }}
@@ -122,6 +126,62 @@ spec:
               value: {{ .Values.whatsapp.graphApiVersionSecretKey | quote }}
             - name: AGENT_WHATSAPP_GRAPH_API_VERSION
               value: {{ .Values.whatsapp.graphApiVersion | quote }}
+            - name: AGENT_WEB_PUBLIC_BASE_URL
+              value: {{ .Values.web.publicBaseUrl | quote }}
+            - name: AGENT_ONBOARDING_ACTION_TOKEN_TTL_MINUTES
+              value: {{ .Values.onboarding.actionTokenTtlMinutes | quote }}
+            - name: AGENT_ONBOARDING_EMAIL_VERIFICATION_TOKEN_TTL_MINUTES
+              value: {{ .Values.onboarding.emailVerificationTokenTtlMinutes | quote }}
+            - name: AGENT_ONBOARDING_REQUIRE_ADMIN_EMAIL_DOMAIN_MATCH
+              value: {{ .Values.onboarding.requireAdminEmailDomainMatch | quote }}
+            - name: AGENT_ONBOARDING_WEBSITE_ANALYSIS_PROVIDER
+              value: {{ .Values.onboarding.websiteAnalysisProvider | quote }}
+            - name: AGENT_ONBOARDING_WEBSITE_FETCH_TIMEOUT_SECONDS
+              value: {{ .Values.onboarding.websiteFetchTimeoutSeconds | quote }}
+            - name: AGENT_PLATFORM_WEB_SEARCH_PROVIDER
+              value: {{ .Values.platform.webSearchProvider | quote }}
+            - name: AGENT_PLATFORM_WEB_SEARCH_PROJECT_ID
+              value: {{ .Values.platform.webSearchProjectId | quote }}
+            - name: AGENT_PLATFORM_WEB_SEARCH_MAX_RESULTS
+              value: {{ .Values.platform.webSearchMaxResults | quote }}
+            - name: AGENT_PLATFORM_WEB_SEARCH_TIMEOUT_SECONDS
+              value: {{ .Values.platform.webSearchTimeoutSeconds | quote }}
+            {{- if .Values.platform.webSearchApiKeySecretName }}
+            - name: AGENT_PLATFORM_WEB_SEARCH_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.platform.webSearchApiKeySecretName | quote }}
+                  key: {{ .Values.platform.webSearchApiKeySecretKey | quote }}
+            {{- end }}
+            - name: AGENT_EMAIL_PROVIDER
+              value: {{ .Values.email.provider | quote }}
+            - name: AGENT_PROVIDER_PROJECT_PROVISIONER
+              value: {{ .Values.providerProjects.provisioner | quote }}
+            {{- if .Values.providerProjects.openaiAdminKeySecretName }}
+            - name: OPENAI_ADMIN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.providerProjects.openaiAdminKeySecretName | quote }}
+                  key: {{ .Values.providerProjects.openaiAdminKeySecretKey | quote }}
+            {{- end }}
+            {{- if .Values.email.from }}
+            - name: AGENT_EMAIL_FROM
+              value: {{ .Values.email.from | quote }}
+            {{- end }}
+            {{- if .Values.email.onboardingReviewEmail }}
+            - name: AGENT_ONBOARDING_REVIEW_EMAIL
+              value: {{ .Values.email.onboardingReviewEmail | quote }}
+            {{- end }}
+            {{- if .Values.email.resendApiKeySecretName }}
+            - name: RESEND_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.email.resendApiKeySecretName | quote }}
+                  key: {{ .Values.email.resendApiKeySecretKey | quote }}
+                  optional: true
+            {{- end }}
+            - name: AGENT_CORS_ALLOW_ORIGINS
+              value: {{- if hasPrefix "http" .Values.web.apiBaseUrl }} {{ printf "%s,%s" .Values.web.publicBaseUrl .Values.web.apiBaseUrl | quote }}{{- else }} {{ .Values.web.publicBaseUrl | quote }}{{- end }}
             - name: AGENT_LLM_MODEL
               value: {{ .Values.llm.model | quote }}
             - name: AGENT_LLM_TEMPERATURE
@@ -150,6 +210,13 @@ spec:
             {{- if .Values.langsmith.LANGSMITH_WORKSPACE_ID }}
             - name: LANGSMITH_WORKSPACE_ID
               value: {{ .Values.langsmith.LANGSMITH_WORKSPACE_ID | quote }}
+            {{- else if and .Values.langsmith.existingSecret .Values.langsmith.workspaceIdSecretKey }}
+            - name: LANGSMITH_WORKSPACE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.langsmith.existingSecret | quote }}
+                  key: {{ .Values.langsmith.workspaceIdSecretKey | quote }}
+                  optional: true
             {{- end }}
             {{- if .Values.langsmith.existingSecret }}
             - name: LANGSMITH_API_KEY

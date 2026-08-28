@@ -1,0 +1,410 @@
+:root {
+  color: #172033;
+  background: #f4f7fb;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  border-radius: 12px;
+  background: #2457ff;
+  color: white;
+  cursor: pointer;
+  font-weight: 700;
+  padding: 0.85rem 1.1rem;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+button.secondary {
+  background: #e7ecf7;
+  color: #172033;
+}
+
+button.icon-button {
+  align-items: center;
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 1.4rem;
+  height: 2.25rem;
+  justify-content: center;
+  line-height: 1;
+  padding: 0;
+  width: 2.25rem;
+}
+
+button.icon-button.danger {
+  background: #ffe8ed;
+  color: #9d1732;
+}
+
+.sr-only {
+  border: 0;
+  clip: rect(0, 0, 0, 0);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+.page {
+  min-height: 100vh;
+  padding: 48px 20px;
+}
+
+.shell {
+  margin: 0 auto;
+  max-width: 920px;
+}
+
+.hero {
+  margin-bottom: 24px;
+}
+
+.hero h1 {
+  font-size: clamp(2rem, 4vw, 4rem);
+  letter-spacing: -0.055em;
+  line-height: 0.96;
+  margin: 0 0 1rem;
+}
+
+.hero p {
+  color: #5b6680;
+  font-size: 1.08rem;
+  max-width: 640px;
+}
+
+.eyebrow {
+  color: #2457ff;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.card {
+  background: white;
+  border: 1px solid #dce3ef;
+  border-radius: 22px;
+  box-shadow: 0 24px 70px rgb(38 58 93 / 10%);
+  padding: 28px;
+}
+
+.form {
+  display: grid;
+  gap: 18px;
+}
+
+label {
+  display: grid;
+  gap: 8px;
+}
+
+.field-label {
+  align-items: center;
+  color: #46516a;
+  display: inline-flex;
+  gap: 0.45rem;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.info-tooltip {
+  align-items: center;
+  background: #e7ecf7;
+  border-radius: 999px;
+  color: #2457ff;
+  cursor: help;
+  display: inline-flex;
+  font-size: 0.78rem;
+  height: 1.2rem;
+  justify-content: center;
+  line-height: 1;
+  position: relative;
+  text-transform: none;
+  width: 1.2rem;
+}
+
+.info-tooltip:focus {
+  outline: 2px solid #8bb7ff;
+  outline-offset: 2px;
+}
+
+.info-tooltip-bubble {
+  background: #172033;
+  border-radius: 10px;
+  bottom: calc(100% + 8px);
+  box-shadow: 0 12px 30px rgb(23 32 51 / 18%);
+  color: white;
+  display: none;
+  font-size: 0.85rem;
+  font-weight: 500;
+  left: 50%;
+  line-height: 1.35;
+  max-width: min(260px, 80vw);
+  padding: 0.65rem 0.75rem;
+  position: absolute;
+  text-transform: none;
+  transform: translateX(-50%);
+  width: max-content;
+  z-index: 3;
+}
+
+.info-tooltip:hover .info-tooltip-bubble,
+.info-tooltip:focus .info-tooltip-bubble {
+  display: block;
+}
+
+input,
+textarea {
+  border: 1px solid #ccd6e6;
+  border-radius: 12px;
+  padding: 0.85rem 0.95rem;
+  width: 100%;
+}
+
+input[aria-invalid="true"],
+textarea[aria-invalid="true"] {
+  border-color: #c7354b;
+  box-shadow: 0 0 0 3px rgb(199 53 75 / 12%);
+}
+
+textarea {
+  resize: vertical;
+}
+
+.progress {
+  background: #dfe7f5;
+  border-radius: 999px;
+  color: #46516a;
+  margin-bottom: 18px;
+  overflow: hidden;
+  padding: 0.65rem 1rem;
+  position: relative;
+}
+
+.progress span {
+  font-size: 0.9rem;
+  font-weight: 700;
+  position: relative;
+  z-index: 1;
+}
+
+.progress-bar {
+  background: linear-gradient(90deg, #91e8bf, #8bb7ff);
+  bottom: 0;
+  left: 0;
+  position: absolute;
+  top: 0;
+  transition: width 180ms ease;
+}
+
+.alert {
+  align-items: center;
+  border-radius: 16px;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  margin-bottom: 18px;
+  padding: 14px 16px;
+}
+
+.alert.error {
+  background: #fff0f1;
+  color: #8b1f2f;
+}
+
+.alert.info {
+  background: #eef7ff;
+  color: #184c7f;
+}
+
+.alert button {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
+
+.form-error-summary {
+  background: #fff0f1;
+  border: 1px solid #f0b5bf;
+  border-radius: 16px;
+  color: #8b1f2f;
+  outline: none;
+  padding: 14px 16px;
+}
+
+.form-error-summary:focus {
+  box-shadow: 0 0 0 4px rgb(199 53 75 / 18%);
+}
+
+.form-error-summary h3 {
+  font-size: 1rem;
+  margin: 0 0 0.5rem;
+}
+
+.form-error-summary ul {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.field-error {
+  color: #b4233a;
+  font-weight: 700;
+}
+
+.checkbox-row {
+  align-items: flex-start;
+  display: flex;
+  gap: 0.75rem;
+}
+
+.checkbox-row input {
+  margin-top: 0.2rem;
+  width: auto;
+}
+
+.checkbox-row span {
+  color: #172033;
+  font-weight: 500;
+  text-transform: none;
+}
+
+.wait-card {
+  align-items: center;
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+  text-align: center;
+}
+
+.wait-card p {
+  color: #5b6680;
+  max-width: 560px;
+}
+
+.spinner {
+  animation: spin 900ms linear infinite;
+  border: 4px solid #dfe7f5;
+  border-radius: 999px;
+  border-top-color: #2457ff;
+  height: 44px;
+  width: 44px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.repeater {
+  display: grid;
+  gap: 16px;
+}
+
+.repeater-row {
+  align-items: end;
+  border: 1px solid #dce3ef;
+  border-radius: 18px;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(120px, 0.7fr) minmax(160px, 1fr) minmax(240px, 1.6fr) auto;
+  margin: 0;
+  padding: 16px;
+}
+
+.repeater-row-header {
+  align-items: center;
+  color: #66728b;
+  display: flex;
+  font-weight: 800;
+  grid-column: 1 / -1;
+  justify-content: space-between;
+}
+
+.repeater-row legend {
+  color: #66728b;
+  font-weight: 800;
+  padding: 0 6px;
+}
+
+.summary {
+  display: grid;
+  gap: 8px 16px;
+  grid-template-columns: minmax(120px, 0.4fr) 1fr;
+}
+
+.summary dt {
+  color: #66728b;
+  font-weight: 700;
+}
+
+.summary dd {
+  margin: 0;
+}
+
+.summary-panel {
+  background: #f7faff;
+  border: 1px solid #dce7fb;
+  border-radius: 18px;
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.summary-panel h3,
+.summary-panel h4 {
+  margin: 0;
+}
+
+.summary-panel ul {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.nav {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-top: 18px;
+}
+
+.muted {
+  color: #66728b;
+}
+
+.terms {
+  line-height: 1.65;
+  max-width: 980px;
+}
+
+.terms h2 {
+  font-size: 1.25rem;
+  margin: 28px 0 8px;
+}
+
+.terms p {
+  margin: 0 0 14px;
+}

@@ -155,12 +155,12 @@ async def test_retrieves_directly_seeded_knowledge() -> None:
 
 
 async def test_seed_knowledge_namespace_constant_is_used() -> None:
-    assert SEED_KNOWLEDGE_NAMESPACE == "seed-knowledge"
+    assert SEED_KNOWLEDGE_NAMESPACE == "default"
 
 
 async def test_tenant_knowledge_namespace_defaults_to_existing_seed_namespace() -> None:
     assert tenant_knowledge_namespace("default") == SEED_KNOWLEDGE_NAMESPACE
-    assert tenant_knowledge_namespace("hustle-hq") == "hustle-hq:seed-knowledge"
+    assert tenant_knowledge_namespace("hustle-hq") == "hustle-hq"
 
 
 async def test_graph_isolates_conversations_by_tenant() -> None:
@@ -295,7 +295,7 @@ async def test_graph_passes_tenant_prompt_config_to_planner_and_answer_generator
     assert planner.tenant_configs[-1].vector_provider == "pgvector"
     assert planner.tenant_configs[-1].vector_isolation_mode == "shared_collection"
     assert planner.tenant_configs[-1].vector_collection == "customer-service"
-    assert planner.tenant_configs[-1].vector_namespace == "tenant-a:seed-knowledge"
+    assert planner.tenant_configs[-1].vector_namespace == "tenant-a"
     assert planner.tenant_configs[-1].telegram_secret_name == "tenant-a-telegram"
     assert planner.tenant_configs[-1].whatsapp_secret_name == "tenant-a-whatsapp"
     assert (

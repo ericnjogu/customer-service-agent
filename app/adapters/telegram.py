@@ -28,8 +28,22 @@ class TelegramCredentials:
     webhook_secret_token: str | None = None
 
 
+@dataclass(frozen=True)
+class TelegramBotInfo:
+    username: str
+    first_name: str | None = None
+
+    @property
+    def public_url(self) -> str:
+        return f"https://t.me/{self.username}"
+
+
 class TelegramCredentialResolver(Protocol):
     async def resolve(self, tenant_id: str) -> TelegramCredentials: ...
+
+
+class TelegramBotInfoResolver(Protocol):
+    async def get_bot_info(self, *, bot_token: str) -> TelegramBotInfo: ...
 
 
 class TelegramWebhookRegistrar(Protocol):
@@ -63,6 +77,38 @@ class TelegramBotClient:
                 json={"chat_id": chat_id, "text": text},
             )
             response.raise_for_status()
+
+
+class TelegramBotApiInfoResolver:
+    def __init__(self, *, timeout_seconds: float = 10.0) -> None:
+        self.timeout_seconds = timeout_seconds
+
+    async def get_bot_info(self, *, bot_token: str) -> TelegramBotInfo:
+        logger.info("Fetching Telegram bot info via getMe")
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            response = await client.get(
+                f"https://api.telegram.org/bot{bot_token}/getMe",
+            )
+            response.raise_for_status()
+
+        body = response.json()
+        if not isinstance(body, dict) or body.get("ok") is not True:
+            description = body.get("description") if isinstance(body, dict) else None
+            raise RuntimeError(
+                "Telegram getMe failed" + (f": {description}" if description else "")
+            )
+        result = body.get("result")
+        if not isinstance(result, dict):
+            raise RuntimeError("Telegram getMe response did not include bot details")
+        username = str(result.get("username") or "").strip()
+        if not username:
+            raise RuntimeError("Telegram bot username was not returned by getMe")
+        first_name = result.get("first_name")
+        logger.info("Fetched Telegram bot info username=%s", username)
+        return TelegramBotInfo(
+            username=username,
+            first_name=str(first_name) if first_name else None,
+        )
 
 
 class TelegramBotWebhookRegistrar:

@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from langchain_core.documents import Document
 
 from app.adapters.memory import MemoryRetrievalStore
+from app.adapters.telegram import TelegramBotInfo
 from app.config import get_settings
 from app.knowledge import SEED_KNOWLEDGE_NAMESPACE
 from app.main import app
@@ -105,6 +106,16 @@ class FakeTelegramWebhookRegistrar:
             }
         )
         return f"https://example.com/webhooks/telegram?tenant_id={tenant_id}"
+
+
+class FakeTelegramBotInfoResolver:
+    def __init__(self, username: str = "hustle_hq_bot") -> None:
+        self.username = username
+        self.bot_tokens: list[str] = []
+
+    async def get_bot_info(self, *, bot_token: str) -> TelegramBotInfo:
+        self.bot_tokens.append(bot_token)
+        return TelegramBotInfo(username=self.username, first_name="Hustle HQ Bot")
 
 
 class FakeTelegramSecretWriter:
@@ -235,6 +246,10 @@ def clear_settings_cache(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         "app.container.create_openai_website_analyzer",
         lambda **_kwargs: FakeWebsiteAnalyzer(),
+    )
+    monkeypatch.setattr(
+        "app.container.TelegramBotApiInfoResolver",
+        lambda: FakeTelegramBotInfoResolver(),
     )
     get_settings.cache_clear()
     yield
@@ -1018,6 +1033,53 @@ def test_onboarding_session_submits_completed_session_into_job_flow() -> None:
     assert job_response.json()["tenant_slug"] == "hustle-hq-session"
     assert sent_email.subject == "Customer-service onboarding completed"
     assert "admin@hustlehq.example" in sent_email.to
+    assert "https://t.me/hustle_hq_bot" in sent_email.text
+    assert "Tenant ID:" not in sent_email.text
+    assert "Tenant slug:" not in sent_email.text
+
+
+def test_onboarding_job_success_email_sends_bot_link_to_tenant_and_saas_admin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "AGENT_ONBOARDING_REVIEW_EMAIL",
+        "onboarding-review@example.com",
+    )
+    payload = onboarding_job_payload()
+    payload["idempotency_key"] = "onboarding-success-email-bot-link"
+    payload["business_profile"]["business_name"] = "Hustle HQ Success Email"
+
+    with TestClient(app) as client:
+        bot_info_resolver = FakeTelegramBotInfoResolver(username="hustle_hq_success_bot")
+        client.app.state.container.onboarding_jobs.telegram_bot_info_resolver = (
+            bot_info_resolver
+        )
+        response = client.post("/admin/onboarding/jobs", json=payload)
+        job_id = response.json()["job_id"]
+        job_response = client.get(f"/admin/onboarding/jobs/{job_id}")
+        sent_messages = client.app.state.container.email_sender.sent_messages
+
+    assert response.status_code == 202
+    assert job_response.json()["status"] == "succeeded"
+    assert bot_info_resolver.bot_tokens == ["123456:telegram-token"]
+    completion_emails = [
+        email
+        for email in sent_messages
+        if email.subject == "Customer-service onboarding completed"
+    ]
+    assert len(completion_emails) == 2
+    tenant_admin_email = next(
+        email for email in completion_emails if email.to == ["admin@hustlehq.example"]
+    )
+    saas_admin_email = next(
+        email for email in completion_emails if email.to == ["onboarding-review@example.com"]
+    )
+    assert "https://t.me/hustle_hq_success_bot" in tenant_admin_email.text
+    assert "Tenant ID:" not in tenant_admin_email.text
+    assert "Tenant slug:" not in tenant_admin_email.text
+    assert "https://t.me/hustle_hq_success_bot" in saas_admin_email.text
+    assert f"Tenant ID: {job_response.json()['tenant_id']}" in saas_admin_email.text
+    assert "Tenant slug: hustle-hq-success-email" in saas_admin_email.text
 
 
 def test_telegram_setup_submits_session_and_job_provisions_provider_projects() -> None:

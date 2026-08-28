@@ -5,7 +5,11 @@ from uuid import UUID
 import httpx
 from langchain_core.documents import Document
 
-from app.adapters.telegram import TelegramSecretWriter, TelegramWebhookRegistrar
+from app.adapters.telegram import (
+    TelegramBotInfoResolver,
+    TelegramSecretWriter,
+    TelegramWebhookRegistrar,
+)
 from app.knowledge import chunk_text
 from app.models import (
     OnboardingContactPoint,
@@ -40,6 +44,7 @@ class OnboardingJobService:
         provider_project_provisioner: ProviderProjectProvisioner | None = None,
         telegram_secret_writer: TelegramSecretWriter | None = None,
         telegram_webhook_registrar: TelegramWebhookRegistrar | None = None,
+        telegram_bot_info_resolver: TelegramBotInfoResolver | None = None,
         email_sender: EmailSender | None = None,
         onboarding_review_email: str | None = None,
     ) -> None:
@@ -52,6 +57,7 @@ class OnboardingJobService:
         )
         self.telegram_secret_writer = telegram_secret_writer
         self.telegram_webhook_registrar = telegram_webhook_registrar
+        self.telegram_bot_info_resolver = telegram_bot_info_resolver
         self.email_sender = email_sender
         self.onboarding_review_email = onboarding_review_email
 
@@ -192,6 +198,7 @@ class OnboardingJobService:
                 request,
                 tenant_id=tenant.tenant_id,
             )
+            telegram_bot_link = await self.telegram_bot_link(request)
             await self.onboarding.mark_job_succeeded(
                 job_id,
                 tenant_id=tenant.tenant_id,
@@ -201,6 +208,7 @@ class OnboardingJobService:
                 request,
                 tenant_id=tenant.tenant_id,
                 tenant_slug=tenant.slug,
+                telegram_bot_link=telegram_bot_link,
             )
             await post_job_callback(
                 request,
@@ -318,29 +326,59 @@ class OnboardingJobService:
             webhook_secret_token=request.telegram.webhook_secret_token,
         )
 
+    async def telegram_bot_link(self, request: OnboardingJobCreate) -> str | None:
+        if self.telegram_bot_info_resolver is None:
+            logger.info("Skipping Telegram bot link lookup because no resolver is configured")
+            return None
+        info = await self.telegram_bot_info_resolver.get_bot_info(
+            bot_token=request.telegram.bot_token,
+        )
+        logger.info(
+            "Resolved Telegram bot link username=%s public_url=%s",
+            info.username,
+            info.public_url,
+        )
+        return info.public_url
+
     async def send_success_email(
         self,
         request: OnboardingJobCreate,
         *,
         tenant_id: str,
         tenant_slug: str,
+        telegram_bot_link: str | None = None,
     ) -> None:
         if self.email_sender is None:
             return
-        recipients = dedupe_recipients(
-            [str(request.admin.email), self.onboarding_review_email]
+        tenant_admin_email = str(request.admin.email)
+        await self.email_sender.send_email(
+            to=[tenant_admin_email],
+            subject="Customer-service onboarding completed",
+            text=tenant_admin_success_email_text(
+                request,
+                telegram_bot_link=telegram_bot_link,
+            ),
         )
-        if not recipients:
+        saas_admin_recipients = dedupe_recipients([self.onboarding_review_email])
+        if not saas_admin_recipients:
+            return
+        if tenant_admin_email.lower() in {
+            recipient.lower() for recipient in saas_admin_recipients
+        }:
+            logger.info(
+                "Skipping separate SaaS-admin onboarding completion email because "
+                "review email matches tenant admin email email=%s",
+                tenant_admin_email,
+            )
             return
         await self.email_sender.send_email(
-            to=recipients,
+            to=saas_admin_recipients,
             subject="Customer-service onboarding completed",
-            text=(
-                f"Hello {request.admin.name},\n\n"
-                f"Customer-service onboarding for "
-                f"{request.business_profile.business_name} is complete.\n\n"
-                f"Tenant ID: {tenant_id}\n"
-                f"Tenant slug: {tenant_slug}\n"
+            text=saas_admin_success_email_text(
+                request,
+                tenant_id=tenant_id,
+                tenant_slug=tenant_slug,
+                telegram_bot_link=telegram_bot_link,
             ),
         )
 
@@ -363,6 +401,64 @@ class OnboardingJobService:
                 f"Error: {error}\n"
             ),
         )
+
+
+def tenant_admin_success_email_text(
+    request: OnboardingJobCreate,
+    *,
+    telegram_bot_link: str | None,
+) -> str:
+    lines = [
+        f"Hello {request.admin.name},",
+        "",
+        (
+            "Customer-service onboarding for "
+            f"{request.business_profile.business_name} is complete."
+        ),
+    ]
+    if telegram_bot_link:
+        lines.extend(
+            [
+                "",
+                "Your Telegram bot is ready here:",
+                telegram_bot_link,
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "You can share this link with customers who should start a Telegram chat "
+            "with the bot.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def saas_admin_success_email_text(
+    request: OnboardingJobCreate,
+    *,
+    tenant_id: str,
+    tenant_slug: str,
+    telegram_bot_link: str | None,
+) -> str:
+    lines = [
+        f"Onboarding completed for {request.business_profile.business_name}.",
+        "",
+        f"Tenant ID: {tenant_id}",
+        f"Tenant slug: {tenant_slug}",
+        f"Admin: {request.admin.name} <{request.admin.email}>",
+    ]
+    if telegram_bot_link:
+        lines.extend(
+            [
+                "",
+                "Telegram bot:",
+                telegram_bot_link,
+            ]
+        )
+    lines.append("")
+    return "\n".join(lines)
 
 
 def contact_points_from_request(

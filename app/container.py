@@ -30,6 +30,7 @@ from app.adapters.postgres import (
 from app.adapters.telegram import (
     KubernetesSecretTelegramCredentialResolver,
     KubernetesSecretTelegramSecretWriter,
+    TelegramBotApiInfoResolver,
     TelegramBotWebhookRegistrar,
     TelegramCredentialResolver,
     TelegramSecretWriter,
@@ -306,6 +307,7 @@ async def create_container(settings: Settings) -> Container:
     telegram_webhook_registrar = TelegramBotWebhookRegistrar(
         public_base_url=settings.telegram_webhook_public_base_url,
     )
+    telegram_bot_info_resolver = TelegramBotApiInfoResolver()
     onboarding_jobs = OnboardingJobService(
         onboarding=onboarding,
         tenants=tenants,
@@ -314,6 +316,7 @@ async def create_container(settings: Settings) -> Container:
         provider_project_provisioner=provider_project_provisioner,
         telegram_secret_writer=telegram_secret_writer,
         telegram_webhook_registrar=telegram_webhook_registrar,
+        telegram_bot_info_resolver=telegram_bot_info_resolver,
         email_sender=email_sender,
         onboarding_review_email=settings.onboarding_review_email,
     )

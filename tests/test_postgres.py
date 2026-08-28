@@ -39,9 +39,12 @@ def test_pgvector_schema_uses_chunk_id_uniqueness() -> None:
     ddl = schema(1536)
 
     assert "chunk_id text NOT NULL" in ddl
+    assert "source_url text" in ddl
     assert "UNIQUE(namespace, chunk_id)" in ddl
     assert "UNIQUE(namespace, source)" not in ddl
     assert "knowledge_documents_namespace_chunk_id_idx" in ddl
+    assert "knowledge_documents_namespace_source_url_idx" in ddl
+    assert "ON knowledge_documents(namespace, source_url)" in ddl
 
 
 def test_postgres_schema_scopes_conversations_and_events_by_tenant() -> None:
@@ -81,6 +84,12 @@ def test_postgres_schema_includes_tenant_prompt_config() -> None:
     assert "DROP COLUMN IF EXISTS openai_project_id" in ddl
     assert "DROP COLUMN IF EXISTS openai_project_name" in ddl
     assert "langsmith_project text" in ddl
+    assert "web_search_provider text" in ddl
+    assert "web_search_project_name text" in ddl
+    assert "web_search_api_key_id text" not in ddl
+    assert "web_search_secret_name text" not in ddl
+    assert "DROP COLUMN IF EXISTS web_search_api_key_id" in ddl
+    assert "DROP COLUMN IF EXISTS web_search_secret_name" in ddl
     assert "llm_provider text" in ddl
     assert "llm_model text" in ddl
     assert "llm_base_url text" in ddl
@@ -97,5 +106,14 @@ def test_postgres_schema_includes_tenant_prompt_config() -> None:
 def test_pgvector_search_selects_chunk_creation_timestamp() -> None:
     source = inspect.getsource(PgVectorRetrievalStore.search)
 
-    assert "SELECT content, metadata, created_at" in source
+    assert "SELECT content, source_url, metadata, created_at" in source
+    assert '"source_url": row["source_url"]' in source
     assert '"created_at": row["created_at"].isoformat()' in source
+
+
+def test_postgres_schema_migrates_seed_suffix_to_tenant_namespace() -> None:
+    ddl = schema(1536)
+
+    assert "WHEN namespace = 'seed-knowledge' THEN 'default'" in ddl
+    assert "regexp_replace(namespace, ':seed-knowledge$', '')" in ddl
+    assert "regexp_replace(vector_namespace, ':seed-knowledge$', '')" in ddl

@@ -34,6 +34,30 @@ This project currently uses increment-based milestones instead of semantic versi
 - Question planner boundary with local rule-based and OpenAI/LLM-backed implementations
   for deciding whether the latest message is in scope, whether conversation history is
   needed, and whether the customer explicitly requested a human agent.
+- URL-backed onboarding knowledge entries: website research sources are preserved as
+  structured items, stored with `source_url`, and persisted into the tenant KB namespace
+  during onboarding job processing alongside the approved onboarding profile.
+- Tavily platform web-search support for onboarding website research, including the
+  `AGENT_PLATFORM_WEB_SEARCH_PROJECT_ID` setting and tenant config metadata for future
+  runtime search without creating tenant web-search API keys or Secrets.
+- Onboarding start form now captures admin phone number, admin role/title, authority
+  confirmation, and terms acceptance, with backend validation and field-level help
+  tooltips across the wizard forms.
+- Admin phone-number validation now uses libphonenumber-backed libraries on both backend
+  and frontend, with project guidance to prefer maintained validation libraries over
+  hand-rolled parsing for standardized input formats.
+- Tenant admins now see an onboarding-submitted waiting screen after reviewing contact
+  information, while the Telegram credential screen is reserved for signed SaaS-admin
+  setup links.
+- Onboarding now separates future dashboard account setup from website ownership
+  verification, with required `username_email`, `given_name`, `family_name`, phone,
+  role/title, authority confirmation, terms acceptance, and independent username and
+  website email verification checkpoints before website analysis.
+- Onboarding jobs can register tenant Telegram bot webhooks automatically when
+  `AGENT_TELEGRAM_WEBHOOK_PUBLIC_BASE_URL` / `telegram.webhookPublicBaseUrl` is
+  configured.
+- Onboarding jobs create or update the tenant Telegram Kubernetes Secret using the
+  derived `tenant-<tenant-slug>-telegram` name before registering the webhook.
 - `AGENT_QUESTION_PLANNER_PROVIDER` / `questionPlanner.provider` configuration for
   choosing `rules` or `llm`.
 - Embedding provider boundary with local hash embeddings and OpenAI semantic embeddings.
@@ -78,7 +102,8 @@ This project currently uses increment-based milestones instead of semantic versi
   while `GET /tenants/by-slug/{slug}` provides deliberate existing-tenant lookup for
   onboarding flows.
 - Bruno tenant config creation uses the tenant slug for provider-facing project names and
-  vector namespaces (`customer-service-<slug>` and `<slug>:seed-knowledge`).
+  tenant-scoped vector namespaces; knowledge grouping is represented with document
+  metadata such as `source_type`.
 - Bruno onboarding requests for creating a tenant, creating provider projects, capturing
   runtime variables from responses, and creating the tenant config from those values.
 - LangSmith tracing now targets the deployment-level `LANGSMITH_PROJECT`; tenant
@@ -86,6 +111,57 @@ This project currently uses increment-based milestones instead of semantic versi
 - Message scope persistence marks out-of-scope customer messages and their bot replies so
   they can be retained for audit/debugging without being loaded into future LLM
   conversation-history context.
+- Helm values and templates for a local n8n workflow service backed by the bundled
+  PostgreSQL service.
+- Secret-backed n8n owner pre-provisioning and encryption-key configuration so local
+  deployments can skip the setup wizard without committing credentials.
+- `scripts/deploy-local.sh` support for passing n8n owner bootstrap settings into Helm
+  while expecting the n8n owner Secret to be created separately.
+- Pinned the local n8n image to `n8nio/n8n:2.33.7` instead of the floating `latest` tag.
+- n8n owner password hash instructions include an escaped-output command for safely
+  pasting bcrypt hashes into shell wrappers.
+- Workflow documentation for n8n-driven website onboarding, where website analysis is
+  performed by an n8n Agent Node before the app receives reviewed onboarding data.
+- Secret-backed `LANGSMITH_WORKSPACE_ID` lookup in the Helm app template.
+- `POST /admin/onboarding/jobs` and `GET /admin/onboarding/jobs/{job_id}` for n8n to
+  hand reviewed onboarding data to the app and track provisioning status.
+- `POST /admin/onboarding/jobs/{job_id}/retry` for retrying failed onboarding jobs from
+  the persisted job payload while only accepting the Telegram bot token in the request.
+- Storage for onboarding jobs, tenant owner memberships, business profiles, and business
+  contact points.
+- Importable starter n8n website onboarding workflow using built-in HTTP Request nodes
+  for Resend email API calls.
+- Optional Helm env wiring for n8n Resend email settings used by the onboarding
+  workflow.
+- Collapsed n8n onboarding email settings into a single `ONBOARDING_EMAIL` value used
+  for both Resend sender and SaaS-admin onboarding notifications.
+- `scripts/deploy-local.sh` can now pass n8n Resend API key Secret settings and
+  `N8N_ONBOARDING_EMAIL` into Helm.
+- The n8n onboarding workflow now returns a friendly validation message when the admin
+  email domain does not belong to the submitted website domain.
+- The invalid admin-email branch now ends in a Form completion node so the validation
+  message is visible to the form submitter.
+- The n8n onboarding workflow now imports Node's built-in `url` module for website
+  domain parsing, with Helm wiring for `NODE_FUNCTION_ALLOW_BUILTIN=url`.
+- React/Vite onboarding wizard under `web/` with start validation, review screens,
+  Telegram setup, completion/status, and FastAPI-backed draft reload.
+- FastAPI onboarding session APIs for creating, reading, updating, analyzing, requesting
+  Telegram setup, accepting one-time Telegram setup tokens, and submitting completed
+  sessions into the existing onboarding job flow.
+- Tenant-admin inbox email verification for onboarding sessions, with hashed one-time
+  verification tokens and backend gates that block website analysis, Telegram setup, and
+  final submit until the email is verified.
+- FastAPI email sender boundary with logging and Resend implementations, plus final
+  onboarding confirmation email delivery to the tenant admin and SaaS onboarding address.
+- PostgreSQL and in-memory onboarding session persistence, including hashed one-time
+  Telegram setup token tracking.
+- Helm deployment and service for the onboarding web app, plus deploy script support for
+  building and rolling out the web image.
+- App-owned SaaS-admin Telegram setup email delivery, using the same email sender
+  boundary as tenant-admin verification and final confirmation.
+- SaaS-admin Telegram setup page now shows an onboarding summary before credential entry.
+- Configurable web public URL, CORS origins, onboarding token TTLs, and app email
+  provider.
 
 ### Changed
 
@@ -103,6 +179,19 @@ This project currently uses increment-based milestones instead of semantic versi
 - Removed ConfigMap/startup seed KB loading from the app and Helm chart; KB data should
   now be populated through retrieval storage, future source tools, cloud-document
   connectors, learned support answers, or admin workflows.
+- Reintroduced app-owned onboarding session analysis as a wizard draft step.
+- Moved user-facing onboarding forms out of n8n and into the React/Vite wizard.
+- Disabled the n8n Helm chart by default. The values and templates remain in the chart
+  for optional workflow experiments, but the onboarding wizard no longer calls n8n.
+- Removed tenant Telegram Secret name editing from the SaaS-admin wizard and onboarding
+  API; the onboarding job now derives a deterministic Secret reference.
+- Removed Telegram webhook secret token entry from the SaaS-admin wizard and session API;
+  the app now generates a 32-byte hex webhook secret during Telegram setup.
+- Onboarding job retries now remove prior KB chunks for the same onboarding session before
+  recreating the approved tenant knowledge set, preventing stale or duplicate retry data.
+- Local deploys now default `AGENT_PROVIDER_PROJECT_PROVISIONER` to `api`, matching Helm,
+  so OpenAI/LangSmith project provisioning is attempted when the configured admin Secrets
+  are present.
 - Collapsed conversation status handling into one routing state: `BOT_ACTIVE`,
   `HUMAN_REQUESTED`, and `HUMAN_ACTIVE`.
 - Low-confidence graph replies now return `low_confidence: true` without changing the

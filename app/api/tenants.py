@@ -95,4 +95,6 @@ async def update_tenant_config(
         vector_namespace=update.vector_namespace,
         telegram_secret_name=update.telegram_secret_name,
         whatsapp_secret_name=update.whatsapp_secret_name,
+        web_search_provider=update.web_search_provider,
+        web_search_project_name=update.web_search_project_name,
     )

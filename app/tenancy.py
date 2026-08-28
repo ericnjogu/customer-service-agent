@@ -6,7 +6,7 @@ DEFAULT_TENANT_PLAN = "sme"
 DEFAULT_VECTOR_PROVIDER = "pgvector"
 DEFAULT_VECTOR_ISOLATION_MODE = "shared_collection"
 DEFAULT_VECTOR_COLLECTION = "customer-service"
-SEED_KNOWLEDGE_NAMESPACE = "seed-knowledge"
+SEED_KNOWLEDGE_NAMESPACE = DEFAULT_TENANT_ID
 
 
 def normalize_tenant_id(tenant_id: str | None) -> str:
@@ -32,10 +32,7 @@ def default_langsmith_project(tenant_id: str) -> str:
 
 
 def default_vector_namespace(tenant_id: str) -> str:
-    normalized_tenant_id = normalize_tenant_id(tenant_id)
-    if normalized_tenant_id == DEFAULT_TENANT_ID:
-        return SEED_KNOWLEDGE_NAMESPACE
-    return f"{tenant_slug(normalized_tenant_id)}:{SEED_KNOWLEDGE_NAMESPACE}"
+    return tenant_slug(normalize_tenant_id(tenant_id))
 
 
 def tenant_knowledge_namespace(tenant_id: str) -> str:

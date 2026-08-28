@@ -7,12 +7,25 @@ import asyncpg
 from langchain_core.documents import Document
 
 from app.models import (
+    BusinessContactPointRecord,
+    BusinessProfileRecord,
     ConversationRecord,
     IncomingMessage,
+    OnboardingAdmin,
+    OnboardingBusinessProfile,
+    OnboardingContactPoint,
+    OnboardingEmailVerificationDiagnostic,
+    OnboardingJobRecord,
+    OnboardingProviderProjects,
+    OnboardingSessionRecord,
+    OnboardingSessionUpdate,
+    OnboardingTelegramSetup,
     StoredMessage,
     TenantConfig,
+    TenantMembershipRecord,
     TenantPlan,
     TenantRecord,
+    WebsiteAnalysisResult,
 )
 from app.ports import EmbeddingProvider
 from app.tenancy import DEFAULT_TENANT_PLAN, generate_tenant_id, normalize_tenant_id, tenant_slug
@@ -34,6 +47,17 @@ def vector_literal(values: list[float]) -> str:
     return "[" + ",".join(f"{value:.8f}" for value in values) + "]"
 
 
+def website_domain_sql(column: str) -> str:
+    return (
+        "split_part("
+        "split_part("
+        f"regexp_replace(regexp_replace(lower({column}), '^https?://', ''), "
+        "'^www\\.', ''), "
+        "'/', 1), "
+        "':', 1)"
+    )
+
+
 def decode_metadata(value: object) -> dict:
     if isinstance(value, dict):
         return value
@@ -42,6 +66,10 @@ def decode_metadata(value: object) -> dict:
         if isinstance(decoded, dict):
             return decoded
     return {}
+
+
+def token_fingerprint(token_hash: str | None) -> str | None:
+    return token_hash[:12] if token_hash else None
 
 
 def row_to_tenant_config(row: asyncpg.Record) -> TenantConfig:
@@ -54,6 +82,78 @@ def row_to_tenant_config(row: asyncpg.Record) -> TenantConfig:
 
 def row_to_tenant(row: asyncpg.Record) -> TenantRecord:
     return TenantRecord(**dict(row))
+
+
+def row_to_onboarding_job(row: asyncpg.Record) -> OnboardingJobRecord:
+    return OnboardingJobRecord(**dict(row))
+
+
+def row_to_onboarding_session(row: asyncpg.Record) -> OnboardingSessionRecord:
+    data = dict(row)
+    payload = decode_metadata(data.pop("session_payload"))
+    return OnboardingSessionRecord(
+        session_id=data["session_id"],
+        status=data["status"],
+        current_step=data["current_step"],
+        website_url=data["website_url"],
+        website_verification_email=data.get("website_verification_email"),
+        admin=payload["admin"],
+        terms_version=payload.get("terms_version"),
+        terms_accepted_at=payload.get("terms_accepted_at"),
+        username_email_verified=data["username_email_verified"],
+        username_email_verification_expires_at=data[
+            "username_email_verification_expires_at"
+        ],
+        website_email_verified=data["website_email_verified"],
+        website_email_verification_expires_at=data[
+            "website_email_verification_expires_at"
+        ],
+        analysis=payload.get("analysis"),
+        business_profile=payload.get("business_profile"),
+        agent_name=payload.get("agent_name"),
+        agent_description=payload.get("agent_description"),
+        answer_prompt_instructions=payload.get("answer_prompt_instructions"),
+        contact_info=payload.get("contact_info") or payload.get("social_links") or [],
+        telegram=payload.get("telegram"),
+        provider_projects=payload.get("provider_projects") or {},
+        knowledge_sources=payload.get("knowledge_sources") or [],
+        telegram_setup_url=data["telegram_setup_url"],
+        telegram_setup_token_expires_at=data["telegram_setup_token_expires_at"],
+        submitted_job_id=data["submitted_job_id"],
+        error=data["error"],
+        created_at=data["created_at"],
+        updated_at=data["updated_at"],
+    )
+
+
+def session_payload(session: OnboardingSessionRecord) -> dict:
+    return {
+        "admin": session.admin.model_dump(mode="json"),
+        "terms_version": session.terms_version,
+        "terms_accepted_at": model_to_json(session.terms_accepted_at),
+        "analysis": model_to_json(session.analysis),
+        "business_profile": model_to_json(session.business_profile),
+        "agent_name": session.agent_name,
+        "agent_description": session.agent_description,
+        "answer_prompt_instructions": session.answer_prompt_instructions,
+        "contact_info": [point.model_dump(mode="json") for point in session.contact_info],
+        "telegram": model_to_json(session.telegram),
+        "provider_projects": session.provider_projects.model_dump(mode="json"),
+        "knowledge_sources": model_to_json(session.knowledge_sources),
+    }
+
+
+def model_to_json(value: object) -> object:
+    if value is None:
+        return None
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        return model_dump(mode="json")
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, list):
+        return [model_to_json(item) for item in value]
+    return value
 
 
 class PostgresDatabase:
@@ -319,21 +419,24 @@ class PgVectorRetrievalStore:
                 strict=True,
             ):
                 source = str(document.metadata.get("source", "unknown"))
+                source_url = document.metadata.get("source_url")
                 await connection.execute(
                     """
                     INSERT INTO knowledge_documents(
                         namespace,
                         chunk_id,
                         source,
+                        source_url,
                         content,
                         content_hash,
                         metadata,
                         embedding
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::vector)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::vector)
                     ON CONFLICT (namespace, chunk_id) DO UPDATE
                     SET content = EXCLUDED.content,
                         source = EXCLUDED.source,
+                        source_url = EXCLUDED.source_url,
                         content_hash = EXCLUDED.content_hash,
                         metadata = EXCLUDED.metadata,
                         embedding = EXCLUDED.embedding,
@@ -342,6 +445,7 @@ class PgVectorRetrievalStore:
                     namespace,
                     chunk_id,
                     source,
+                    str(source_url) if source_url else None,
                     document.page_content,
                     document_hash,
                     json.dumps(document.metadata),
@@ -353,6 +457,32 @@ class PgVectorRetrievalStore:
                 incoming_chunk_ids_by_source,
             )
         logger.info("Finished pgvector knowledge upsert for namespace=%s", namespace)
+
+    async def delete_by_metadata(
+        self,
+        namespace: str,
+        metadata_key: str,
+        metadata_value: str,
+    ) -> None:
+        assert self.database.pool
+        result = await self.database.pool.execute(
+            """
+            DELETE FROM knowledge_documents
+            WHERE namespace = $1
+              AND metadata ->> $2 = $3
+            """,
+            namespace,
+            metadata_key,
+            metadata_value,
+        )
+        logger.info(
+            "Deleted pgvector knowledge documents by metadata namespace=%s "
+            "metadata_key=%s metadata_value=%s result=%s",
+            namespace,
+            metadata_key,
+            metadata_value,
+            result,
+        )
 
     async def _delete_removed_chunks(
         self,
@@ -385,8 +515,10 @@ class PgVectorRetrievalStore:
 
         rows = await self.database.pool.fetch(
             """
-            SELECT content, metadata, created_at, 1 - (embedding <=> $1::vector) AS score
-            FROM knowledge_documents WHERE namespace = $2
+            SELECT content, source_url, metadata, created_at,
+                   1 - (embedding <=> $1::vector) AS score
+            FROM knowledge_documents
+            WHERE namespace = $2
             ORDER BY embedding <=> $1::vector LIMIT $3
             """,
             vector_literal(query_embedding),
@@ -398,6 +530,7 @@ class PgVectorRetrievalStore:
                 page_content=row["content"],
                 metadata={
                     **decode_metadata(row["metadata"]),
+                    "source_url": row["source_url"],
                     "created_at": row["created_at"].isoformat(),
                     "score": row["score"],
                 },
@@ -458,6 +591,8 @@ class PostgresTenantConfigRepository:
                 tenant_configs.vector_namespace,
                 tenant_configs.telegram_secret_name,
                 tenant_configs.whatsapp_secret_name,
+                tenant_configs.web_search_provider,
+                tenant_configs.web_search_project_name,
                 tenant_configs.created_at,
                 tenant_configs.updated_at
             FROM tenant_configs
@@ -492,6 +627,8 @@ class PostgresTenantConfigRepository:
         vector_namespace: str | None = None,
         telegram_secret_name: str | None = None,
         whatsapp_secret_name: str | None = None,
+        web_search_provider: str | None = None,
+        web_search_project_name: str | None = None,
     ) -> TenantConfig:
         assert self.database.pool
         existing = await self.get(tenant_id)
@@ -514,9 +651,15 @@ class PostgresTenantConfigRepository:
                 vector_collection,
                 vector_namespace,
                 telegram_secret_name,
-                whatsapp_secret_name
+                whatsapp_secret_name,
+                web_search_provider,
+                web_search_project_name
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8,
+                $9, $10, $11, $12, $13, $14, $15, $16,
+                $17, $18
+            )
             ON CONFLICT (tenant_id) DO UPDATE
             SET selected_plan = EXCLUDED.selected_plan,
                 answer_prompt_instructions = EXCLUDED.answer_prompt_instructions,
@@ -533,6 +676,8 @@ class PostgresTenantConfigRepository:
                 vector_namespace = EXCLUDED.vector_namespace,
                 telegram_secret_name = EXCLUDED.telegram_secret_name,
                 whatsapp_secret_name = EXCLUDED.whatsapp_secret_name,
+                web_search_provider = EXCLUDED.web_search_provider,
+                web_search_project_name = EXCLUDED.web_search_project_name,
                 updated_at = now()
             """,
             normalized_tenant_id,
@@ -565,6 +710,12 @@ class PostgresTenantConfigRepository:
             whatsapp_secret_name
             if whatsapp_secret_name is not None
             else existing.whatsapp_secret_name,
+            web_search_provider
+            if web_search_provider is not None
+            else existing.web_search_provider,
+            web_search_project_name
+            if web_search_project_name is not None
+            else existing.web_search_project_name,
         )
         if enabled_features is not None:
             await self.database.pool.execute(
@@ -657,6 +808,783 @@ class PostgresTenantRepository:
         raise RuntimeError("Could not generate a unique tenant id and slug")
 
 
+class PostgresOnboardingRepository:
+    def __init__(self, database: PostgresDatabase) -> None:
+        self.database = database
+
+    async def initialize(self) -> None:
+        return None
+
+    async def create_job(
+        self,
+        *,
+        idempotency_key: str,
+        request_payload: dict,
+    ) -> OnboardingJobRecord:
+        assert self.database.pool
+        row = await self.database.pool.fetchrow(
+            """
+            INSERT INTO onboarding_jobs(idempotency_key, request_payload)
+            VALUES ($1, $2::jsonb)
+            ON CONFLICT (idempotency_key) DO UPDATE
+            SET idempotency_key = EXCLUDED.idempotency_key
+            RETURNING job_id, idempotency_key, status, tenant_id, tenant_slug, error,
+                      created_at, updated_at
+            """,
+            idempotency_key,
+            json.dumps(request_payload),
+        )
+        return row_to_onboarding_job(row)
+
+    async def get_job(self, job_id: UUID) -> OnboardingJobRecord | None:
+        assert self.database.pool
+        row = await self.database.pool.fetchrow(
+            """
+            SELECT job_id, idempotency_key, status, tenant_id, tenant_slug, error,
+                   created_at, updated_at
+            FROM onboarding_jobs
+            WHERE job_id = $1
+            """,
+            job_id,
+        )
+        return row_to_onboarding_job(row) if row else None
+
+    async def get_job_payload(self, job_id: UUID) -> dict | None:
+        assert self.database.pool
+        row = await self.database.pool.fetchrow(
+            """
+            SELECT request_payload
+            FROM onboarding_jobs
+            WHERE job_id = $1
+            """,
+            job_id,
+        )
+        if not row:
+            return None
+        return decode_metadata(row["request_payload"])
+
+    async def get_job_by_idempotency_key(
+        self,
+        idempotency_key: str,
+    ) -> OnboardingJobRecord | None:
+        assert self.database.pool
+        row = await self.database.pool.fetchrow(
+            """
+            SELECT job_id, idempotency_key, status, tenant_id, tenant_slug, error,
+                   created_at, updated_at
+            FROM onboarding_jobs
+            WHERE idempotency_key = $1
+            """,
+            idempotency_key,
+        )
+        return row_to_onboarding_job(row) if row else None
+
+    async def mark_job_accepted(self, job_id: UUID) -> OnboardingJobRecord:
+        return await self._update_job(
+            job_id,
+            status="accepted",
+            error=None,
+        )
+
+    async def mark_job_running(self, job_id: UUID) -> OnboardingJobRecord:
+        return await self._update_job(job_id, status="running", error=None)
+
+    async def mark_job_succeeded(
+        self,
+        job_id: UUID,
+        *,
+        tenant_id: str,
+        tenant_slug: str,
+    ) -> OnboardingJobRecord:
+        return await self._update_job(
+            job_id,
+            status="succeeded",
+            tenant_id=tenant_id,
+            tenant_slug=tenant_slug,
+            error=None,
+        )
+
+    async def mark_job_failed(
+        self,
+        job_id: UUID,
+        *,
+        error: str,
+        tenant_id: str | None = None,
+        tenant_slug: str | None = None,
+    ) -> OnboardingJobRecord:
+        return await self._update_job(
+            job_id,
+            status="failed",
+            error=error,
+            tenant_id=tenant_id,
+            tenant_slug=tenant_slug,
+        )
+
+    async def save_business_profile(
+        self,
+        tenant_id: str,
+        profile: OnboardingBusinessProfile,
+    ) -> BusinessProfileRecord:
+        assert self.database.pool
+        row = await self.database.pool.fetchrow(
+            """
+            INSERT INTO business_profiles(
+                tenant_id,
+                business_name,
+                website_url,
+                location_name,
+                physical_location,
+                business_phone,
+                business_email,
+                google_place_url
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (tenant_id) DO UPDATE
+            SET business_name = EXCLUDED.business_name,
+                website_url = EXCLUDED.website_url,
+                location_name = EXCLUDED.location_name,
+                physical_location = EXCLUDED.physical_location,
+                business_phone = EXCLUDED.business_phone,
+                business_email = EXCLUDED.business_email,
+                google_place_url = EXCLUDED.google_place_url,
+                updated_at = now()
+            RETURNING tenant_id, business_name, website_url, location_name,
+                      physical_location, business_phone, business_email,
+                      google_place_url, created_at, updated_at
+            """,
+            tenant_id,
+            profile.business_name,
+            str(profile.website_url),
+            profile.location_name,
+            profile.physical_location,
+            profile.business_phone,
+            profile.business_email,
+            str(profile.google_place_url) if profile.google_place_url else None,
+        )
+        return BusinessProfileRecord(**dict(row))
+
+    async def replace_contact_points(
+        self,
+        tenant_id: str,
+        contact_points: list[OnboardingContactPoint],
+    ) -> list[BusinessContactPointRecord]:
+        assert self.database.pool
+        async with self.database.pool.acquire() as connection:
+            async with connection.transaction():
+                await connection.execute(
+                    "DELETE FROM business_contact_points WHERE tenant_id = $1",
+                    tenant_id,
+                )
+                rows = []
+                for point in contact_points:
+                    row = await connection.fetchrow(
+                        """
+                        INSERT INTO business_contact_points(
+                            tenant_id, kind, label, value, url, is_primary
+                        )
+                        VALUES ($1, $2, $3, $4, $5, $6)
+                        RETURNING tenant_id, kind, label, value, url, is_primary, created_at
+                        """,
+                        tenant_id,
+                        point.kind,
+                        point.label,
+                        point.value,
+                        str(point.url) if point.url else None,
+                        point.is_primary,
+                    )
+                    rows.append(row)
+        return [BusinessContactPointRecord(**dict(row)) for row in rows]
+
+    async def save_owner_membership(
+        self,
+        tenant_id: str,
+        admin: OnboardingAdmin,
+    ) -> TenantMembershipRecord:
+        assert self.database.pool
+        row = await self.database.pool.fetchrow(
+            """
+            INSERT INTO tenant_memberships(tenant_id, user_email, user_name, role)
+            VALUES ($1, $2, $3, 'owner')
+            ON CONFLICT (tenant_id, user_email) DO UPDATE
+            SET user_name = EXCLUDED.user_name,
+                role = EXCLUDED.role
+            RETURNING tenant_id, user_email, user_name, role, created_at
+            """,
+            tenant_id,
+            admin.username_email.lower(),
+            admin.name,
+        )
+        return TenantMembershipRecord(**dict(row))
+
+    async def create_session(
+        self,
+        *,
+        admin: OnboardingAdmin,
+        terms_version: str,
+        terms_accepted_at: datetime,
+    ) -> OnboardingSessionRecord:
+        assert self.database.pool
+        payload = {
+            "admin": admin.model_dump(mode="json"),
+            "terms_version": terms_version,
+            "terms_accepted_at": terms_accepted_at.isoformat(),
+        }
+        row = await self.database.pool.fetchrow(
+            """
+            INSERT INTO onboarding_sessions(admin_email, session_payload)
+            VALUES ($1, $2::jsonb)
+            RETURNING session_id, status, current_step, website_url, admin_email,
+                      website_verification_email, session_payload,
+                      username_email_verified, username_email_verification_expires_at,
+                      website_email_verified, website_email_verification_expires_at,
+                      telegram_setup_url,
+                      telegram_setup_token_expires_at, submitted_job_id, error,
+                      created_at, updated_at
+            """,
+            admin.username_email.lower(),
+            json.dumps(payload),
+        )
+        return row_to_onboarding_session(row)
+
+    async def save_session_website(
+        self,
+        session_id: UUID,
+        *,
+        website_url: str,
+        website_verification_email: str,
+    ) -> OnboardingSessionRecord:
+        session = await self._require_session(session_id)
+        return await self._update_session_payload(
+            session_id,
+            status="website_verification_pending",
+            current_step="website-email-verification",
+            payload=session_payload(session),
+            website_url=website_url,
+            website_verification_email=website_verification_email.lower(),
+            website_email_verified=False,
+            clear_website_email_verification_token_used_at=True,
+        )
+
+    async def get_active_session_by_website_domain(
+        self,
+        website_domain: str,
+    ) -> OnboardingSessionRecord | None:
+        assert self.database.pool
+        row = await self.database.pool.fetchrow(
+            f"""
+            SELECT session_id, status, current_step, website_url, admin_email,
+                   website_verification_email, session_payload,
+                   username_email_verified, username_email_verification_expires_at,
+                   website_email_verified, website_email_verification_expires_at,
+                   telegram_setup_url,
+                   telegram_setup_token_expires_at, submitted_job_id, error,
+                   created_at, updated_at
+            FROM onboarding_sessions
+            WHERE status <> 'failed'
+              AND {website_domain_sql('website_url')} = $1
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            website_domain,
+        )
+        return row_to_onboarding_session(row) if row else None
+
+    async def get_business_profile_by_website_domain(
+        self,
+        website_domain: str,
+    ) -> BusinessProfileRecord | None:
+        assert self.database.pool
+        row = await self.database.pool.fetchrow(
+            f"""
+            SELECT tenant_id, business_name, website_url, location_name,
+                   physical_location, business_phone, business_email,
+                   google_place_url, created_at, updated_at
+            FROM business_profiles
+            WHERE {website_domain_sql('website_url')} = $1
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            website_domain,
+        )
+        return BusinessProfileRecord(**dict(row)) if row else None
+
+    async def get_session(self, session_id: UUID) -> OnboardingSessionRecord | None:
+        assert self.database.pool
+        row = await self.database.pool.fetchrow(
+            """
+            SELECT session_id, status, current_step, website_url, admin_email,
+                   website_verification_email, session_payload,
+                   username_email_verified, username_email_verification_expires_at,
+                   website_email_verified, website_email_verification_expires_at,
+                   telegram_setup_url,
+                   telegram_setup_token_expires_at, submitted_job_id, error,
+                   created_at, updated_at
+            FROM onboarding_sessions
+            WHERE session_id = $1
+            """,
+            session_id,
+        )
+        return row_to_onboarding_session(row) if row else None
+
+    async def update_session(
+        self,
+        session_id: UUID,
+        update: OnboardingSessionUpdate,
+    ) -> OnboardingSessionRecord:
+        session = await self._require_session(session_id)
+        current_step = update.current_step or session.current_step
+        payload = session_payload(session)
+        for field in update.model_fields_set:
+            if field == "current_step":
+                continue
+            value = getattr(update, field)
+            payload[field] = model_to_json(value)
+        return await self._update_session_payload(
+            session_id,
+            status=session.status,
+            current_step=current_step,
+            payload=payload,
+        )
+
+    async def save_session_analysis(
+        self,
+        session_id: UUID,
+        *,
+        analysis: WebsiteAnalysisResult,
+    ) -> OnboardingSessionRecord:
+        session = await self._require_session(session_id)
+        payload = session_payload(session)
+        payload.update(
+            {
+                "analysis": analysis.model_dump(mode="json"),
+                "business_profile": analysis.business_profile.model_dump(mode="json"),
+                "agent_name": analysis.agent_name,
+                "agent_description": analysis.agent_description,
+                "answer_prompt_instructions": analysis.answer_prompt_instructions,
+                "contact_info": [
+                    point.model_dump(mode="json") for point in analysis.contact_info
+                ],
+                "knowledge_sources": [
+                    source.model_dump(mode="json")
+                    for source in analysis.knowledge_sources
+                ],
+            }
+        )
+        return await self._update_session_payload(
+            session_id,
+            status="ready_for_review",
+            current_step="analysis",
+            payload=payload,
+        )
+
+    async def save_username_email_verification_token(
+        self,
+        session_id: UUID,
+        *,
+        token_hash: str,
+        expires_at: datetime,
+    ) -> OnboardingSessionRecord:
+        session = await self._require_session(session_id)
+        return await self._update_session_payload(
+            session_id,
+            status="username_email_verification_pending",
+            current_step="username-email-verification",
+            payload=session_payload(session),
+            username_email_verified=False,
+            username_email_verification_token_hash=token_hash,
+            username_email_verification_expires_at=expires_at,
+            clear_username_email_verification_token_used_at=True,
+        )
+
+    async def consume_username_email_verification_token(
+        self,
+        session_id: UUID,
+        *,
+        token_hash: str,
+    ) -> bool:
+        assert self.database.pool
+        row = await self.database.pool.fetchrow(
+            """
+            UPDATE onboarding_sessions
+            SET username_email_verified = true,
+                username_email_verification_token_used_at = now(),
+                status = 'draft',
+                current_step = 'website',
+                updated_at = now()
+            WHERE session_id = $1
+              AND username_email_verification_token_hash = $2
+              AND username_email_verification_token_used_at IS NULL
+              AND username_email_verification_expires_at > now()
+            RETURNING session_id
+            """,
+            session_id,
+            token_hash,
+        )
+        return row is not None
+
+    async def inspect_username_email_verification_token(
+        self,
+        session_id: UUID,
+        *,
+        token_hash: str,
+    ) -> OnboardingEmailVerificationDiagnostic:
+        assert self.database.pool
+        row = await self.database.pool.fetchrow(
+            """
+            SELECT username_email_verified AS email_verified,
+                   username_email_verification_token_hash AS token_hash,
+                   username_email_verification_expires_at AS expires_at,
+                   username_email_verification_token_used_at AS used_at,
+                   username_email_verification_expires_at <= now() AS token_expired
+            FROM onboarding_sessions
+            WHERE session_id = $1
+            """,
+            session_id,
+        )
+        if row is None:
+            return OnboardingEmailVerificationDiagnostic(session_exists=False)
+
+        stored_token_hash = row["token_hash"]
+        used_at = row["used_at"]
+        expires_at = row["expires_at"]
+        return OnboardingEmailVerificationDiagnostic(
+            session_exists=True,
+            admin_email_verified=row["email_verified"],
+            has_token_hash=stored_token_hash is not None,
+            token_matches=stored_token_hash == token_hash,
+            token_used=used_at is not None,
+            token_expired=bool(row["token_expired"]) if expires_at else False,
+            expires_at=expires_at,
+            used_at=used_at,
+            submitted_token_fingerprint=token_fingerprint(token_hash),
+            stored_token_fingerprint=token_fingerprint(stored_token_hash),
+        )
+
+    async def save_website_email_verification_token(
+        self,
+        session_id: UUID,
+        *,
+        token_hash: str,
+        expires_at: datetime,
+    ) -> OnboardingSessionRecord:
+        session = await self._require_session(session_id)
+        return await self._update_session_payload(
+            session_id,
+            status="website_verification_pending",
+            current_step="website-email-verification",
+            payload=session_payload(session),
+            website_email_verified=False,
+            website_email_verification_token_hash=token_hash,
+            website_email_verification_expires_at=expires_at,
+            clear_website_email_verification_token_used_at=True,
+        )
+
+    async def consume_website_email_verification_token(
+        self,
+        session_id: UUID,
+        *,
+        token_hash: str,
+    ) -> bool:
+        assert self.database.pool
+        row = await self.database.pool.fetchrow(
+            """
+            UPDATE onboarding_sessions
+            SET website_email_verified = true,
+                website_email_verification_token_used_at = now(),
+                status = 'draft',
+                current_step = 'analyzing',
+                updated_at = now()
+            WHERE session_id = $1
+              AND website_email_verification_token_hash = $2
+              AND website_email_verification_token_used_at IS NULL
+              AND website_email_verification_expires_at > now()
+            RETURNING session_id
+            """,
+            session_id,
+            token_hash,
+        )
+        return row is not None
+
+    async def inspect_website_email_verification_token(
+        self,
+        session_id: UUID,
+        *,
+        token_hash: str,
+    ) -> OnboardingEmailVerificationDiagnostic:
+        assert self.database.pool
+        row = await self.database.pool.fetchrow(
+            """
+            SELECT website_email_verified AS email_verified,
+                   website_email_verification_token_hash AS token_hash,
+                   website_email_verification_expires_at AS expires_at,
+                   website_email_verification_token_used_at AS used_at,
+                   website_email_verification_expires_at <= now() AS token_expired
+            FROM onboarding_sessions
+            WHERE session_id = $1
+            """,
+            session_id,
+        )
+        if row is None:
+            return OnboardingEmailVerificationDiagnostic(session_exists=False)
+
+        stored_token_hash = row["token_hash"]
+        used_at = row["used_at"]
+        expires_at = row["expires_at"]
+        return OnboardingEmailVerificationDiagnostic(
+            session_exists=True,
+            admin_email_verified=row["email_verified"],
+            has_token_hash=stored_token_hash is not None,
+            token_matches=stored_token_hash == token_hash,
+            token_used=used_at is not None,
+            token_expired=bool(row["token_expired"]) if expires_at else False,
+            expires_at=expires_at,
+            used_at=used_at,
+            submitted_token_fingerprint=token_fingerprint(token_hash),
+            stored_token_fingerprint=token_fingerprint(stored_token_hash),
+        )
+
+    async def save_telegram_setup_token(
+        self,
+        session_id: UUID,
+        *,
+        token_hash: str,
+        setup_url: str,
+        expires_at: datetime,
+    ) -> OnboardingSessionRecord:
+        session = await self._require_session(session_id)
+        return await self._update_session_payload(
+            session_id,
+            status="awaiting_telegram_setup",
+            current_step="telegram-setup",
+            payload=session_payload(session),
+            telegram_setup_url=setup_url,
+            telegram_setup_token_hash=token_hash,
+            telegram_setup_token_expires_at=expires_at,
+            clear_telegram_setup_token_used_at=True,
+        )
+
+    async def consume_telegram_setup_token(
+        self,
+        session_id: UUID,
+        *,
+        token_hash: str,
+    ) -> bool:
+        assert self.database.pool
+        row = await self.database.pool.fetchrow(
+            """
+            UPDATE onboarding_sessions
+            SET telegram_setup_token_used_at = now(), updated_at = now()
+            WHERE session_id = $1
+              AND telegram_setup_token_hash = $2
+              AND telegram_setup_token_used_at IS NULL
+              AND telegram_setup_token_expires_at > now()
+            RETURNING session_id
+            """,
+            session_id,
+            token_hash,
+        )
+        return row is not None
+
+    async def save_telegram_setup(
+        self,
+        session_id: UUID,
+        telegram: OnboardingTelegramSetup,
+    ) -> OnboardingSessionRecord:
+        session = await self._require_session(session_id)
+        payload = session_payload(session)
+        payload["telegram"] = telegram.model_dump(mode="json")
+        return await self._update_session_payload(
+            session_id,
+            status="ready_to_submit",
+            current_step="submit",
+            payload=payload,
+        )
+
+    async def save_provider_projects(
+        self,
+        session_id: UUID,
+        provider_projects: OnboardingProviderProjects,
+    ) -> OnboardingSessionRecord:
+        session = await self._require_session(session_id)
+        payload = session_payload(session)
+        payload["provider_projects"] = provider_projects.model_dump(mode="json")
+        return await self._update_session_payload(
+            session_id,
+            status=session.status,
+            current_step=session.current_step,
+            payload=payload,
+        )
+
+    async def mark_session_submitted(
+        self,
+        session_id: UUID,
+        *,
+        job_id: UUID,
+    ) -> OnboardingSessionRecord:
+        session = await self._require_session(session_id)
+        return await self._update_session_payload(
+            session_id,
+            status="submitted",
+            current_step="complete",
+            payload=session_payload(session),
+            submitted_job_id=job_id,
+            error=None,
+        )
+
+    async def mark_session_failed(
+        self,
+        session_id: UUID,
+        *,
+        error: str,
+    ) -> OnboardingSessionRecord:
+        session = await self._require_session(session_id)
+        return await self._update_session_payload(
+            session_id,
+            status="failed",
+            current_step=session.current_step,
+            payload=session_payload(session),
+            error=error,
+        )
+
+    async def _update_job(self, job_id: UUID, **updates) -> OnboardingJobRecord:
+        assert self.database.pool
+        existing = await self.get_job(job_id)
+        if existing is None:
+            raise KeyError(f"Onboarding job not found: {job_id}")
+        row = await self.database.pool.fetchrow(
+            """
+            UPDATE onboarding_jobs
+            SET status = $2,
+                tenant_id = $3,
+                tenant_slug = $4,
+                error = $5,
+                updated_at = now()
+            WHERE job_id = $1
+            RETURNING job_id, idempotency_key, status, tenant_id, tenant_slug, error,
+                      created_at, updated_at
+            """,
+            job_id,
+            updates.get("status", existing.status),
+            updates.get("tenant_id", existing.tenant_id),
+            updates.get("tenant_slug", existing.tenant_slug),
+            updates.get("error", existing.error),
+        )
+        return row_to_onboarding_job(row)
+
+    async def _require_session(self, session_id: UUID) -> OnboardingSessionRecord:
+        session = await self.get_session(session_id)
+        if session is None:
+            raise KeyError(f"Onboarding session not found: {session_id}")
+        return session
+
+    async def _update_session_payload(
+        self,
+        session_id: UUID,
+        *,
+        status: str,
+        current_step: str,
+        payload: dict,
+        website_url: str | None = None,
+        website_verification_email: str | None = None,
+        username_email_verified: bool | None = None,
+        username_email_verification_token_hash: str | None = None,
+        username_email_verification_expires_at: datetime | None = None,
+        username_email_verification_token_used_at: datetime | None = None,
+        clear_username_email_verification_token_used_at: bool = False,
+        website_email_verified: bool | None = None,
+        website_email_verification_token_hash: str | None = None,
+        website_email_verification_expires_at: datetime | None = None,
+        website_email_verification_token_used_at: datetime | None = None,
+        clear_website_email_verification_token_used_at: bool = False,
+        telegram_setup_url: str | None = None,
+        telegram_setup_token_hash: str | None = None,
+        telegram_setup_token_expires_at: datetime | None = None,
+        telegram_setup_token_used_at: datetime | None = None,
+        clear_telegram_setup_token_used_at: bool = False,
+        submitted_job_id: UUID | None = None,
+        error: str | None = None,
+    ) -> OnboardingSessionRecord:
+        assert self.database.pool
+        row = await self.database.pool.fetchrow(
+            """
+            UPDATE onboarding_sessions
+            SET status = $2,
+                current_step = $3,
+                session_payload = $4::jsonb,
+                website_url = COALESCE($5, website_url),
+                website_verification_email = COALESCE($6, website_verification_email),
+                username_email_verified = COALESCE($7, username_email_verified),
+                username_email_verification_token_hash = COALESCE(
+                    $8,
+                    username_email_verification_token_hash
+                ),
+                username_email_verification_expires_at = COALESCE(
+                    $9,
+                    username_email_verification_expires_at
+                ),
+                username_email_verification_token_used_at = CASE
+                    WHEN $10 THEN NULL
+                    ELSE COALESCE($11, username_email_verification_token_used_at)
+                END,
+                website_email_verified = COALESCE($12, website_email_verified),
+                website_email_verification_token_hash = COALESCE(
+                    $13,
+                    website_email_verification_token_hash
+                ),
+                website_email_verification_expires_at = COALESCE(
+                    $14,
+                    website_email_verification_expires_at
+                ),
+                website_email_verification_token_used_at = CASE
+                    WHEN $15 THEN NULL
+                    ELSE COALESCE($16, website_email_verification_token_used_at)
+                END,
+                telegram_setup_url = COALESCE($17, telegram_setup_url),
+                telegram_setup_token_hash = COALESCE($18, telegram_setup_token_hash),
+                telegram_setup_token_expires_at = COALESCE($19, telegram_setup_token_expires_at),
+                telegram_setup_token_used_at = CASE
+                    WHEN $23 THEN NULL
+                    ELSE COALESCE($20, telegram_setup_token_used_at)
+                END,
+                submitted_job_id = COALESCE($21, submitted_job_id),
+                error = $22,
+                updated_at = now()
+            WHERE session_id = $1
+            RETURNING session_id, status, current_step, website_url, admin_email,
+                      website_verification_email, session_payload,
+                      username_email_verified, username_email_verification_expires_at,
+                      website_email_verified, website_email_verification_expires_at,
+                      telegram_setup_url,
+                      telegram_setup_token_expires_at, submitted_job_id, error,
+                      created_at, updated_at
+            """,
+            session_id,
+            status,
+            current_step,
+            json.dumps(payload),
+            website_url,
+            website_verification_email,
+            username_email_verified,
+            username_email_verification_token_hash,
+            username_email_verification_expires_at,
+            clear_username_email_verification_token_used_at,
+            username_email_verification_token_used_at,
+            website_email_verified,
+            website_email_verification_token_hash,
+            website_email_verification_expires_at,
+            clear_website_email_verification_token_used_at,
+            website_email_verification_token_used_at,
+            telegram_setup_url,
+            telegram_setup_token_hash,
+            telegram_setup_token_expires_at,
+            telegram_setup_token_used_at,
+            submitted_job_id,
+            error,
+            clear_telegram_setup_token_used_at,
+        )
+        return row_to_onboarding_session(row)
+
+
 def schema(embedding_dimensions: int) -> str:
     return f"""
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -725,6 +1653,8 @@ CREATE TABLE IF NOT EXISTS tenant_configs (
     vector_namespace text,
     telegram_secret_name text,
     whatsapp_secret_name text,
+    web_search_provider text,
+    web_search_project_name text,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -738,11 +1668,95 @@ CREATE TABLE IF NOT EXISTS tenant_enabled_features (
     PRIMARY KEY (tenant_id, feature_key)
 );
 
+CREATE TABLE IF NOT EXISTS onboarding_jobs (
+    job_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    idempotency_key text NOT NULL UNIQUE,
+    status text NOT NULL DEFAULT 'accepted'
+        CHECK (status IN ('accepted', 'running', 'succeeded', 'failed')),
+    tenant_id text,
+    tenant_slug text,
+    request_payload jsonb NOT NULL DEFAULT '{{}}',
+    error text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS onboarding_sessions (
+    session_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    status text NOT NULL DEFAULT 'draft'
+        CHECK (status IN (
+            'username_email_verification_pending',
+            'website_verification_pending',
+            'draft',
+            'ready_for_review',
+            'awaiting_telegram_setup',
+            'ready_to_submit',
+            'submitted',
+            'failed'
+    )),
+    current_step text NOT NULL DEFAULT 'start',
+    website_url text,
+    admin_email text NOT NULL,
+    session_payload jsonb NOT NULL DEFAULT '{{}}',
+    website_verification_email text,
+    username_email_verified boolean NOT NULL DEFAULT false,
+    username_email_verification_token_hash text,
+    username_email_verification_expires_at timestamptz,
+    username_email_verification_token_used_at timestamptz,
+    website_email_verified boolean NOT NULL DEFAULT false,
+    website_email_verification_token_hash text,
+    website_email_verification_expires_at timestamptz,
+    website_email_verification_token_used_at timestamptz,
+    telegram_setup_url text,
+    telegram_setup_token_hash text,
+    telegram_setup_token_expires_at timestamptz,
+    telegram_setup_token_used_at timestamptz,
+    submitted_job_id uuid REFERENCES onboarding_jobs(job_id),
+    error text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS tenant_memberships (
+    tenant_id text NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+    user_email text NOT NULL,
+    user_name text NOT NULL,
+    role text NOT NULL DEFAULT 'owner'
+        CHECK (role IN ('owner', 'admin', 'agent')),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, user_email)
+);
+
+CREATE TABLE IF NOT EXISTS business_profiles (
+    tenant_id text PRIMARY KEY REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+    business_name text NOT NULL,
+    website_url text NOT NULL,
+    location_name text NOT NULL,
+    physical_location text NOT NULL,
+    business_phone text NOT NULL,
+    business_email text NOT NULL,
+    google_place_url text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS business_contact_points (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id text NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+    kind text NOT NULL,
+    label text,
+    value text,
+    url text,
+    is_primary boolean NOT NULL DEFAULT false,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS knowledge_documents (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     namespace text NOT NULL,
     chunk_id text NOT NULL,
     source text NOT NULL,
+    source_url text,
     content text NOT NULL,
     content_hash text,
     metadata jsonb NOT NULL DEFAULT '{{}}',
@@ -840,6 +1854,107 @@ DROP COLUMN IF EXISTS category;
 CREATE INDEX IF NOT EXISTS tenant_enabled_features_feature_key_idx
 ON tenant_enabled_features(feature_key);
 
+CREATE INDEX IF NOT EXISTS onboarding_jobs_status_idx
+ON onboarding_jobs(status);
+
+CREATE INDEX IF NOT EXISTS onboarding_sessions_status_idx
+ON onboarding_sessions(status);
+
+CREATE INDEX IF NOT EXISTS onboarding_sessions_admin_email_idx
+ON onboarding_sessions(admin_email);
+
+ALTER TABLE onboarding_sessions
+ALTER COLUMN website_url DROP NOT NULL;
+
+ALTER TABLE onboarding_sessions
+ADD COLUMN IF NOT EXISTS website_verification_email text;
+
+ALTER TABLE onboarding_sessions
+ADD COLUMN IF NOT EXISTS username_email_verified boolean NOT NULL DEFAULT false;
+
+ALTER TABLE onboarding_sessions
+ADD COLUMN IF NOT EXISTS username_email_verification_token_hash text;
+
+ALTER TABLE onboarding_sessions
+ADD COLUMN IF NOT EXISTS username_email_verification_expires_at timestamptz;
+
+ALTER TABLE onboarding_sessions
+ADD COLUMN IF NOT EXISTS username_email_verification_token_used_at timestamptz;
+
+ALTER TABLE onboarding_sessions
+ADD COLUMN IF NOT EXISTS website_email_verified boolean NOT NULL DEFAULT false;
+
+ALTER TABLE onboarding_sessions
+ADD COLUMN IF NOT EXISTS website_email_verification_token_hash text;
+
+ALTER TABLE onboarding_sessions
+ADD COLUMN IF NOT EXISTS website_email_verification_expires_at timestamptz;
+
+ALTER TABLE onboarding_sessions
+ADD COLUMN IF NOT EXISTS website_email_verification_token_used_at timestamptz;
+
+ALTER TABLE onboarding_sessions
+ADD COLUMN IF NOT EXISTS admin_email_verified boolean NOT NULL DEFAULT false;
+
+ALTER TABLE onboarding_sessions
+ADD COLUMN IF NOT EXISTS admin_email_verification_token_hash text;
+
+ALTER TABLE onboarding_sessions
+ADD COLUMN IF NOT EXISTS admin_email_verification_expires_at timestamptz;
+
+ALTER TABLE onboarding_sessions
+ADD COLUMN IF NOT EXISTS admin_email_verification_token_used_at timestamptz;
+
+UPDATE onboarding_sessions
+SET username_email_verified = admin_email_verified,
+    username_email_verification_token_hash = COALESCE(
+        username_email_verification_token_hash,
+        admin_email_verification_token_hash
+    ),
+    username_email_verification_expires_at = COALESCE(
+        username_email_verification_expires_at,
+        admin_email_verification_expires_at
+    ),
+    username_email_verification_token_used_at = COALESCE(
+        username_email_verification_token_used_at,
+        admin_email_verification_token_used_at
+    )
+WHERE EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'onboarding_sessions'
+      AND column_name = 'admin_email_verified'
+);
+
+UPDATE onboarding_sessions
+SET website_verification_email = COALESCE(website_verification_email, admin_email),
+    website_email_verified = COALESCE(website_email_verified, username_email_verified)
+WHERE website_url IS NOT NULL
+  AND website_verification_email IS NULL;
+
+UPDATE onboarding_sessions
+SET status = 'username_email_verification_pending'
+WHERE status = 'email_verification_pending';
+
+ALTER TABLE onboarding_sessions
+DROP CONSTRAINT IF EXISTS onboarding_sessions_status_check;
+
+ALTER TABLE onboarding_sessions
+ADD CONSTRAINT onboarding_sessions_status_check
+CHECK (status IN (
+    'username_email_verification_pending',
+    'website_verification_pending',
+    'draft',
+    'ready_for_review',
+    'awaiting_telegram_setup',
+    'ready_to_submit',
+    'submitted',
+    'failed'
+));
+
+CREATE INDEX IF NOT EXISTS business_contact_points_tenant_id_idx
+ON business_contact_points(tenant_id);
+
 ALTER TABLE tenant_configs
 ADD COLUMN IF NOT EXISTS llm_project_id text;
 
@@ -897,6 +2012,14 @@ ADD COLUMN IF NOT EXISTS vector_collection text NOT NULL DEFAULT 'customer-servi
 ALTER TABLE tenant_configs
 ADD COLUMN IF NOT EXISTS vector_namespace text;
 
+UPDATE tenant_configs
+SET vector_namespace = CASE
+    WHEN vector_namespace = 'seed-knowledge' THEN 'default'
+    ELSE regexp_replace(vector_namespace, ':seed-knowledge$', '')
+END
+WHERE vector_namespace = 'seed-knowledge'
+   OR vector_namespace LIKE '%:seed-knowledge';
+
 DO $$
 BEGIN
     IF EXISTS (
@@ -930,8 +2053,23 @@ ADD COLUMN IF NOT EXISTS telegram_secret_name text;
 ALTER TABLE tenant_configs
 ADD COLUMN IF NOT EXISTS whatsapp_secret_name text;
 
+ALTER TABLE tenant_configs
+ADD COLUMN IF NOT EXISTS web_search_provider text;
+
+ALTER TABLE tenant_configs
+ADD COLUMN IF NOT EXISTS web_search_project_name text;
+
+ALTER TABLE tenant_configs
+DROP COLUMN IF EXISTS web_search_api_key_id;
+
+ALTER TABLE tenant_configs
+DROP COLUMN IF EXISTS web_search_secret_name;
+
 ALTER TABLE knowledge_documents
 ADD COLUMN IF NOT EXISTS chunk_id text;
+
+ALTER TABLE knowledge_documents
+ADD COLUMN IF NOT EXISTS source_url text;
 
 UPDATE knowledge_documents
 SET chunk_id = source
@@ -949,6 +2087,26 @@ ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
 ALTER TABLE knowledge_documents
 ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
 
+DELETE FROM knowledge_documents old
+USING knowledge_documents existing
+WHERE (
+    (old.namespace = 'seed-knowledge' AND existing.namespace = 'default')
+    OR (
+        old.namespace LIKE '%:seed-knowledge'
+        AND existing.namespace = regexp_replace(old.namespace, ':seed-knowledge$', '')
+    )
+)
+  AND old.chunk_id = existing.chunk_id
+  AND old.ctid <> existing.ctid;
+
+UPDATE knowledge_documents
+SET namespace = CASE
+    WHEN namespace = 'seed-knowledge' THEN 'default'
+    ELSE regexp_replace(namespace, ':seed-knowledge$', '')
+END
+WHERE namespace = 'seed-knowledge'
+   OR namespace LIKE '%:seed-knowledge';
+
 ALTER TABLE knowledge_documents
 DROP CONSTRAINT IF EXISTS knowledge_documents_namespace_source_key;
 
@@ -962,4 +2120,7 @@ WHERE older.namespace = newer.namespace
 
 CREATE UNIQUE INDEX IF NOT EXISTS knowledge_documents_namespace_chunk_id_idx
 ON knowledge_documents(namespace, chunk_id);
+
+CREATE INDEX IF NOT EXISTS knowledge_documents_namespace_source_url_idx
+ON knowledge_documents(namespace, source_url);
 """

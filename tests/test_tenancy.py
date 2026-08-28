@@ -1,6 +1,5 @@
 from app.tenancy import (
     DEFAULT_TENANT_ID,
-    SEED_KNOWLEDGE_NAMESPACE,
     default_langsmith_project,
     default_llm_project_name,
     default_vector_namespace,
@@ -37,11 +36,11 @@ def test_default_project_names_use_tenant_slug() -> None:
 
 
 def test_default_vector_namespace_preserves_default_tenant_namespace() -> None:
-    assert default_vector_namespace(DEFAULT_TENANT_ID) == SEED_KNOWLEDGE_NAMESPACE
+    assert default_vector_namespace(DEFAULT_TENANT_ID) == DEFAULT_TENANT_ID
 
 
 def test_default_vector_namespace_uses_tenant_slug_for_non_default_tenants() -> None:
-    assert default_vector_namespace("Hustle HQ") == "hustle-hq:seed-knowledge"
+    assert default_vector_namespace("Hustle HQ") == "hustle-hq"
 
 
 def test_generate_tenant_id_uses_internal_tenant_prefix() -> None:

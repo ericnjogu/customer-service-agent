@@ -1,0 +1,46 @@
+info:
+  name: 09 retry onboarding job
+  type: http
+  seq: 9
+
+http:
+  method: post
+  url: http://{{host}}/admin/onboarding/jobs/{{onboarding_job_id}}/retry
+  headers:
+    - name: content-type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "telegram": {
+          "bot_token": "{{telegram_bot_token}}"
+        }
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        if (res.status >= 200 && res.status < 300) {
+          bru.setVar("onboarding_job_retry_status", res.body.status);
+          bru.setVar("onboarding_job_id", res.body.job_id);
+        }
+
+settings:
+  encodeUrl: false
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+
+docs: |-
+  Retries a failed onboarding job.
+
+  Required variables:
+  - `onboarding_job_id`: failed job id returned by the onboarding job/session submit API.
+  - `telegram_bot_token`: Telegram bot token to use when retrying provisioning.
+
+  The API reuses the persisted onboarding job payload and only accepts the
+  Telegram bot token in the request body. The app generates a fresh internal
+  Telegram webhook secret token for the retry.

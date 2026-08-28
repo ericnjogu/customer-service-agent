@@ -35,6 +35,10 @@ settings:
   maxRedirects: 5
 
 docs: |-
-  Registers the tenant bot webhook with Telegram. Set `telegram_webhook_base_url`
-  to the public HTTPS base URL for this app, for example an ngrok URL without a
-  trailing slash.
+  Utility/debug request for manually registering the tenant bot webhook with Telegram.
+  The app normally does this during onboarding job processing when
+  `AGENT_TELEGRAM_WEBHOOK_PUBLIC_BASE_URL` is configured.
+
+  Set `telegram_webhook_base_url` to the public HTTPS base URL for this app, for
+  example an ngrok URL without a trailing slash. If the public web service proxies API
+  traffic under `/api`, include `/api` in the base URL.

@@ -48,6 +48,8 @@ class MemoryCachedTenantConfigRepository:
         vector_namespace: str | None = None,
         telegram_secret_name: str | None = None,
         whatsapp_secret_name: str | None = None,
+        web_search_provider: str | None = None,
+        web_search_project_name: str | None = None,
     ) -> TenantConfig:
         updated = await self.inner.upsert(
             tenant_id,
@@ -67,6 +69,8 @@ class MemoryCachedTenantConfigRepository:
             vector_namespace=vector_namespace,
             telegram_secret_name=telegram_secret_name,
             whatsapp_secret_name=whatsapp_secret_name,
+            web_search_provider=web_search_provider,
+            web_search_project_name=web_search_project_name,
         )
         self.cache[updated.tenant_id] = updated
         return updated
@@ -130,6 +134,8 @@ class RedisTenantConfigRepository:
         vector_namespace: str | None = None,
         telegram_secret_name: str | None = None,
         whatsapp_secret_name: str | None = None,
+        web_search_provider: str | None = None,
+        web_search_project_name: str | None = None,
     ) -> TenantConfig:
         updated = await self.inner.upsert(
             tenant_id,
@@ -149,6 +155,8 @@ class RedisTenantConfigRepository:
             vector_namespace=vector_namespace,
             telegram_secret_name=telegram_secret_name,
             whatsapp_secret_name=whatsapp_secret_name,
+            web_search_provider=web_search_provider,
+            web_search_project_name=web_search_project_name,
         )
         await self._set_cached(updated)
         return updated

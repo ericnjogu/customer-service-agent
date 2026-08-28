@@ -1,5 +1,6 @@
 .venv/
 .uv-cache/
+node_modules/
 __pycache__/
 .pytest_cache/
 .ruff_cache/
@@ -7,6 +8,6 @@ __pycache__/
 .env
 dist/
 build/
-bruno/environments/local.yml
-bruno/environments/ngrok.yml
+bruno/environments/
 mumbo-jumbo.md
+local-docs/

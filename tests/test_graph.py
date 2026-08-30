@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from langchain_core.documents import Document
 
+from app.adapters.llm import langsmith_client
 from app.adapters.memory import RuleBasedQuestionPlanner
 from app.config import Settings
 from app.container import create_container
@@ -9,6 +10,7 @@ from app.graph import build_prompt_metadata, build_service_graph, invoke_service
 from app.knowledge import SEED_KNOWLEDGE_NAMESPACE, tenant_knowledge_namespace
 from app.models import (
     ConversationPromptMetadata,
+    ConversationRecord,
     IncomingMessage,
     QuestionPlan,
     StoredMessage,
@@ -71,6 +73,98 @@ class SequenceQuestionPlanner:
         plan = self.plans[min(self.calls, len(self.plans) - 1)]
         self.calls += 1
         return plan
+
+
+class FakeTenantConfigRepository:
+    def __init__(self, tenant_config: TenantConfig) -> None:
+        self.tenant_config = tenant_config
+        self.calls: list[str] = []
+
+    async def get(self, tenant_id: str) -> TenantConfig:
+        self.calls.append(tenant_id)
+        return self.tenant_config
+
+
+async def test_invoke_service_graph_starts_langsmith_trace_in_tenant_project(
+    monkeypatch,
+) -> None:
+    captured_tracer = {}
+    captured_context = {}
+
+    class FakeLangSmithClient:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+    class FakeLangChainTracer:
+        def __init__(self, **kwargs) -> None:
+            captured_tracer.update(kwargs)
+
+    class FakeTracingContext:
+        def __init__(self, **kwargs) -> None:
+            captured_context.update(kwargs)
+
+        def __enter__(self):
+            return None
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    class FakeGraph:
+        def __init__(self) -> None:
+            self.last_state = None
+            self.last_config = None
+
+        async def ainvoke(self, state, config=None):
+            self.last_state = state
+            self.last_config = config
+            conversation = ConversationRecord(
+                tenant_id=state["message"].tenant_id,
+                channel=state["message"].channel,
+                external_chat_id=state["message"].external_chat_id,
+                external_user_id=state["message"].external_user_id,
+            )
+            return {
+                "conversation": conversation,
+                "answer": "ok",
+                "confidence": 0.95,
+                "citations": [],
+                "low_confidence": False,
+            }
+
+    monkeypatch.setattr("app.adapters.llm.LangSmithClient", FakeLangSmithClient)
+    monkeypatch.setattr("app.adapters.llm.LangChainTracer", FakeLangChainTracer)
+    monkeypatch.setattr("app.graph.tracing_context", FakeTracingContext)
+    langsmith_client.cache_clear()
+    monkeypatch.setenv("LANGSMITH_API_KEY", "test-key")
+    monkeypatch.setenv("LANGSMITH_TRACING", "true")
+
+    tenant_config = TenantConfig.with_defaults(
+        "tenant-a",
+        langsmith_project="customer-service-tenant-a",
+    )
+    tenant_configs = FakeTenantConfigRepository(tenant_config)
+    graph = FakeGraph()
+
+    reply = await invoke_service_graph(
+        graph,
+        IncomingMessage(
+            tenant_id="tenant-a",
+            event_id="tenant-trace",
+            external_chat_id="chat-1",
+            external_user_id="user-1",
+            text="Where are you located?",
+        ),
+        tenant_configs,
+    )
+
+    assert reply.tenant_id == "tenant-a"
+    assert tenant_configs.calls == ["tenant-a"]
+    assert graph.last_state["tenant_config"] == tenant_config
+    assert graph.last_config["metadata"]["tenant_id"] == "tenant-a"
+    assert captured_tracer["project_name"] == "customer-service-tenant-a"
+    assert captured_context["project_name"] == "customer-service-tenant-a"
+
+    langsmith_client.cache_clear()
 
 
 async def test_grounded_question_returns_citation() -> None:

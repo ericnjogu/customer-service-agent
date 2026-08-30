@@ -159,6 +159,7 @@ async def receive_customer_message(
     return await invoke_service_graph(
         request.app.state.container.graph,
         with_tenant(message, x_agent_tenant_id, settings.default_tenant_id),
+        request.app.state.container.tenant_configs,
     )
 
 
@@ -172,6 +173,7 @@ async def synthetic_webhook(
     return await invoke_service_graph(
         request.app.state.container.graph,
         with_tenant(message, x_agent_tenant_id, settings.default_tenant_id),
+        request.app.state.container.tenant_configs,
     )
 
 
@@ -199,7 +201,11 @@ async def telegram_webhook(
         return {"ok": True, "ignored": True}
 
     message = with_tenant(message, resolved_tenant_id, settings.default_tenant_id)
-    reply = await invoke_service_graph(request.app.state.container.graph, message)
+    reply = await invoke_service_graph(
+        request.app.state.container.graph,
+        message,
+        request.app.state.container.tenant_configs,
+    )
     telegram_sender = request.app.state.container.telegram_sender
     if telegram_sender:
         await telegram_sender.send_message(
@@ -252,7 +258,11 @@ async def whatsapp_webhook(
     whatsapp_sender = request.app.state.container.whatsapp_sender
     for message in messages:
         message = with_tenant(message, tenant_id or x_agent_tenant_id, settings.default_tenant_id)
-        reply = await invoke_service_graph(request.app.state.container.graph, message)
+        reply = await invoke_service_graph(
+            request.app.state.container.graph,
+            message,
+            request.app.state.container.tenant_configs,
+        )
         if whatsapp_sender:
             await whatsapp_sender.send_message(
                 message.external_chat_id,

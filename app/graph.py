@@ -2,7 +2,17 @@ from typing import TypedDict
 
 from langchain_core.documents import Document
 from langgraph.graph import END, START, StateGraph
+from langsmith.run_helpers import tracing_context
 
+from app.adapters.llm import (
+    flush_langsmith_traces,
+    langsmith_client,
+    langsmith_runnable_config,
+    langsmith_tracing_enabled,
+    tenant_langsmith_project_name,
+    tenant_trace_metadata,
+    tenant_trace_tags,
+)
 from app.knowledge import tenant_knowledge_namespace
 from app.models import (
     ConversationPromptMetadata,
@@ -65,6 +75,8 @@ def build_service_graph(
         return {"conversation": conversation}
 
     async def load_tenant_config(state: ServiceState) -> dict:
+        if state.get("tenant_config") is not None:
+            return {"tenant_config": state["tenant_config"]}
         tenant_config = await tenant_configs.get(state["conversation"].tenant_id)
         return {"tenant_config": tenant_config}
 
@@ -348,8 +360,30 @@ def customer_first_name(sender_name: str | None) -> str | None:
     return parts[0] if parts else None
 
 
-async def invoke_service_graph(graph, message: IncomingMessage) -> ServiceReply:
-    state = await graph.ainvoke({"message": message})
+async def invoke_service_graph(
+    graph,
+    message: IncomingMessage,
+    tenant_configs: TenantConfigRepository | None = None,
+) -> ServiceReply:
+    tenant_config = (
+        await tenant_configs.get(message.tenant_id)
+        if tenant_configs is not None
+        else None
+    )
+    initial_state: ServiceState = {"message": message}
+    if tenant_config is not None:
+        initial_state["tenant_config"] = tenant_config
+
+    config = langsmith_runnable_config("service_graph", tenant_config)
+    with tracing_context(
+        client=langsmith_client(),
+        project_name=tenant_langsmith_project_name(tenant_config),
+        tags=tenant_trace_tags(tenant_config),
+        metadata=tenant_trace_metadata(tenant_config),
+        enabled=langsmith_tracing_enabled(),
+    ):
+        state = await graph.ainvoke(initial_state, config=config)
+    await flush_langsmith_traces()
     return ServiceReply(
         tenant_id=state["conversation"].tenant_id,
         conversation_id=state["conversation"].id,

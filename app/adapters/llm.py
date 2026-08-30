@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from functools import lru_cache
 from html.parser import HTMLParser
@@ -569,6 +570,18 @@ def tenant_trace_tags(tenant_config: TenantConfig | None) -> list[str]:
     ]
 
 
+def tenant_langsmith_project_name(tenant_config: TenantConfig | None) -> str | None:
+    if tenant_config is None or not tenant_config.langsmith_project:
+        return None
+    return tenant_config.langsmith_project
+
+
+def openai_project_headers(tenant_config: TenantConfig | None) -> dict[str, str] | None:
+    if tenant_config is None or not tenant_config.llm_project_id:
+        return None
+    return {"OpenAI-Project": tenant_config.llm_project_id}
+
+
 def langsmith_tracing_enabled() -> bool:
     tracing_value = os.getenv("LANGSMITH_TRACING", os.getenv("LANGCHAIN_TRACING_V2", ""))
     tracing_disabled = tracing_value.strip().lower() in {"0", "false", "no", "off"}
@@ -600,10 +613,12 @@ def langsmith_runnable_config(
 
     tags = [*tenant_trace_tags(tenant_config), f"operation:{operation}"]
     metadata = tenant_trace_metadata(tenant_config)
+    project_name = tenant_langsmith_project_name(tenant_config)
     return {
         "callbacks": [
             LangChainTracer(
                 client=client,
+                project_name=project_name,
                 tags=tags,
             )
         ],
@@ -618,8 +633,18 @@ async def flush_langsmith_traces() -> None:
 
 
 class LlmAnswerGenerator:
-    def __init__(self, chat_model: Any) -> None:
+    def __init__(
+        self,
+        chat_model: Any,
+        chat_model_factory: Callable[[TenantConfig | None], Any] | None = None,
+    ) -> None:
         self.chat_model = chat_model
+        self.chat_model_factory = chat_model_factory
+
+    def chat_model_for(self, tenant_config: TenantConfig | None) -> Any:
+        if self.chat_model_factory is None:
+            return self.chat_model
+        return self.chat_model_factory(tenant_config)
 
     async def generate(
         self,
@@ -659,11 +684,15 @@ class LlmAnswerGenerator:
         config = langsmith_runnable_config("answer_generation", tenant_config)
         with tracing_context(
             client=langsmith_client(),
+            project_name=tenant_langsmith_project_name(tenant_config),
             tags=tenant_trace_tags(tenant_config),
             metadata=tenant_trace_metadata(tenant_config),
             enabled=langsmith_tracing_enabled(),
         ):
-            response = await self.chat_model.ainvoke(messages, config=config)
+            response = await self.chat_model_for(tenant_config).ainvoke(
+                messages,
+                config=config,
+            )
         await flush_langsmith_traces()
         content = str(response.content)
 
@@ -683,9 +712,20 @@ class LlmAnswerGenerator:
             return answer, min(confidence, 0.3)
         return answer, max(0.0, min(confidence, 0.95))
 
+
 class LlmQuestionPlanner:
-    def __init__(self, chat_model: Any) -> None:
+    def __init__(
+        self,
+        chat_model: Any,
+        chat_model_factory: Callable[[TenantConfig | None], Any] | None = None,
+    ) -> None:
         self.chat_model = chat_model
+        self.chat_model_factory = chat_model_factory
+
+    def chat_model_for(self, tenant_config: TenantConfig | None) -> Any:
+        if self.chat_model_factory is None:
+            return self.chat_model
+        return self.chat_model_factory(tenant_config)
 
     async def plan(
         self,
@@ -709,11 +749,15 @@ class LlmQuestionPlanner:
         config = langsmith_runnable_config("question_planning", tenant_config)
         with tracing_context(
             client=langsmith_client(),
+            project_name=tenant_langsmith_project_name(tenant_config),
             tags=tenant_trace_tags(tenant_config),
             metadata=tenant_trace_metadata(tenant_config),
             enabled=langsmith_tracing_enabled(),
         ):
-            response = await self.chat_model.ainvoke(messages, config=config)
+            response = await self.chat_model_for(tenant_config).ainvoke(
+                messages,
+                config=config,
+            )
         await flush_langsmith_traces()
         content = str(response.content)
 
@@ -1122,13 +1166,16 @@ def create_openai_answer_generator(
 ) -> LlmAnswerGenerator:
     from langchain_openai import ChatOpenAI
 
-    chat_model = ChatOpenAI(
-        api_key=api_key,
-        model=model,
-        temperature=temperature,
-        model_kwargs={"response_format": {"type": "json_object"}},
-    )
-    return LlmAnswerGenerator(chat_model)
+    def build_chat_model(tenant_config: TenantConfig | None = None) -> Any:
+        return ChatOpenAI(
+            api_key=api_key,
+            model=model,
+            temperature=temperature,
+            model_kwargs={"response_format": {"type": "json_object"}},
+            default_headers=openai_project_headers(tenant_config),
+        )
+
+    return LlmAnswerGenerator(build_chat_model(), chat_model_factory=build_chat_model)
 
 
 def create_openai_question_planner(
@@ -1139,13 +1186,16 @@ def create_openai_question_planner(
 ) -> LlmQuestionPlanner:
     from langchain_openai import ChatOpenAI
 
-    chat_model = ChatOpenAI(
-        api_key=api_key,
-        model=model,
-        temperature=temperature,
-        model_kwargs={"response_format": {"type": "json_object"}},
-    )
-    return LlmQuestionPlanner(chat_model)
+    def build_chat_model(tenant_config: TenantConfig | None = None) -> Any:
+        return ChatOpenAI(
+            api_key=api_key,
+            model=model,
+            temperature=temperature,
+            model_kwargs={"response_format": {"type": "json_object"}},
+            default_headers=openai_project_headers(tenant_config),
+        )
+
+    return LlmQuestionPlanner(build_chat_model(), chat_model_factory=build_chat_model)
 
 
 def create_openai_website_analyzer(

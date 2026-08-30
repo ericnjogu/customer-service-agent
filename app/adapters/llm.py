@@ -693,7 +693,6 @@ class LlmAnswerGenerator:
                 messages,
                 config=config,
             )
-        await flush_langsmith_traces()
         content = str(response.content)
 
         try:
@@ -758,7 +757,6 @@ class LlmQuestionPlanner:
                 messages,
                 config=config,
             )
-        await flush_langsmith_traces()
         content = str(response.content)
 
         try:

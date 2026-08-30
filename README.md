@@ -613,9 +613,10 @@ stores only the generated slug for the explicit lookup step. The slug lookup sto
 vector namespace. The app onboarding job derives and creates/updates the Telegram Secret
 name `tenant-<tenant-slug>-telegram`; the Bruno Telegram Secret and webhook requests are
 kept only as manual debugging utilities. Provider creation responses then store
-`llm_project_id`. LangSmith traces are
-written to the deployment-level `LANGSMITH_PROJECT`, while `langsmith_project` remains
-tenant metadata for filtering/audit.
+`llm_project_id`. Runtime OpenAI/LangChain calls use `llm_project_id` as the
+`OpenAI-Project` header when it is present, and LangSmith traces are written to the
+tenant `langsmith_project` when configured. If tenant project values are absent, the app
+falls back to the deployment-level provider defaults.
 
 ### Website onboarding workflow
 
@@ -784,17 +785,18 @@ database changes. Tenant config cache keys use this pattern:
 
 Provider project/index fields are tenant control-plane metadata:
 
-- OpenAI uses one shared provider API key, with project metadata stored per tenant for
-  onboarding/client construction.
+- OpenAI uses one shared provider API key. When `llm_project_id` is present on tenant
+  config, runtime OpenAI/LangChain calls include it as the `OpenAI-Project` header so
+  usage is attributed to the tenant project.
 - The `llm_project_id` and `llm_project_name` field names are intentionally kept stable
   even when the tenant uses another LangChain-compatible provider. For providers that use
   a different grouping term, map the provider's nearest equivalent into these fields; for
   example, a workspace, account scope, deployment group, billing project, or tenant-owned
   provider project. The bot treats these values as metadata and trace/client-construction
   hints, not as OpenAI-specific concepts.
-- LangSmith traces are written to the deployment-level `LANGSMITH_PROJECT` and tagged
-  with tenant metadata. The tenant config's `langsmith_project` value is retained as
-  metadata/filtering context, not as the runtime trace destination.
+- LangSmith traces are written to the tenant config's `langsmith_project` when present
+  and tagged with tenant metadata. If a tenant project is missing, LangSmith falls back
+  to the deployment-level `LANGSMITH_PROJECT`.
 - Tavily web-search metadata uses the shared platform API key for onboarding and stores
   `web_search_provider` plus `web_search_project_name` on tenant config. The project
   name is the tenant slug and can be sent as Tavily's project id in a later
@@ -1014,7 +1016,7 @@ Application configuration uses the `AGENT_` prefix. LangSmith uses its native
 | `LANGSMITH_TRACING_V2` | `true` | Enable LangSmith tracing v2 |
 | `LANGCHAIN_TRACING_V2` | `true` | Legacy LangChain tracing v2 env var kept for SDK compatibility |
 | `LANGSMITH_ENDPOINT` | `https://eu.api.smith.langchain.com` | LangSmith endpoint |
-| `LANGSMITH_PROJECT` | `customer-service-local` | Deployment-level LangSmith trace project; tenant identity is represented with tags/metadata |
+| `LANGSMITH_PROJECT` | `customer-service-local` | Fallback LangSmith trace project used when tenant config does not provide `langsmith_project` |
 | `LANGSMITH_WORKSPACE_ID` | unset | LangSmith workspace id; required for org-scoped API keys or keys linked to multiple workspaces |
 
 The Helm chart also accepts these n8n values:

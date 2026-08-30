@@ -10,6 +10,8 @@ from app.adapters.llm import (
     LlmQuestionPlanner,
     OpenAIWebsiteAnalyzer,
     TavilyWebsiteResearcher,
+    create_openai_answer_generator,
+    create_openai_question_planner,
     format_age,
     format_extracted_links,
     langsmith_client,
@@ -187,7 +189,7 @@ def test_langsmith_client_uses_endpoint_and_workspace(monkeypatch) -> None:
     langsmith_client.cache_clear()
 
 
-def test_langsmith_runnable_config_uses_env_project_destination(monkeypatch) -> None:
+def test_langsmith_runnable_config_uses_tenant_project_destination(monkeypatch) -> None:
     captured_tracer = {}
 
     class FakeLangSmithClient:
@@ -213,11 +215,89 @@ def test_langsmith_runnable_config_uses_env_project_destination(monkeypatch) -> 
     config = langsmith_runnable_config("answer_generation", tenant_config)
 
     assert config is not None
-    assert "project_name" not in captured_tracer
+    assert captured_tracer["project_name"] == "customer-service-tenant-a"
     assert "tenant:tenant-a" in config["tags"]
     assert config["metadata"]["langsmith_project"] == "customer-service-tenant-a"
 
     langsmith_client.cache_clear()
+
+
+async def test_openai_answer_generator_uses_tenant_project_header(monkeypatch) -> None:
+    captured_models = []
+
+    class FakeOpenAIChat:
+        def __init__(self, **kwargs) -> None:
+            captured_models.append(kwargs)
+
+        async def ainvoke(self, messages, config=None):
+            return AIMessage(
+                content=(
+                    '{"answer": "Refunds are available within 30 days.", '
+                    '"confidence": 0.82, "grounded": true}'
+                )
+            )
+
+    monkeypatch.setattr("langchain_openai.ChatOpenAI", FakeOpenAIChat)
+    generator = create_openai_answer_generator(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        temperature=0,
+    )
+
+    await generator.generate(
+        "What is the refund policy?",
+        [Document(page_content="Refunds are available within 30 days.")],
+        tenant_config=TenantConfig.with_defaults(
+            "tenant-a",
+            llm_project_id="proj_tenant_a",
+        ),
+    )
+
+    assert captured_models[0]["default_headers"] is None
+    assert captured_models[-1]["default_headers"] == {
+        "OpenAI-Project": "proj_tenant_a"
+    }
+
+
+async def test_openai_question_planner_uses_tenant_project_header(monkeypatch) -> None:
+    captured_models = []
+
+    class FakeOpenAIChat:
+        def __init__(self, **kwargs) -> None:
+            captured_models.append(kwargs)
+
+        async def ainvoke(self, messages, config=None):
+            return AIMessage(
+                content=(
+                    '{"in_scope": true, "needs_conversation_history": false, '
+                    '"explicit_human_request": false, "explanation": "standalone"}'
+                )
+            )
+
+    monkeypatch.setattr("langchain_openai.ChatOpenAI", FakeOpenAIChat)
+    planner = create_openai_question_planner(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        temperature=0,
+    )
+
+    await planner.plan(
+        IncomingMessage(
+            event_id="plan-project",
+            external_chat_id="chat-1",
+            external_user_id="user-1",
+            text="Where are you located?",
+        ),
+        tenant_config=TenantConfig.with_defaults(
+            "tenant-a",
+            llm_project_id="proj_tenant_a",
+        ),
+    )
+
+    assert captured_models[0]["default_headers"] is None
+    assert captured_models[-1]["default_headers"] == {
+        "OpenAI-Project": "proj_tenant_a"
+    }
 
 
 async def test_llm_answer_generator_returns_grounded_confidence() -> None:

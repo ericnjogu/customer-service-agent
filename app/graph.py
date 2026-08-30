@@ -5,7 +5,6 @@ from langgraph.graph import END, START, StateGraph
 from langsmith.run_helpers import tracing_context
 
 from app.adapters.llm import (
-    flush_langsmith_traces,
     langsmith_client,
     langsmith_runnable_config,
     langsmith_tracing_enabled,
@@ -383,7 +382,6 @@ async def invoke_service_graph(
         enabled=langsmith_tracing_enabled(),
     ):
         state = await graph.ainvoke(initial_state, config=config)
-    await flush_langsmith_traces()
     return ServiceReply(
         tenant_id=state["conversation"].tenant_id,
         conversation_id=state["conversation"].id,

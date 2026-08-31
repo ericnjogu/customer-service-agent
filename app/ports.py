@@ -5,6 +5,7 @@ from uuid import UUID
 from langchain_core.documents import Document
 
 from app.models import (
+    AnswerGenerationResult,
     BusinessContactPointRecord,
     BusinessProfileRecord,
     ConversationPromptMetadata,
@@ -20,6 +21,7 @@ from app.models import (
     OnboardingSessionUpdate,
     OnboardingTelegramSetup,
     QuestionPlan,
+    RuntimeWebSearchResult,
     StoredMessage,
     TenantConfig,
     TenantMembershipRecord,
@@ -72,6 +74,8 @@ class RetrievalStore(Protocol):
         metadata_key: str,
         metadata_value: str,
     ) -> None: ...
+
+    async def delete_by_source_url(self, namespace: str, source_url: str) -> None: ...
 
     async def search(self, query: str, namespace: str, limit: int = 4) -> list[Document]: ...
 
@@ -194,6 +198,11 @@ class OnboardingRepository(Protocol):
         self,
         tenant_id: str,
         contact_points: list[OnboardingContactPoint],
+    ) -> list[BusinessContactPointRecord]: ...
+
+    async def list_contact_points(
+        self,
+        tenant_id: str,
     ) -> list[BusinessContactPointRecord]: ...
 
     async def save_owner_membership(
@@ -347,7 +356,16 @@ class AnswerGenerator(Protocol):
         conversation_history: list[StoredMessage] | None = None,
         conversation_metadata: ConversationPromptMetadata | None = None,
         tenant_config: TenantConfig | None = None,
-    ) -> tuple[str, float]: ...
+    ) -> AnswerGenerationResult: ...
+
+
+class RuntimeWebSearch(Protocol):
+    async def search_answer(
+        self,
+        question: str,
+        tenant_config: TenantConfig | None = None,
+        website_url: str | None = None,
+    ) -> RuntimeWebSearchResult: ...
 
 
 class QuestionPlanner(Protocol):

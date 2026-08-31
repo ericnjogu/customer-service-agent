@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 from langchain_core.documents import Document
 
 from app.models import (
+    AnswerGenerationResult,
     BusinessContactPointRecord,
     BusinessProfileRecord,
     ConversationPromptMetadata,
@@ -208,6 +209,9 @@ class MemoryRetrievalStore:
             for document in self.documents.get(namespace, [])
             if str(document.metadata.get(metadata_key) or "") != metadata_value
         ]
+
+    async def delete_by_source_url(self, namespace: str, source_url: str) -> None:
+        await self.delete_by_metadata(namespace, "source_url", source_url)
 
     async def search(self, query: str, namespace: str, limit: int = 4) -> list[Document]:
         query_tokens = tokenize(query)
@@ -538,6 +542,12 @@ class MemoryOnboardingRepository:
         ]
         self.contact_points[tenant_id] = records
         return records
+
+    async def list_contact_points(
+        self,
+        tenant_id: str,
+    ) -> list[BusinessContactPointRecord]:
+        return list(self.contact_points.get(tenant_id, []))
 
     async def save_owner_membership(
         self,
@@ -955,14 +965,24 @@ class ExtractiveAnswerGenerator:
         conversation_history: list[StoredMessage] | None = None,
         conversation_metadata: ConversationPromptMetadata | None = None,
         tenant_config: TenantConfig | None = None,
-    ) -> tuple[str, float]:
+    ) -> AnswerGenerationResult:
         if not documents:
-            return "I could not find enough information to answer that safely.", 0.0
+            return AnswerGenerationResult(
+                answer="I could not find enough information to answer that safely.",
+                confidence=0.0,
+                answer_found=False,
+                grounded=False,
+            )
         source = documents[0]
         answer = source.page_content
         overlap = len(tokenize(query) & tokenize(answer)) / max(len(tokenize(query)), 1)
         confidence = min(0.95, 0.55 + overlap)
-        return answer, confidence
+        return AnswerGenerationResult(
+            answer=answer,
+            confidence=confidence,
+            answer_found=True,
+            grounded=True,
+        )
 
 class RuleBasedQuestionPlanner:
     human_request_phrases = (

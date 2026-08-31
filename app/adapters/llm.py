@@ -18,10 +18,13 @@ from langsmith import Client as LangSmithClient
 from langsmith.run_helpers import traceable, tracing_context
 
 from app.models import (
+    AnswerGenerationResult,
     ConversationPromptMetadata,
     IncomingMessage,
     OnboardingSessionRecord,
     QuestionPlan,
+    RuntimeWebSearchResult,
+    RuntimeWebSearchSource,
     StoredMessage,
     TenantConfig,
     WebsiteAnalysisResult,
@@ -69,8 +72,14 @@ here to help with questions about this business, set confidence to 0, and set gr
 to false.
 Return JSON with:
 - answer: string
+- answer_found: boolean
 - confidence: number from 0 to 1
 - grounded: boolean
+
+Set answer_found=true only when the supplied knowledge base context or conversation
+history contains the requested answer. If the best answer is that the information is
+not available in the supplied context, set answer_found=false even if you are confident
+that the information is missing.
 """
 
 QUESTION_PLANNING_PROMPT = """You are routing a customer service message before any
@@ -278,6 +287,12 @@ def traced_text_outputs(output: Any) -> dict[str, Any]:
             "output_text_chars": len(output.notes),
             "source_count": len(output.sources),
         }
+    if isinstance(output, RuntimeWebSearchResult):
+        return {
+            "output_text": output.answer,
+            "output_text_chars": len(output.answer),
+            "source_count": len(output.sources),
+        }
     text = str(output)
     return {
         "output_text": text,
@@ -345,6 +360,155 @@ def tavily_sources_from_results(data: dict[str, Any]) -> list[WebsiteResearchSou
             )
         )
     return sources
+
+
+def runtime_tavily_sources_from_results(data: dict[str, Any]) -> list[RuntimeWebSearchSource]:
+    retrieved_at = datetime.now(timezone.utc)
+    sources = []
+    for result in data.get("results") or []:
+        url = str(result.get("url") or "").strip()
+        if not url:
+            continue
+        text_parts = []
+        raw_content = str(result.get("raw_content") or "").strip()
+        if raw_content:
+            text_parts.append(raw_content)
+        sources.append(
+            RuntimeWebSearchSource(
+                url=url,
+                title=str(result.get("title") or "").strip() or None,
+                text="\n\n".join(text_parts),
+                provider="tavily",
+                retrieved_at=retrieved_at,
+            )
+        )
+    return sources
+
+
+def traced_tavily_runtime_search_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
+    tenant_config = inputs.get("tenant_config")
+    return {
+        "question": inputs.get("question"),
+        "project_id": tavily_project_id(tenant_config),
+        "website_url": inputs.get("website_url"),
+        "max_results": inputs.get("max_results"),
+        "timeout_seconds": inputs.get("timeout_seconds"),
+        "api_key": "[redacted]" if inputs.get("api_key") else None,
+    }
+
+
+def tavily_project_id(tenant_config: TenantConfig | None) -> str:
+    if tenant_config is None:
+        return "default"
+    return tenant_config.web_search_project_name or tenant_config.tenant_id
+
+
+@traceable(
+    name="tavily_runtime_search",
+    run_type="retriever",
+    process_inputs=traced_tavily_runtime_search_inputs,
+    process_outputs=traced_text_outputs,
+)
+async def traced_tavily_runtime_search(
+    *,
+    api_key: str,
+    max_results: int,
+    timeout_seconds: float,
+    question: str,
+    tenant_config: TenantConfig | None,
+    website_url: str | None = None,
+) -> RuntimeWebSearchResult:
+    project_id = tavily_project_id(tenant_config)
+    domain = urlparse(website_url or "").netloc.removeprefix("www.")
+    payload = {
+        "query": question,
+        "search_depth": "advanced",
+        "max_results": max_results,
+        "include_answer": "basic",
+        "include_raw_content": "markdown",
+        "include_domains": [domain] if domain else None,
+    }
+    payload = {key: value for key, value in payload.items() if value is not None}
+    logger.info(
+        "Calling Tavily runtime search API tenant_id=%s project_id=%s "
+        "website_url=%s domain=%s max_results=%s timeout_seconds=%s",
+        tenant_config.tenant_id if tenant_config else None,
+        project_id,
+        website_url,
+        domain,
+        max_results,
+        timeout_seconds,
+    )
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            response = await client.post(
+                "https://api.tavily.com/search",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                    "X-Project-ID": project_id,
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+    except httpx.HTTPError:
+        logger.exception(
+            "Tavily runtime search failed tenant_id=%s project_id=%s",
+            tenant_config.tenant_id if tenant_config else None,
+            project_id,
+        )
+        return RuntimeWebSearchResult()
+
+    data = response.json()
+    answer = str(data.get("answer") or "").strip()
+    sources = runtime_tavily_sources_from_results(data)
+    logger.info(
+        "Received Tavily runtime search response tenant_id=%s project_id=%s "
+        "answer_present=%s result_count=%s",
+        tenant_config.tenant_id if tenant_config else None,
+        project_id,
+        bool(answer),
+        len(sources),
+    )
+    return RuntimeWebSearchResult(answer=answer, sources=sources)
+
+
+class TavilyRuntimeWebSearch:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        max_results: int,
+        timeout_seconds: float,
+    ) -> None:
+        self.api_key = api_key
+        self.max_results = max_results
+        self.timeout_seconds = timeout_seconds
+
+    async def search_answer(
+        self,
+        question: str,
+        tenant_config: TenantConfig | None = None,
+        website_url: str | None = None,
+    ) -> RuntimeWebSearchResult:
+        return await traced_tavily_runtime_search(
+            api_key=self.api_key,
+            max_results=self.max_results,
+            timeout_seconds=self.timeout_seconds,
+            question=question,
+            tenant_config=tenant_config,
+            website_url=website_url,
+        )
+
+
+class NoopRuntimeWebSearch:
+    async def search_answer(
+        self,
+        question: str,
+        tenant_config: TenantConfig | None = None,
+        website_url: str | None = None,
+    ) -> RuntimeWebSearchResult:
+        return RuntimeWebSearchResult()
 
 
 @traceable(
@@ -653,10 +817,15 @@ class LlmAnswerGenerator:
         conversation_history: list[StoredMessage] | None = None,
         conversation_metadata: ConversationPromptMetadata | None = None,
         tenant_config: TenantConfig | None = None,
-    ) -> tuple[str, float]:
+    ) -> AnswerGenerationResult:
         history = conversation_history or []
         if not documents and not history:
-            return "I could not find enough information to answer that question.", 0.0
+            return AnswerGenerationResult(
+                answer="I could not find enough information to answer that question.",
+                confidence=0.0,
+                answer_found=False,
+                grounded=False,
+            )
 
         messages = [
             SystemMessage(content=SYSTEM_PROMPT),
@@ -699,17 +868,38 @@ class LlmAnswerGenerator:
             payload = json.loads(content)
         except json.JSONDecodeError:
             logger.warning("LLM answer was not valid JSON; escalating response")
-            return "I could not verify the answer well enough to respond safely.", 0.0
+            return AnswerGenerationResult(
+                answer="I could not verify the answer well enough to respond safely.",
+                confidence=0.0,
+                answer_found=False,
+                grounded=False,
+            )
 
         answer = str(payload.get("answer", "")).strip()
         grounded = bool(payload.get("grounded", False))
+        answer_found = bool(payload.get("answer_found", grounded))
         confidence = float(payload.get("confidence", 0.0))
 
         if not answer:
-            return "I could not find enough information to answer that safely.", 0.0
+            return AnswerGenerationResult(
+                answer="I could not find enough information to answer that safely.",
+                confidence=0.0,
+                answer_found=False,
+                grounded=False,
+            )
         if not grounded:
-            return answer, min(confidence, 0.3)
-        return answer, max(0.0, min(confidence, 0.95))
+            return AnswerGenerationResult(
+                answer=answer,
+                confidence=min(confidence, 0.3),
+                answer_found=answer_found,
+                grounded=False,
+            )
+        return AnswerGenerationResult(
+            answer=answer,
+            confidence=max(0.0, min(confidence, 0.95)),
+            answer_found=answer_found,
+            grounded=True,
+        )
 
 
 class LlmQuestionPlanner:

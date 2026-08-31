@@ -9,7 +9,7 @@ from langchain_core.documents import Document
 from app.adapters.memory import MemoryRetrievalStore
 from app.adapters.telegram import TelegramBotInfo
 from app.config import get_settings
-from app.knowledge import SEED_KNOWLEDGE_NAMESPACE
+from app.knowledge import SEED_KNOWLEDGE_NAMESPACE, stable_source_hash
 from app.main import app
 from app.models import (
     OnboardingBusinessProfile,
@@ -212,6 +212,9 @@ class FailingRetrievalStore:
         metadata_key: str,
         metadata_value: str,
     ) -> None:
+        return None
+
+    async def delete_by_source_url(self, namespace: str, source_url: str) -> None:
         return None
 
     async def search(
@@ -1170,6 +1173,10 @@ def test_onboarding_job_accepts_and_provisions_internal_records() -> None:
         document.metadata["source"] == "onboarding:approved-profile"
         and document.metadata["source_url"] == "https://hustlehq.example/"
         and document.metadata["source_type"] == "onboarding"
+        and document.metadata["source_title"] == "Hustle HQ Onboarding"
+        and document.metadata["chunk_id"].startswith(f"onboarding-profile:{tenant_id}#")
+        and document.metadata["section_title"]
+        and "content_hash" in document.metadata
         for document in kb_documents
     )
     assert any(
@@ -1177,8 +1184,61 @@ def test_onboarding_job_accepts_and_provisions_internal_records() -> None:
         and document.metadata["source_url"] == "https://hustlehq.example/about"
         and document.metadata["provider"] == "tavily"
         and document.metadata["source_type"] == "website"
+        and document.metadata["source_title"] == "About Hustle HQ"
+        and document.metadata["chunk_id"].startswith(
+            f"url:{stable_source_hash('https://hustlehq.example/about')}#"
+        )
+        and document.metadata["chunk_index"] == 0
+        and document.metadata["chunk_count"] >= 1
+        and "content_hash" in document.metadata
         for document in kb_documents
     )
+
+
+async def test_memory_retrieval_can_refresh_url_backed_chunks() -> None:
+    retrieval = MemoryRetrievalStore()
+    namespace = "tenant-a"
+    old_url = "https://hustlehq.example/about"
+    other_url = "https://hustlehq.example/menu"
+
+    await retrieval.upsert(
+        [
+            Document(
+                page_content="Old about page content.",
+                metadata={
+                    "chunk_id": "url:old#0000",
+                    "source_url": old_url,
+                },
+            ),
+            Document(
+                page_content="Menu page content.",
+                metadata={
+                    "chunk_id": "url:menu#0000",
+                    "source_url": other_url,
+                },
+            ),
+        ],
+        namespace,
+    )
+
+    await retrieval.delete_by_source_url(namespace, old_url)
+    await retrieval.upsert(
+        [
+            Document(
+                page_content="Updated about page content.",
+                metadata={
+                    "chunk_id": "url:new#0000",
+                    "source_url": old_url,
+                },
+            )
+        ],
+        namespace,
+    )
+
+    documents = retrieval.documents[namespace]
+    assert not any(document.page_content == "Old about page content." for document in documents)
+    assert any(document.page_content == "Updated about page content." for document in documents)
+    assert any(document.metadata["source_url"] == other_url for document in documents)
 
 
 def test_onboarding_job_registers_telegram_webhook() -> None:
@@ -1343,11 +1403,16 @@ def test_failed_onboarding_kb_job_can_retry_without_duplicate_tenant() -> None:
     assert retry_response.status_code == 202
     assert retried_job.json()["status"] == "succeeded"
     assert retried_job.json()["tenant_slug"] == "hustle-hq-kb-retry"
-    assert sum(
-        1
+    onboarding_profile_chunks = [
+        document
         for document in kb_documents
         if document.metadata["source"] == "onboarding:approved-profile"
-    ) == 1
+    ]
+    onboarding_profile_chunk_ids = [
+        document.metadata["chunk_id"] for document in onboarding_profile_chunks
+    ]
+    assert onboarding_profile_chunks
+    assert len(onboarding_profile_chunk_ids) == len(set(onboarding_profile_chunk_ids))
 
 
 def test_retry_replaces_previous_onboarding_session_kb_documents() -> None:

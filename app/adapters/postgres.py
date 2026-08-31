@@ -484,6 +484,25 @@ class PgVectorRetrievalStore:
             result,
         )
 
+    async def delete_by_source_url(self, namespace: str, source_url: str) -> None:
+        assert self.database.pool
+        result = await self.database.pool.execute(
+            """
+            DELETE FROM knowledge_documents
+            WHERE namespace = $1
+              AND source_url = $2
+            """,
+            namespace,
+            source_url,
+        )
+        logger.info(
+            "Deleted pgvector knowledge documents by source_url namespace=%s "
+            "source_url=%s result=%s",
+            namespace,
+            source_url,
+            result,
+        )
+
     async def _delete_removed_chunks(
         self,
         connection: asyncpg.Connection,
@@ -993,6 +1012,22 @@ class PostgresOnboardingRepository:
                         point.is_primary,
                     )
                     rows.append(row)
+        return [BusinessContactPointRecord(**dict(row)) for row in rows]
+
+    async def list_contact_points(
+        self,
+        tenant_id: str,
+    ) -> list[BusinessContactPointRecord]:
+        assert self.database.pool
+        rows = await self.database.pool.fetch(
+            """
+            SELECT tenant_id, kind, label, value, url, is_primary, created_at
+            FROM business_contact_points
+            WHERE tenant_id = $1
+            ORDER BY is_primary DESC, created_at ASC
+            """,
+            tenant_id,
+        )
         return [BusinessContactPointRecord(**dict(row)) for row in rows]
 
     async def save_owner_membership(

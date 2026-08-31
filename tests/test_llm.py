@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timedelta, timezone
 
+import httpx
 import pytest
 from langchain_core.documents import Document
 from langchain_core.messages import AIMessage
@@ -9,6 +10,7 @@ from app.adapters.llm import (
     LlmAnswerGenerator,
     LlmQuestionPlanner,
     OpenAIWebsiteAnalyzer,
+    TavilyRuntimeWebSearch,
     TavilyWebsiteResearcher,
     create_openai_answer_generator,
     create_openai_question_planner,
@@ -18,12 +20,13 @@ from app.adapters.llm import (
     langsmith_runnable_config,
     langsmith_tracing_enabled,
     normalize_website_analysis_payload,
+    tavily_project_id,
     tenant_trace_metadata,
     tenant_trace_tags,
     traced_responses_outputs,
 )
 from app.config import Settings
-from app.container import create_container
+from app.container import create_container, create_runtime_web_search
 from app.models import (
     ConversationPromptMetadata,
     IncomingMessage,
@@ -33,6 +36,25 @@ from app.models import (
     TenantConfig,
     WebsiteAnalysisResult,
 )
+
+
+async def test_runtime_web_search_defaults_to_noop_without_platform_api_key(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("AGENT_PLATFORM_WEB_SEARCH_API_KEY", raising=False)
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+
+    runtime_search = create_runtime_web_search(
+        Settings(runtime_web_search_provider="tavily")
+    )
+
+    result = await runtime_search.search_answer(
+        "Who works there?",
+        TenantConfig.with_defaults("tenant-a"),
+    )
+
+    assert result.answer == ""
+    assert result.sources == []
 
 
 class FakeChatModel:
@@ -314,6 +336,7 @@ async def test_llm_answer_generator_returns_grounded_confidence() -> None:
     assert answer == "Refunds are available within 30 days."
     assert confidence == 0.82
     assert chat_model.calls == 1
+    assert "answer_found: boolean" in chat_model.last_messages[0].content
 
 
 async def test_llm_answer_generator_instructs_model_to_prefer_newer_conflicting_chunks() -> None:
@@ -413,6 +436,23 @@ async def test_llm_answer_generator_caps_ungrounded_confidence() -> None:
 
     assert answer == "I do not have enough information."
     assert confidence == 0.3
+
+
+async def test_llm_answer_generator_preserves_answer_found_signal() -> None:
+    chat_model = FakeChatModel(
+        '{"answer": "I do not have the team names in the available information.", '
+        '"answer_found": false, "confidence": 0.86, "grounded": true}'
+    )
+    generator = LlmAnswerGenerator(chat_model)
+
+    result = await generator.generate(
+        "Who works there?",
+        [Document(page_content="Hustle HQ has a WhatsApp contact link.")],
+    )
+
+    assert result.answer_found is False
+    assert result.grounded is True
+    assert result.confidence == 0.86
 
 
 async def test_llm_answer_generator_includes_conversation_history() -> None:
@@ -1049,3 +1089,116 @@ async def test_tavily_research_sends_project_id_and_returns_sources(
     assert len(output.sources) == 1
     assert output.sources[0].provider == "tavily"
     assert output.sources[0].url == "https://hustlehq.example/about"
+
+
+async def test_tavily_runtime_web_search_sends_answer_and_project_headers(monkeypatch) -> None:
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "answer": "Hustle HQ has a public team page.",
+                "results": [
+                    {
+                        "title": "Hustle HQ Team",
+                        "url": "https://hustlehq.example/team",
+                        "content": "Meet the Hustle HQ team.",
+                        "raw_content": "# Team\nMeet the Hustle HQ team.",
+                    }
+                ],
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def post(self, url: str, **kwargs) -> FakeResponse:
+            calls.append((url, kwargs))
+            return FakeResponse()
+
+    monkeypatch.setattr("app.adapters.llm.httpx.AsyncClient", FakeAsyncClient)
+
+    search = TavilyRuntimeWebSearch(
+        api_key="test-tavily-key",
+        max_results=3,
+        timeout_seconds=15,
+    )
+
+    result = await search.search_answer(
+        "Who works at Hustle HQ?",
+        TenantConfig.with_defaults(
+            "tenant-a",
+            web_search_project_name="tenant-a-project",
+        ),
+        "https://www.hustlehq.example",
+    )
+
+    assert len(calls) == 1
+    assert calls[0][0] == "https://api.tavily.com/search"
+    assert calls[0][1]["headers"]["Authorization"] == "Bearer test-tavily-key"
+    assert calls[0][1]["headers"]["X-Project-ID"] == "tenant-a-project"
+    assert calls[0][1]["json"]["query"] == "Who works at Hustle HQ?"
+    assert calls[0][1]["json"]["search_depth"] == "advanced"
+    assert calls[0][1]["json"]["include_answer"] == "basic"
+    assert calls[0][1]["json"]["include_raw_content"] == "markdown"
+    assert calls[0][1]["json"]["include_domains"] == ["hustlehq.example"]
+    assert calls[0][1]["json"]["max_results"] == 3
+    assert result.answer == "Hustle HQ has a public team page."
+    assert len(result.sources) == 1
+    assert result.sources[0].url == "https://hustlehq.example/team"
+    assert result.sources[0].provider == "tavily"
+
+
+async def test_tavily_runtime_web_search_http_error_returns_empty_result(
+    monkeypatch,
+) -> None:
+    class FakeAsyncClient:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def post(self, url: str, **kwargs):
+            raise httpx.ConnectError("offline")
+
+    monkeypatch.setattr("app.adapters.llm.httpx.AsyncClient", FakeAsyncClient)
+
+    search = TavilyRuntimeWebSearch(
+        api_key="test-tavily-key",
+        max_results=3,
+        timeout_seconds=15,
+    )
+
+    result = await search.search_answer("Who works there?", TenantConfig.with_defaults("t1"))
+
+    assert result.answer == ""
+    assert result.sources == []
+
+
+def test_tavily_project_id_prefers_tenant_web_search_project_name() -> None:
+    assert (
+        tavily_project_id(
+            TenantConfig.with_defaults(
+                "tenant-a",
+                web_search_project_name="tenant-a-project",
+            )
+        )
+        == "tenant-a-project"
+    )
+    assert tavily_project_id(TenantConfig.with_defaults("tenant-a")) == "tenant-a"
+    assert tavily_project_id(None) == "default"

@@ -111,6 +111,14 @@ def test_pgvector_search_selects_chunk_creation_timestamp() -> None:
     assert '"created_at": row["created_at"].isoformat()' in source
 
 
+def test_pgvector_deletes_url_backed_chunks_by_source_url_column() -> None:
+    source = inspect.getsource(PgVectorRetrievalStore.delete_by_source_url)
+
+    assert "DELETE FROM knowledge_documents" in source
+    assert "source_url = $2" in source
+    assert "metadata ->>" not in source
+
+
 def test_postgres_schema_migrates_seed_suffix_to_tenant_namespace() -> None:
     ddl = schema(1536)
 

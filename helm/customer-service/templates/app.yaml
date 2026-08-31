@@ -71,6 +71,10 @@ spec:
               value: {{ .Values.embedding.model | quote }}
             - name: AGENT_EMBEDDING_DIMENSIONS
               value: {{ .Values.embedding.dimensions | quote }}
+            - name: AGENT_KB_CHUNK_SIZE
+              value: {{ .Values.knowledge.chunkSize | quote }}
+            - name: AGENT_KB_CHUNK_OVERLAP
+              value: {{ .Values.knowledge.chunkOverlap | quote }}
             - name: AGENT_QUESTION_PLANNER_PROVIDER
               value: {{ .Values.questionPlanner.provider | quote }}
             - name: AGENT_CONVERSATION_HISTORY_MAX_MESSAGES
@@ -146,6 +150,8 @@ spec:
               value: {{ .Values.platform.webSearchMaxResults | quote }}
             - name: AGENT_PLATFORM_WEB_SEARCH_TIMEOUT_SECONDS
               value: {{ .Values.platform.webSearchTimeoutSeconds | quote }}
+            - name: AGENT_RUNTIME_WEB_SEARCH_PROVIDER
+              value: {{ .Values.runtime.webSearchProvider | quote }}
             {{- if .Values.platform.webSearchApiKeySecretName }}
             - name: AGENT_PLATFORM_WEB_SEARCH_API_KEY
               valueFrom:

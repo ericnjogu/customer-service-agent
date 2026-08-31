@@ -1,4 +1,5 @@
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Literal
 from urllib.parse import urlparse
@@ -58,6 +59,31 @@ class ServiceReply(BaseModel):
     citations: list[str]
     low_confidence: bool
     state: ConversationState
+
+
+@dataclass(frozen=True)
+class AnswerGenerationResult:
+    answer: str
+    confidence: float
+    answer_found: bool = True
+    grounded: bool = True
+
+    def __iter__(self):
+        yield self.answer
+        yield self.confidence
+
+
+class RuntimeWebSearchSource(BaseModel):
+    url: str = Field(min_length=1, max_length=1_000)
+    title: str | None = Field(default=None, max_length=500)
+    text: str = Field(default="", max_length=20_000)
+    provider: str = Field(default="unknown", min_length=1, max_length=100)
+    retrieved_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class RuntimeWebSearchResult(BaseModel):
+    answer: str = ""
+    sources: list[RuntimeWebSearchSource] = Field(default_factory=list)
 
 
 class ConversationRecord(BaseModel):

@@ -994,8 +994,8 @@ Application configuration uses the `AGENT_` prefix. LangSmith uses its native
 | `AGENT_EMBEDDING_PROVIDER` | `local` | `local` or `openai`; Helm defaults to `openai` for pgvector |
 | `AGENT_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding model when `AGENT_EMBEDDING_PROVIDER=openai` |
 | `AGENT_EMBEDDING_DIMENSIONS` | `64` | pgvector embedding size; Helm defaults to `1536` for OpenAI embeddings |
-| `AGENT_KB_CHUNK_SIZE` | `1000` | Maximum character size for source-aware KB chunks before fallback recursive splitting |
-| `AGENT_KB_CHUNK_OVERLAP` | `180` | Character overlap for fallback recursive chunk splitting; must be smaller than chunk size |
+| `AGENT_KB_CHUNK_SIZE` | `1000` | Maximum character size for recursive KB chunks |
+| `AGENT_KB_CHUNK_OVERLAP` | `180` | Character overlap for recursive chunk splitting; must be smaller than chunk size |
 | `AGENT_RUNTIME_WEB_SEARCH_PROVIDER` | `tavily` | Runtime web-search fallback provider: `none` or `tavily`; Tavily is only called for in-scope questions when KB/history does not provide a reliable answer |
 | `AGENT_QUESTION_PLANNER_PROVIDER` | `rules` | `rules` or `llm`; planner receives the latest customer message plus compact greeting metadata and decides scope, history routing, and explicit human requests |
 | `OPENAI_API_KEY` | unset | Required when `AGENT_ANSWER_PROVIDER=openai`, `AGENT_EMBEDDING_PROVIDER=openai`, or `AGENT_QUESTION_PLANNER_PROVIDER=llm` |
@@ -1065,9 +1065,9 @@ API response citations return these chunk ids, not just source file paths, so ca
 trace an answer to the exact retrieved chunk.
 Retrieved chunks passed to the LLM include `chunk_id`, `source`, and the pgvector
 `created_at` timestamp for that chunk.
-Onboarding-created KB chunks use source-aware metadata including `source_url`,
-`source_type`, `source_title`, `section_title`, `chunk_index`, `chunk_count`,
-`retrieved_at`, and `content_hash` when available. URL-backed sources use stable chunk ids
+Onboarding-created KB chunks use source metadata including `source_url`, `source_type`,
+`source_title`, `chunk_index`, `chunk_count`, `retrieved_at`, and `content_hash` when
+available. URL-backed sources use stable chunk ids
 like `url:<source-url-hash>#0000`; approved onboarding profile chunks use
 `onboarding-profile:<tenant-id>#0000`.
 The LLM prompt instructs the model to prefer newer `created_at` chunks only when multiple

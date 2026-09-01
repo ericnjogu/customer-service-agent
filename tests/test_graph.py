@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 from langchain_core.documents import Document
@@ -9,10 +10,14 @@ from app.container import create_container
 from app.graph import build_prompt_metadata, build_service_graph, invoke_service_graph
 from app.knowledge import SEED_KNOWLEDGE_NAMESPACE, tenant_knowledge_namespace
 from app.models import (
+    AnswerGenerationResult,
     ConversationPromptMetadata,
     ConversationRecord,
     IncomingMessage,
+    OnboardingContactPoint,
     QuestionPlan,
+    RuntimeWebSearchResult,
+    RuntimeWebSearchSource,
     StoredMessage,
     TenantConfig,
 )
@@ -38,6 +43,41 @@ class RecordingAnswerGenerator:
         self.metadata.append(conversation_metadata)
         self.tenant_configs.append(tenant_config)
         return "Recorded", 0.95
+
+
+class StaticAnswerGenerator(RecordingAnswerGenerator):
+    def __init__(self, result: AnswerGenerationResult) -> None:
+        super().__init__()
+        self.result = result
+
+    async def generate(
+        self,
+        query: str,
+        documents,
+        conversation_history: list[StoredMessage] | None = None,
+        conversation_metadata: ConversationPromptMetadata | None = None,
+        tenant_config: TenantConfig | None = None,
+    ) -> AnswerGenerationResult:
+        self.calls += 1
+        self.histories.append(conversation_history or [])
+        self.metadata.append(conversation_metadata)
+        self.tenant_configs.append(tenant_config)
+        return self.result
+
+
+class RecordingRuntimeWebSearch:
+    def __init__(self, result: RuntimeWebSearchResult) -> None:
+        self.result = result
+        self.calls: list[tuple[str, TenantConfig | None, str | None]] = []
+
+    async def search_answer(
+        self,
+        question: str,
+        tenant_config: TenantConfig | None = None,
+        website_url: str | None = None,
+    ) -> RuntimeWebSearchResult:
+        self.calls.append((question, tenant_config, website_url))
+        return self.result
 
 
 class StaticQuestionPlanner:
@@ -219,6 +259,268 @@ async def test_unknown_question_is_marked_low_confidence() -> None:
 
     conversation = await container.conversations.get_by_id(reply.conversation_id)
     assert conversation.state == "BOT_ACTIVE"
+
+
+async def test_service_graph_contains_search_tenant_website_node() -> None:
+    container = await create_container(Settings())
+    graph = container.graph.get_graph()
+    edges = {
+        (edge.source, edge.target, edge.data, edge.conditional)
+        for edge in graph.edges
+    }
+
+    assert "search_tenant_website" in graph.nodes
+    assert ("answer", "search_tenant_website", "search", True) in edges
+    assert ("answer", "persist_reply", "reply", True) in edges
+    assert ("search_tenant_website", "persist_reply", None, False) in edges
+
+
+async def test_high_confidence_answer_found_does_not_call_runtime_web_search() -> None:
+    container = await create_container(Settings())
+    await container.retrieval.upsert(
+        [
+            Document(
+                page_content="Hustle HQ is open from 8 AM to 8 PM.",
+                metadata={"source": "kb/hours.md", "chunk_id": "kb/hours.md#0000"},
+            )
+        ],
+        SEED_KNOWLEDGE_NAMESPACE,
+    )
+    runtime_search = RecordingRuntimeWebSearch(
+        RuntimeWebSearchResult(answer="Tavily should not be used.")
+    )
+    graph = build_service_graph(
+        container.conversations,
+        container.tenant_configs,
+        container.retrieval,
+        StaticAnswerGenerator(
+            AnswerGenerationResult(
+                answer="Hustle HQ is open from 8 AM to 8 PM.",
+                confidence=0.91,
+                answer_found=True,
+                grounded=True,
+            )
+        ),
+        StaticQuestionPlanner(
+            QuestionPlan(
+                in_scope=True,
+                needs_conversation_history=False,
+                explanation="standalone hours question",
+            )
+        ),
+        confidence_threshold=0.60,
+        conversation_history_max_messages=10,
+        greeting_lapse_minutes=60,
+        runtime_web_search=runtime_search,
+        onboarding=container.onboarding,
+    )
+
+    reply = await invoke_service_graph(
+        graph,
+        IncomingMessage(
+            event_id="runtime-no-fallback",
+            external_chat_id="runtime-no-fallback-chat",
+            external_user_id="runtime-no-fallback-user",
+            text="What time do you open?",
+        ),
+    )
+
+    assert runtime_search.calls == []
+    assert reply.answer == "Hustle HQ is open from 8 AM to 8 PM."
+    assert reply.low_confidence is False
+
+
+async def test_answer_not_found_calls_runtime_web_search_even_with_high_confidence() -> None:
+    container = await create_container(Settings())
+    await container.tenant_configs.upsert(
+        "tenant-a",
+        web_search_provider="tavily",
+        web_search_project_name="tenant-a-project",
+    )
+    await container.onboarding.replace_contact_points(
+        "tenant-a",
+        [
+            OnboardingContactPoint(
+                kind="website",
+                label="Website",
+                url="https://hustlehq.example",
+                is_primary=True,
+            )
+        ],
+    )
+    await container.retrieval.upsert(
+        [
+            Document(
+                page_content="Hustle HQ support answers common customer questions.",
+                metadata={"source": "kb/about.md", "chunk_id": "kb/about.md#0000"},
+            )
+        ],
+        tenant_knowledge_namespace("tenant-a"),
+    )
+    runtime_search = RecordingRuntimeWebSearch(
+        RuntimeWebSearchResult(
+            answer="Hustle HQ team details are listed on the company website.",
+            sources=[
+                RuntimeWebSearchSource(
+                    url="https://hustlehq.example/team",
+                    title="Hustle HQ Team",
+                    text="# Team\nHustle HQ team details are listed here.",
+                    provider="tavily",
+                )
+            ],
+        )
+    )
+    graph = build_service_graph(
+        container.conversations,
+        container.tenant_configs,
+        container.retrieval,
+        StaticAnswerGenerator(
+            AnswerGenerationResult(
+                answer="I do not have team-member names in the available information.",
+                confidence=0.86,
+                answer_found=False,
+                grounded=True,
+            )
+        ),
+        StaticQuestionPlanner(
+            QuestionPlan(
+                in_scope=True,
+                needs_conversation_history=False,
+                explanation="standalone team question",
+            )
+        ),
+        confidence_threshold=0.60,
+        conversation_history_max_messages=10,
+        greeting_lapse_minutes=60,
+        runtime_web_search=runtime_search,
+        onboarding=container.onboarding,
+    )
+
+    reply = await invoke_service_graph(
+        graph,
+        IncomingMessage(
+            tenant_id="tenant-a",
+            event_id="runtime-answer-not-found",
+            external_chat_id="runtime-answer-not-found-chat",
+            external_user_id="runtime-answer-not-found-user",
+            text="Who works at Hustle HQ?",
+        ),
+    )
+    await asyncio.sleep(0)
+
+    assert len(runtime_search.calls) == 1
+    assert runtime_search.calls[0][0] == "Who works at Hustle HQ?"
+    assert runtime_search.calls[0][1] is not None
+    assert runtime_search.calls[0][1].web_search_project_name == "tenant-a-project"
+    assert runtime_search.calls[0][2] == "https://hustlehq.example"
+    assert reply.answer == "Hustle HQ team details are listed on the company website."
+    assert reply.low_confidence is False
+    assert reply.citations == ["https://hustlehq.example/team"]
+    refreshed = await container.retrieval.search(
+        "team details",
+        tenant_knowledge_namespace("tenant-a"),
+        limit=5,
+    )
+    assert any(
+        document.metadata.get("source_url") == "https://hustlehq.example/team"
+        for document in refreshed
+    )
+
+
+async def test_runtime_web_search_empty_answer_preserves_low_confidence_kb_answer() -> None:
+    container = await create_container(Settings())
+    await container.retrieval.upsert(
+        [
+            Document(
+                page_content="Hustle HQ support answers common customer questions.",
+                metadata={"source": "kb/about.md", "chunk_id": "kb/about.md#0000"},
+            )
+        ],
+        SEED_KNOWLEDGE_NAMESPACE,
+    )
+    runtime_search = RecordingRuntimeWebSearch(RuntimeWebSearchResult(answer=""))
+    graph = build_service_graph(
+        container.conversations,
+        container.tenant_configs,
+        container.retrieval,
+        StaticAnswerGenerator(
+            AnswerGenerationResult(
+                answer="I do not have enough information.",
+                confidence=0.2,
+                answer_found=True,
+                grounded=True,
+            )
+        ),
+        StaticQuestionPlanner(
+            QuestionPlan(
+                in_scope=True,
+                needs_conversation_history=False,
+                explanation="standalone question",
+            )
+        ),
+        confidence_threshold=0.60,
+        conversation_history_max_messages=10,
+        greeting_lapse_minutes=60,
+        runtime_web_search=runtime_search,
+    )
+
+    reply = await invoke_service_graph(
+        graph,
+        IncomingMessage(
+            event_id="runtime-empty-answer",
+            external_chat_id="runtime-empty-answer-chat",
+            external_user_id="runtime-empty-answer-user",
+            text="Who works there?",
+        ),
+    )
+
+    assert len(runtime_search.calls) == 1
+    assert reply.answer == "I do not have enough information."
+    assert reply.low_confidence is True
+
+
+async def test_out_of_scope_question_does_not_call_runtime_web_search() -> None:
+    container = await create_container(Settings())
+    runtime_search = RecordingRuntimeWebSearch(
+        RuntimeWebSearchResult(answer="Tavily should not be used.")
+    )
+    graph = build_service_graph(
+        container.conversations,
+        container.tenant_configs,
+        container.retrieval,
+        StaticAnswerGenerator(
+            AnswerGenerationResult(
+                answer="unused",
+                confidence=0,
+                answer_found=False,
+                grounded=False,
+            )
+        ),
+        StaticQuestionPlanner(
+            QuestionPlan(
+                in_scope=False,
+                needs_conversation_history=False,
+                explanation="I can help with questions about Hustle HQ.",
+            )
+        ),
+        confidence_threshold=0.60,
+        conversation_history_max_messages=10,
+        greeting_lapse_minutes=60,
+        runtime_web_search=runtime_search,
+    )
+
+    reply = await invoke_service_graph(
+        graph,
+        IncomingMessage(
+            event_id="runtime-out-of-scope",
+            external_chat_id="runtime-out-of-scope-chat",
+            external_user_id="runtime-out-of-scope-user",
+            text="1+1?",
+        ),
+    )
+
+    assert runtime_search.calls == []
+    assert reply.answer == "I can help with questions about Hustle HQ."
 
 
 async def test_retrieves_directly_seeded_knowledge() -> None:

@@ -4,7 +4,9 @@ from dataclasses import dataclass
 from app.adapters.embeddings import LocalHashEmbeddingProvider, OpenAIEmbeddingProvider
 from app.adapters.llm import (
     MissingOpenAIWebsiteAnalyzer,
+    NoopRuntimeWebSearch,
     NoopWebsiteResearcher,
+    TavilyRuntimeWebSearch,
     TavilyWebsiteResearcher,
     create_openai_answer_generator,
     create_openai_question_planner,
@@ -88,6 +90,34 @@ def create_platform_website_researcher(settings: Settings) -> object:
         )
     raise ValueError(
         f"Unsupported platform web search provider: {settings.platform_web_search_provider}"
+    )
+
+
+def create_runtime_web_search(settings: Settings) -> object:
+    provider = settings.runtime_web_search_provider.strip().lower()
+    if provider in {"", "none", "disabled"}:
+        logger.info("Using no-op runtime web search")
+        return NoopRuntimeWebSearch()
+    if provider == "tavily":
+        if not settings.platform_web_search_api_key:
+            logger.warning(
+                "AGENT_PLATFORM_WEB_SEARCH_API_KEY is required when "
+                "AGENT_RUNTIME_WEB_SEARCH_PROVIDER=tavily; runtime web search "
+                "fallback will be disabled"
+            )
+            return NoopRuntimeWebSearch()
+        logger.info(
+            "Using Tavily runtime web search max_results=%s timeout_seconds=%s",
+            settings.platform_web_search_max_results,
+            settings.platform_web_search_timeout_seconds,
+        )
+        return TavilyRuntimeWebSearch(
+            api_key=settings.platform_web_search_api_key,
+            max_results=settings.platform_web_search_max_results,
+            timeout_seconds=settings.platform_web_search_timeout_seconds,
+        )
+    raise ValueError(
+        f"Unsupported runtime web search provider: {settings.runtime_web_search_provider}"
     )
 
 
@@ -274,6 +304,10 @@ async def create_container(settings: Settings) -> Container:
         settings.confidence_threshold,
         settings.conversation_history_max_messages,
         settings.greeting_lapse_minutes,
+        create_runtime_web_search(settings),
+        settings.kb_chunk_size,
+        settings.kb_chunk_overlap,
+        onboarding,
     )
     if settings.email_provider == "log":
         logger.info("Using logging email provider")
@@ -319,6 +353,8 @@ async def create_container(settings: Settings) -> Container:
         telegram_bot_info_resolver=telegram_bot_info_resolver,
         email_sender=email_sender,
         onboarding_review_email=settings.onboarding_review_email,
+        kb_chunk_size=settings.kb_chunk_size,
+        kb_chunk_overlap=settings.kb_chunk_overlap,
     )
     logger.info(
         "onboarding website analysis provider '%s'",

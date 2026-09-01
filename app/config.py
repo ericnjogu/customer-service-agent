@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     embedding_provider: str = "local"
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = Field(default=64, gt=0)
+    kb_chunk_size: int = Field(default=1_000, gt=0)
+    kb_chunk_overlap: int = Field(default=180, ge=0)
     question_planner_provider: str = "rules"
     llm_model: str = "gpt-4.1-mini"
     openai_api_key: str | None = Field(default=None, validation_alias="OPENAI_API_KEY")
@@ -54,6 +56,7 @@ class Settings(BaseSettings):
             "TAVILY_API_KEY",
         ),
     )
+    runtime_web_search_provider: str = "tavily"
     provider_project_provisioner: str = "metadata"
     openai_admin_key: str | None = Field(default=None, validation_alias="OPENAI_ADMIN_KEY")
     langsmith_api_key: str | None = Field(default=None, validation_alias="LANGSMITH_API_KEY")
@@ -72,6 +75,12 @@ class Settings(BaseSettings):
     cors_allow_origins: str = "*"
     log_level: str = "INFO"
     log_format: str = "{asctime} - {levelname}:{name}:{message}"
+
+    @model_validator(mode="after")
+    def validate_kb_chunk_settings(self) -> "Settings":
+        if self.kb_chunk_overlap >= self.kb_chunk_size:
+            raise ValueError("AGENT_KB_CHUNK_OVERLAP must be smaller than AGENT_KB_CHUNK_SIZE")
+        return self
 
 
 @lru_cache

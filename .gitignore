@@ -9,5 +9,5 @@ __pycache__/
 dist/
 build/
 bruno/environments/
-mumbo-jumbo.md
 local-docs/
+private-deploy-local.sh

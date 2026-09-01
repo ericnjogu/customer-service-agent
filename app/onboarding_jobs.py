@@ -10,7 +10,7 @@ from app.adapters.telegram import (
     TelegramSecretWriter,
     TelegramWebhookRegistrar,
 )
-from app.knowledge import chunk_text
+from app.knowledge import chunk_text_with_metadata, stable_source_hash
 from app.models import (
     OnboardingContactPoint,
     OnboardingJobCreate,
@@ -47,6 +47,8 @@ class OnboardingJobService:
         telegram_bot_info_resolver: TelegramBotInfoResolver | None = None,
         email_sender: EmailSender | None = None,
         onboarding_review_email: str | None = None,
+        kb_chunk_size: int = 1_000,
+        kb_chunk_overlap: int = 180,
     ) -> None:
         self.onboarding = onboarding
         self.tenants = tenants
@@ -60,6 +62,8 @@ class OnboardingJobService:
         self.telegram_bot_info_resolver = telegram_bot_info_resolver
         self.email_sender = email_sender
         self.onboarding_review_email = onboarding_review_email
+        self.kb_chunk_size = kb_chunk_size
+        self.kb_chunk_overlap = kb_chunk_overlap
 
     async def start_job(self, request: OnboardingJobCreate) -> OnboardingJobRecord:
         job = await self.onboarding.create_job(
@@ -276,6 +280,8 @@ class OnboardingJobService:
             request,
             tenant_id=tenant_config.tenant_id,
             onboarding_session_id=onboarding_session_id,
+            chunk_size=self.kb_chunk_size,
+            chunk_overlap=self.kb_chunk_overlap,
         )
         if not documents:
             logger.info(
@@ -501,6 +507,8 @@ def onboarding_knowledge_documents(
     *,
     tenant_id: str,
     onboarding_session_id: str | None,
+    chunk_size: int = 1_000,
+    chunk_overlap: int = 180,
 ) -> list[Document]:
     documents = []
     documents.extend(
@@ -511,9 +519,12 @@ def onboarding_knowledge_documents(
             metadata={
                 "tenant_id": tenant_id,
                 "source_type": "onboarding",
+                "source_title": request.business_profile.business_name,
                 "provider": "customer-service",
                 "onboarding_session_id": onboarding_session_id or "",
             },
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
         )
     )
     for source in request.knowledge_sources:
@@ -522,6 +533,8 @@ def onboarding_knowledge_documents(
                 source,
                 tenant_id=tenant_id,
                 onboarding_session_id=onboarding_session_id,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
             )
         )
     return documents
@@ -569,6 +582,8 @@ def chunk_website_source(
     *,
     tenant_id: str,
     onboarding_session_id: str | None,
+    chunk_size: int = 1_000,
+    chunk_overlap: int = 180,
 ) -> list[Document]:
     text = source.text.strip()
     if not text:
@@ -582,9 +597,12 @@ def chunk_website_source(
             "source_type": "website",
             "provider": source.provider,
             "title": source.title or "",
+            "source_title": source.title or source.url,
             "retrieved_at": source.retrieved_at.isoformat(),
             "onboarding_session_id": onboarding_session_id or "",
         },
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
     )
 
 
@@ -594,22 +612,51 @@ def chunk_knowledge_document(
     source: str,
     source_url: str | None,
     metadata: dict,
+    chunk_size: int = 1_000,
+    chunk_overlap: int = 180,
 ) -> list[Document]:
     documents = []
-    for index, chunk in enumerate(chunk_text(text)):
-        chunk_id = f"{source}#{index:04d}"
+    chunks = chunk_text_with_metadata(
+        text,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+    )
+    chunk_id_prefix = knowledge_chunk_id_prefix(
+        source=source,
+        source_url=source_url,
+        metadata=metadata,
+    )
+    for chunk in chunks:
+        chunk_id = f"{chunk_id_prefix}#{chunk.chunk_index:04d}"
         documents.append(
             Document(
-                page_content=chunk,
+                page_content=chunk.content,
                 metadata={
                     **metadata,
                     "source": source,
                     "source_url": source_url,
+                    "section_title": chunk.section_title or "",
+                    "chunk_index": chunk.chunk_index,
+                    "chunk_count": chunk.chunk_count,
+                    "content_hash": chunk.content_hash,
                     "chunk_id": chunk_id,
                 },
             )
         )
     return documents
+
+
+def knowledge_chunk_id_prefix(
+    *,
+    source: str,
+    source_url: str | None,
+    metadata: dict,
+) -> str:
+    if metadata.get("source_type") == "onboarding" and metadata.get("tenant_id"):
+        return f"onboarding-profile:{metadata['tenant_id']}"
+    if source_url:
+        return f"url:{stable_source_hash(source_url)}"
+    return f"source:{stable_source_hash(source)}"
 
 
 def onboarding_session_id_from_request(request: OnboardingJobCreate) -> str | None:

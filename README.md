@@ -668,11 +668,18 @@ persists provider-facing project names. With API provisioning enabled, the app:
 4. saves `llm_project_id`, `llm_project_name`, `langsmith_project`, and Tavily
    web-search metadata on tenant config during onboarding job processing.
 
-Tavily uses the shared platform API key for onboarding website research. For future
-customer-facing runtime web search, tenant config records
-`web_search_provider="tavily"` and `web_search_project_name=<tenant-slug>` so runtime
-requests can be tagged with the tenant slug as the Tavily project id. No tenant Tavily
-API key or Kubernetes Secret is created.
+Tavily uses the shared platform API key for onboarding website research and runtime
+fallback. Runtime fallback is enabled by default with
+`AGENT_RUNTIME_WEB_SEARCH_PROVIDER=tavily`; set it to `none` to disable runtime search.
+If the platform Tavily API key is not configured, runtime fallback logs a warning and
+acts as disabled. For in-scope questions, Tavily is called when the KB/history answer has
+`answer_found=false`, `grounded=false`, or confidence below
+`AGENT_CONFIDENCE_THRESHOLD`. Runtime Tavily requests use `web_search_project_name`
+from tenant config as the Tavily `X-Project-ID`, falling back to the tenant id. When a
+tenant has a website contact point, the runtime search also passes that website domain
+to Tavily as `include_domains` so fallback answers stay anchored to the tenant's own
+site. The LangGraph flow models this as an explicit `search_tenant_website` node after
+KB answer generation. No tenant Tavily API key or Kubernetes Secret is created.
 
 The onboarding job runs provider-project provisioning idempotently before tenant config
 is written. If the project fields already exist, they are reused; if they are missing,
@@ -797,10 +804,10 @@ Provider project/index fields are tenant control-plane metadata:
 - LangSmith traces are written to the tenant config's `langsmith_project` when present
   and tagged with tenant metadata. If a tenant project is missing, LangSmith falls back
   to the deployment-level `LANGSMITH_PROJECT`.
-- Tavily web-search metadata uses the shared platform API key for onboarding and stores
-  `web_search_provider` plus `web_search_project_name` on tenant config. The project
-  name is the tenant slug and can be sent as Tavily's project id in a later
-  customer-facing runtime web-search increment. No tenant web-search Secret is created.
+- Tavily web-search metadata uses the shared platform API key and stores
+  `web_search_provider` plus `web_search_project_name` on tenant config. Runtime
+  fallback sends the project name as Tavily's project id when enabled. No tenant
+  web-search Secret is created.
 - Vector storage is modeled generically using `vector_provider`,
   `vector_isolation_mode`, `vector_collection`, and `vector_namespace`. Local Helm
   configures the default collection with `AGENT_VECTOR_COLLECTION`; Pinecone can map
@@ -987,6 +994,9 @@ Application configuration uses the `AGENT_` prefix. LangSmith uses its native
 | `AGENT_EMBEDDING_PROVIDER` | `local` | `local` or `openai`; Helm defaults to `openai` for pgvector |
 | `AGENT_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding model when `AGENT_EMBEDDING_PROVIDER=openai` |
 | `AGENT_EMBEDDING_DIMENSIONS` | `64` | pgvector embedding size; Helm defaults to `1536` for OpenAI embeddings |
+| `AGENT_KB_CHUNK_SIZE` | `1000` | Maximum character size for source-aware KB chunks before fallback recursive splitting |
+| `AGENT_KB_CHUNK_OVERLAP` | `180` | Character overlap for fallback recursive chunk splitting; must be smaller than chunk size |
+| `AGENT_RUNTIME_WEB_SEARCH_PROVIDER` | `tavily` | Runtime web-search fallback provider: `none` or `tavily`; Tavily is only called for in-scope questions when KB/history does not provide a reliable answer |
 | `AGENT_QUESTION_PLANNER_PROVIDER` | `rules` | `rules` or `llm`; planner receives the latest customer message plus compact greeting metadata and decides scope, history routing, and explicit human requests |
 | `OPENAI_API_KEY` | unset | Required when `AGENT_ANSWER_PROVIDER=openai`, `AGENT_EMBEDDING_PROVIDER=openai`, or `AGENT_QUESTION_PLANNER_PROVIDER=llm` |
 | `AGENT_LLM_MODEL` | `gpt-4.1-mini` | OpenAI chat model used by LLM-backed answer generation and planning |
@@ -1055,6 +1065,11 @@ API response citations return these chunk ids, not just source file paths, so ca
 trace an answer to the exact retrieved chunk.
 Retrieved chunks passed to the LLM include `chunk_id`, `source`, and the pgvector
 `created_at` timestamp for that chunk.
+Onboarding-created KB chunks use source-aware metadata including `source_url`,
+`source_type`, `source_title`, `section_title`, `chunk_index`, `chunk_count`,
+`retrieved_at`, and `content_hash` when available. URL-backed sources use stable chunk ids
+like `url:<source-url-hash>#0000`; approved onboarding profile chunks use
+`onboarding-profile:<tenant-id>#0000`.
 The LLM prompt instructs the model to prefer newer `created_at` chunks only when multiple
 relevant chunks overlap or conflict; retrieval ranking remains semantic-only.
 

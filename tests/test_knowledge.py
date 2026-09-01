@@ -19,7 +19,7 @@ def test_chunk_text_rejects_overlap_greater_than_chunk_size() -> None:
         chunk_text("hello", chunk_size=10, chunk_overlap=10)
 
 
-def test_chunk_text_preserves_markdown_section_titles() -> None:
+def test_chunk_text_uses_recursive_splitting_without_heading_metadata() -> None:
     chunks = chunk_text_with_metadata(
         "\n".join(
             [
@@ -36,15 +36,14 @@ def test_chunk_text_preserves_markdown_section_titles() -> None:
         chunk_overlap=10,
     )
 
-    assert [chunk.section_title for chunk in chunks] == ["Menu", "Drinks"]
+    assert all(chunk.section_title is None for chunk in chunks)
     assert chunks[0].content.startswith("# Menu")
-    assert chunks[1].content.startswith("## Drinks")
-    assert all(chunk.chunk_count == 2 for chunk in chunks)
-    assert [chunk.chunk_index for chunk in chunks] == [0, 1]
+    assert all(chunk.chunk_count == len(chunks) for chunk in chunks)
+    assert [chunk.chunk_index for chunk in chunks] == list(range(len(chunks)))
     assert all(len(chunk.content_hash) == 64 for chunk in chunks)
 
 
-def test_chunk_text_repeats_section_title_for_split_section() -> None:
+def test_chunk_text_does_not_repeat_heading_for_split_chunks() -> None:
     chunks = chunk_text_with_metadata(
         "# Refund policy\n\n" + "Refunds are available before dispatch. " * 20,
         chunk_size=120,
@@ -52,5 +51,6 @@ def test_chunk_text_repeats_section_title_for_split_section() -> None:
     )
 
     assert len(chunks) > 1
-    assert all(chunk.section_title == "Refund policy" for chunk in chunks)
-    assert all("Refund policy" in chunk.content for chunk in chunks)
+    assert all(chunk.section_title is None for chunk in chunks)
+    assert chunks[0].content.startswith("# Refund policy")
+    assert any("Refund policy" not in chunk.content for chunk in chunks[1:])

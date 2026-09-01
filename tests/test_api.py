@@ -1175,7 +1175,7 @@ def test_onboarding_job_accepts_and_provisions_internal_records() -> None:
         and document.metadata["source_type"] == "onboarding"
         and document.metadata["source_title"] == "Hustle HQ Onboarding"
         and document.metadata["chunk_id"].startswith(f"onboarding-profile:{tenant_id}#")
-        and document.metadata["section_title"]
+        and document.metadata["section_title"] == ""
         and "content_hash" in document.metadata
         for document in kb_documents
     )

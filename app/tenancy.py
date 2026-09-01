@@ -32,7 +32,7 @@ def default_langsmith_project(tenant_id: str) -> str:
 
 
 def default_vector_namespace(tenant_id: str) -> str:
-    return tenant_slug(normalize_tenant_id(tenant_id))
+    return normalize_tenant_id(tenant_id)
 
 
 def tenant_knowledge_namespace(tenant_id: str) -> str:

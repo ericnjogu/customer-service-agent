@@ -363,12 +363,12 @@ class PgVectorRetrievalStore:
     async def initialize(self) -> None:
         return None
 
-    async def upsert(self, documents: list[Document], namespace: str) -> None:
+    async def upsert(self, documents: list[Document], tenant_id: str) -> None:
         assert self.database.pool
         logger.info(
-            "Upserting %d pgvector knowledge document(s) into namespace=%s",
+            "Upserting %d pgvector knowledge document(s) for tenant_id=%s",
             len(documents),
-            namespace,
+            tenant_id,
         )
         async with self.database.pool.acquire() as connection:
             pending: list[tuple[Document, str, str]] = []
@@ -381,31 +381,31 @@ class PgVectorRetrievalStore:
                 existing_hash = await connection.fetchval(
                     """
                     SELECT content_hash FROM knowledge_documents
-                    WHERE namespace = $1 AND chunk_id = $2
+                    WHERE tenant_id = $1 AND chunk_id = $2
                     """,
-                    namespace,
+                    tenant_id,
                     chunk_id,
                 )
                 if existing_hash == document_hash:
                     logger.info(
-                        "Skipping unchanged pgvector knowledge chunk namespace=%s chunk_id=%s",
-                        namespace,
+                        "Skipping unchanged pgvector knowledge chunk tenant_id=%s chunk_id=%s",
+                        tenant_id,
                         chunk_id,
                     )
                     continue
                 logger.info(
-                    "Preparing pgvector knowledge chunk namespace=%s chunk_id=%s content_chars=%d",
-                    namespace,
+                    "Preparing pgvector knowledge chunk tenant_id=%s chunk_id=%s content_chars=%d",
+                    tenant_id,
                     chunk_id,
                     len(document.page_content),
                 )
                 pending.append((document, chunk_id, document_hash))
 
             if not pending:
-                logger.info("No changed pgvector knowledge documents for namespace=%s", namespace)
+                logger.info("No changed pgvector knowledge documents for tenant_id=%s", tenant_id)
                 await self._delete_removed_chunks(
                     connection,
-                    namespace,
+                    tenant_id,
                     incoming_chunk_ids_by_source,
                 )
                 return
@@ -423,7 +423,7 @@ class PgVectorRetrievalStore:
                 await connection.execute(
                     """
                     INSERT INTO knowledge_documents(
-                        namespace,
+                        tenant_id,
                         chunk_id,
                         source,
                         source_url,
@@ -433,7 +433,7 @@ class PgVectorRetrievalStore:
                         embedding
                     )
                     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::vector)
-                    ON CONFLICT (namespace, chunk_id) DO UPDATE
+                    ON CONFLICT (tenant_id, chunk_id) DO UPDATE
                     SET content = EXCLUDED.content,
                         source = EXCLUDED.source,
                         source_url = EXCLUDED.source_url,
@@ -442,7 +442,7 @@ class PgVectorRetrievalStore:
                         embedding = EXCLUDED.embedding,
                         updated_at = now()
                     """,
-                    namespace,
+                    tenant_id,
                     chunk_id,
                     source,
                     str(source_url) if source_url else None,
@@ -453,14 +453,14 @@ class PgVectorRetrievalStore:
                 )
             await self._delete_removed_chunks(
                 connection,
-                namespace,
+                tenant_id,
                 incoming_chunk_ids_by_source,
             )
-        logger.info("Finished pgvector knowledge upsert for namespace=%s", namespace)
+        logger.info("Finished pgvector knowledge upsert for tenant_id=%s", tenant_id)
 
     async def delete_by_metadata(
         self,
-        namespace: str,
+        tenant_id: str,
         metadata_key: str,
         metadata_value: str,
     ) -> None:
@@ -468,37 +468,37 @@ class PgVectorRetrievalStore:
         result = await self.database.pool.execute(
             """
             DELETE FROM knowledge_documents
-            WHERE namespace = $1
+            WHERE tenant_id = $1
               AND metadata ->> $2 = $3
             """,
-            namespace,
+            tenant_id,
             metadata_key,
             metadata_value,
         )
         logger.info(
-            "Deleted pgvector knowledge documents by metadata namespace=%s "
+            "Deleted pgvector knowledge documents by metadata tenant_id=%s "
             "metadata_key=%s metadata_value=%s result=%s",
-            namespace,
+            tenant_id,
             metadata_key,
             metadata_value,
             result,
         )
 
-    async def delete_by_source_url(self, namespace: str, source_url: str) -> None:
+    async def delete_by_source_url(self, tenant_id: str, source_url: str) -> None:
         assert self.database.pool
         result = await self.database.pool.execute(
             """
             DELETE FROM knowledge_documents
-            WHERE namespace = $1
+            WHERE tenant_id = $1
               AND source_url = $2
             """,
-            namespace,
+            tenant_id,
             source_url,
         )
         logger.info(
-            "Deleted pgvector knowledge documents by source_url namespace=%s "
+            "Deleted pgvector knowledge documents by source_url tenant_id=%s "
             "source_url=%s result=%s",
-            namespace,
+            tenant_id,
             source_url,
             result,
         )
@@ -506,29 +506,29 @@ class PgVectorRetrievalStore:
     async def _delete_removed_chunks(
         self,
         connection: asyncpg.Connection,
-        namespace: str,
+        tenant_id: str,
         incoming_chunk_ids_by_source: dict[str, set[str]],
     ) -> None:
         for source, chunk_ids in incoming_chunk_ids_by_source.items():
             await connection.execute(
                 """
                 DELETE FROM knowledge_documents
-                WHERE namespace = $1
+                WHERE tenant_id = $1
                   AND source = $2
                   AND NOT (chunk_id = ANY($3::text[]))
                 """,
-                namespace,
+                tenant_id,
                 source,
                 sorted(chunk_ids),
             )
 
-    async def search(self, query: str, namespace: str, limit: int = 4) -> list[Document]:
+    async def search(self, query: str, tenant_id: str, limit: int = 4) -> list[Document]:
         assert self.database.pool
         query_embedding = await self.embeddings.embed_query(query)
         if is_zero_vector(query_embedding):
             logger.debug(
-                "Skipping pgvector search for namespace=%s because query has no embedding tokens",
-                namespace,
+                "Skipping pgvector search for tenant_id=%s because query has no embedding tokens",
+                tenant_id,
             )
             return []
 
@@ -537,11 +537,11 @@ class PgVectorRetrievalStore:
             SELECT content, source_url, metadata, created_at,
                    1 - (embedding <=> $1::vector) AS score
             FROM knowledge_documents
-            WHERE namespace = $2
+            WHERE tenant_id = $2
             ORDER BY embedding <=> $1::vector LIMIT $3
             """,
             vector_literal(query_embedding),
-            namespace,
+            tenant_id,
             limit,
         )
         return [
@@ -1788,7 +1788,7 @@ CREATE TABLE IF NOT EXISTS business_contact_points (
 
 CREATE TABLE IF NOT EXISTS knowledge_documents (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    namespace text NOT NULL,
+    tenant_id text NOT NULL,
     chunk_id text NOT NULL,
     source text NOT NULL,
     source_url text,
@@ -1798,7 +1798,7 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
     embedding vector({embedding_dimensions}) NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
-    UNIQUE(namespace, chunk_id)
+    UNIQUE(tenant_id, chunk_id)
 );
 
 ALTER TABLE conversations
@@ -2055,6 +2055,10 @@ END
 WHERE vector_namespace = 'seed-knowledge'
    OR vector_namespace LIKE '%:seed-knowledge';
 
+UPDATE tenant_configs
+SET vector_namespace = tenant_id
+WHERE vector_namespace = replace(tenant_id, '_', '-');
+
 DO $$
 BEGIN
     IF EXISTS (
@@ -2104,6 +2108,33 @@ ALTER TABLE knowledge_documents
 ADD COLUMN IF NOT EXISTS chunk_id text;
 
 ALTER TABLE knowledge_documents
+ADD COLUMN IF NOT EXISTS tenant_id text;
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'knowledge_documents' AND column_name = 'namespace'
+    ) THEN
+        UPDATE knowledge_documents
+        SET tenant_id = CASE
+            WHEN namespace = 'seed-knowledge' THEN 'default'
+            ELSE regexp_replace(namespace, ':seed-knowledge$', '')
+        END
+        WHERE tenant_id IS NULL;
+    END IF;
+END $$;
+
+UPDATE knowledge_documents
+SET tenant_id = 'default'
+WHERE tenant_id IS NULL OR btrim(tenant_id) = '';
+
+UPDATE knowledge_documents
+SET tenant_id = tenants.tenant_id
+FROM tenants
+WHERE knowledge_documents.tenant_id = replace(tenants.tenant_id, '_', '-');
+
+ALTER TABLE knowledge_documents
 ADD COLUMN IF NOT EXISTS source_url text;
 
 UPDATE knowledge_documents
@@ -2122,40 +2153,53 @@ ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
 ALTER TABLE knowledge_documents
 ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
 
+ALTER TABLE knowledge_documents
+ALTER COLUMN tenant_id SET NOT NULL;
+
 DELETE FROM knowledge_documents old
 USING knowledge_documents existing
 WHERE (
-    (old.namespace = 'seed-knowledge' AND existing.namespace = 'default')
+    (old.tenant_id = 'seed-knowledge' AND existing.tenant_id = 'default')
     OR (
-        old.namespace LIKE '%:seed-knowledge'
-        AND existing.namespace = regexp_replace(old.namespace, ':seed-knowledge$', '')
+        old.tenant_id LIKE '%:seed-knowledge'
+        AND existing.tenant_id = regexp_replace(old.tenant_id, ':seed-knowledge$', '')
     )
 )
   AND old.chunk_id = existing.chunk_id
   AND old.ctid <> existing.ctid;
 
 UPDATE knowledge_documents
-SET namespace = CASE
-    WHEN namespace = 'seed-knowledge' THEN 'default'
-    ELSE regexp_replace(namespace, ':seed-knowledge$', '')
+SET tenant_id = CASE
+    WHEN tenant_id = 'seed-knowledge' THEN 'default'
+    ELSE regexp_replace(tenant_id, ':seed-knowledge$', '')
 END
-WHERE namespace = 'seed-knowledge'
-   OR namespace LIKE '%:seed-knowledge';
+WHERE tenant_id = 'seed-knowledge'
+   OR tenant_id LIKE '%:seed-knowledge';
 
 ALTER TABLE knowledge_documents
 DROP CONSTRAINT IF EXISTS knowledge_documents_namespace_source_key;
 
+ALTER TABLE knowledge_documents
+DROP CONSTRAINT IF EXISTS knowledge_documents_namespace_chunk_id_key;
+
 DROP INDEX IF EXISTS knowledge_documents_namespace_source_idx;
+
+DROP INDEX IF EXISTS knowledge_documents_namespace_chunk_id_idx;
+
+DROP INDEX IF EXISTS knowledge_documents_namespace_source_url_idx;
 
 DELETE FROM knowledge_documents older
 USING knowledge_documents newer
-WHERE older.namespace = newer.namespace
+WHERE older.tenant_id = newer.tenant_id
   AND older.chunk_id = newer.chunk_id
   AND older.ctid < newer.ctid;
 
-CREATE UNIQUE INDEX IF NOT EXISTS knowledge_documents_namespace_chunk_id_idx
-ON knowledge_documents(namespace, chunk_id);
+CREATE UNIQUE INDEX IF NOT EXISTS knowledge_documents_tenant_id_chunk_id_idx
+ON knowledge_documents(tenant_id, chunk_id);
 
-CREATE INDEX IF NOT EXISTS knowledge_documents_namespace_source_url_idx
-ON knowledge_documents(namespace, source_url);
+CREATE INDEX IF NOT EXISTS knowledge_documents_tenant_id_source_url_idx
+ON knowledge_documents(tenant_id, source_url);
+
+ALTER TABLE knowledge_documents
+DROP COLUMN IF EXISTS namespace;
 """

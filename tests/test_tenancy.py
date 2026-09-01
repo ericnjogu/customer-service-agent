@@ -39,8 +39,9 @@ def test_default_vector_namespace_preserves_default_tenant_namespace() -> None:
     assert default_vector_namespace(DEFAULT_TENANT_ID) == DEFAULT_TENANT_ID
 
 
-def test_default_vector_namespace_uses_tenant_slug_for_non_default_tenants() -> None:
-    assert default_vector_namespace("Hustle HQ") == "hustle-hq"
+def test_default_vector_namespace_uses_actual_tenant_id_for_non_default_tenants() -> None:
+    assert default_vector_namespace("tnt_123") == "tnt_123"
+    assert default_vector_namespace("  tnt_123  ") == "tnt_123"
 
 
 def test_generate_tenant_id_uses_internal_tenant_prefix() -> None:

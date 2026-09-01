@@ -158,14 +158,14 @@ def build_service_graph(
 
     async def retrieve(state: ServiceState) -> dict:
         tenant_config = state.get("tenant_config")
-        namespace = (
+        knowledge_tenant_id = (
             tenant_config.vector_namespace
             if tenant_config and tenant_config.vector_namespace
             else tenant_knowledge_namespace(state["message"].tenant_id)
         )
         documents = await retrieval.search(
             state["message"].text,
-            namespace,
+            knowledge_tenant_id,
         )
         return {"documents": documents}
 
@@ -282,7 +282,7 @@ def build_service_graph(
         chunk_size: int,
         chunk_overlap: int,
     ) -> None:
-        namespace = (
+        knowledge_tenant_id = (
             tenant_config.vector_namespace
             if tenant_config and tenant_config.vector_namespace
             else tenant_knowledge_namespace(tenant_id)
@@ -291,7 +291,7 @@ def build_service_graph(
             if not source.url or not source.text.strip():
                 continue
             try:
-                await retrieval.delete_by_source_url(namespace, source.url)
+                await retrieval.delete_by_source_url(knowledge_tenant_id, source.url)
                 documents = runtime_web_search_documents(
                     source,
                     query=query,
@@ -299,13 +299,13 @@ def build_service_graph(
                     chunk_overlap=chunk_overlap,
                 )
                 if documents:
-                    await retrieval.upsert(documents, namespace)
+                    await retrieval.upsert(documents, knowledge_tenant_id)
             except Exception:
                 logger.exception(
                     "Failed to refresh runtime web search KB source tenant_id=%s "
-                    "namespace=%s source_url=%s",
+                    "knowledge_tenant_id=%s source_url=%s",
                     tenant_id,
-                    namespace,
+                    knowledge_tenant_id,
                     source.url,
                 )
 

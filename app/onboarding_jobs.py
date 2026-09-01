@@ -255,10 +255,10 @@ class OnboardingJobService:
         if self.retrieval is None:
             logger.info("Skipping onboarding KB creation because no retrieval store is configured")
             return
-        namespace = tenant_config.vector_namespace
-        if not namespace:
+        knowledge_tenant_id = tenant_config.vector_namespace
+        if not knowledge_tenant_id:
             logger.info(
-                "Skipping onboarding KB creation because tenant has no vector namespace "
+                "Skipping onboarding KB creation because tenant has no KB tenant id "
                 "tenant_id=%s",
                 tenant_config.tenant_id,
             )
@@ -266,13 +266,13 @@ class OnboardingJobService:
         if onboarding_session_id:
             logger.info(
                 "Removing existing onboarding KB documents before recreation "
-                "tenant_id=%s namespace=%s onboarding_session_id=%s",
+                "tenant_id=%s knowledge_tenant_id=%s onboarding_session_id=%s",
                 tenant_config.tenant_id,
-                namespace,
+                knowledge_tenant_id,
                 onboarding_session_id,
             )
             await self.retrieval.delete_by_metadata(
-                namespace,
+                knowledge_tenant_id,
                 "onboarding_session_id",
                 onboarding_session_id,
             )
@@ -285,18 +285,19 @@ class OnboardingJobService:
         )
         if not documents:
             logger.info(
-                "No onboarding KB documents were generated tenant_id=%s namespace=%s",
+                "No onboarding KB documents were generated tenant_id=%s knowledge_tenant_id=%s",
                 tenant_config.tenant_id,
-                namespace,
+                knowledge_tenant_id,
             )
             return
         logger.info(
-            "Creating onboarding KB documents tenant_id=%s namespace=%s document_count=%s",
+            "Creating onboarding KB documents tenant_id=%s "
+            "knowledge_tenant_id=%s document_count=%s",
             tenant_config.tenant_id,
-            namespace,
+            knowledge_tenant_id,
             len(documents),
         )
-        await self.retrieval.upsert(documents, namespace)
+        await self.retrieval.upsert(documents, knowledge_tenant_id)
 
     async def write_telegram_secret(self, request: OnboardingJobCreate) -> None:
         if self.telegram_secret_writer is None:

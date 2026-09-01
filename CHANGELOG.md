@@ -65,9 +65,12 @@ This project currently uses increment-based milestones instead of semantic versi
   `AGENT_EMBEDDING_DIMENSIONS` configuration.
 - Helm values for OpenAI `text-embedding-3-small` embeddings with 1536 dimensions.
 - Knowledge chunking helper via LangChain `RecursiveCharacterTextSplitter`.
+- `knowledge_documents` now uses an explicit `tenant_id` column instead of an overloaded
+  `namespace` column, and default vector partition values preserve generated `tnt_...`
+  tenant IDs without slug/hyphen conversion.
 - Tenant id foundation for inbound messages, conversation records, replies, tenant-scoped
-  conversation lookup, tenant-scoped message idempotency, and tenant-specific seed KB
-  namespaces.
+  conversation lookup, tenant-scoped message idempotency, and tenant-specific KB
+  partitions.
 - `AGENT_DEFAULT_TENANT_ID` / `tenant.defaultId` configuration for local/default tenant
   routing.
 - Tenant prompt configuration storage and API endpoints for per-tenant answer and planner
@@ -76,7 +79,7 @@ This project currently uses increment-based milestones instead of semantic versi
   features, LLM providers, vector providers, isolation modes, and LLM base URLs.
 - Tenant opt-in feature flags, plus tenant control-plane fields for LLM project
   metadata, LangSmith project names, tenant LLM provider metadata, and generic vector
-  provider/collection/namespace settings.
+  provider/collection/partition settings.
 - Tenant selected plan reference (`sme` or `enterprise`) for onboarding/audit context,
   with plan templates in Helm values instead of runtime inference.
 - Redis-backed tenant config read-through cache with memory fallback for local/non-Redis

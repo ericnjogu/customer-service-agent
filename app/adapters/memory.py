@@ -188,39 +188,39 @@ class MemoryRetrievalStore:
     async def initialize(self) -> None:
         return None
 
-    async def upsert(self, documents: list[Document], namespace: str) -> None:
+    async def upsert(self, documents: list[Document], tenant_id: str) -> None:
         existing = {
             str(document.metadata.get("chunk_id") or document.metadata.get("source")): document
-            for document in self.documents.get(namespace, [])
+            for document in self.documents.get(tenant_id, [])
         }
         for document in documents:
             key = str(document.metadata.get("chunk_id") or document.metadata.get("source"))
             existing[key] = document
-        self.documents[namespace] = list(existing.values())
+        self.documents[tenant_id] = list(existing.values())
 
     async def delete_by_metadata(
         self,
-        namespace: str,
+        tenant_id: str,
         metadata_key: str,
         metadata_value: str,
     ) -> None:
-        self.documents[namespace] = [
+        self.documents[tenant_id] = [
             document
-            for document in self.documents.get(namespace, [])
+            for document in self.documents.get(tenant_id, [])
             if str(document.metadata.get(metadata_key) or "") != metadata_value
         ]
 
-    async def delete_by_source_url(self, namespace: str, source_url: str) -> None:
-        await self.delete_by_metadata(namespace, "source_url", source_url)
+    async def delete_by_source_url(self, tenant_id: str, source_url: str) -> None:
+        await self.delete_by_metadata(tenant_id, "source_url", source_url)
 
-    async def search(self, query: str, namespace: str, limit: int = 4) -> list[Document]:
+    async def search(self, query: str, tenant_id: str, limit: int = 4) -> list[Document]:
         query_tokens = tokenize(query)
 
         def score(document: Document) -> float:
             tokens = tokenize(document.page_content)
             return len(query_tokens & tokens) / max(len(query_tokens), 1)
 
-        ranked = sorted(self.documents.get(namespace, []), key=score, reverse=True)
+        ranked = sorted(self.documents.get(tenant_id, []), key=score, reverse=True)
         return [document for document in ranked if score(document) > 0][:limit]
 
 

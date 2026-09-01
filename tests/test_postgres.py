@@ -38,13 +38,16 @@ def test_decode_metadata_accepts_dict_or_json_string() -> None:
 def test_pgvector_schema_uses_chunk_id_uniqueness() -> None:
     ddl = schema(1536)
 
+    assert "tenant_id text NOT NULL" in ddl
     assert "chunk_id text NOT NULL" in ddl
     assert "source_url text" in ddl
-    assert "UNIQUE(namespace, chunk_id)" in ddl
+    assert "UNIQUE(tenant_id, chunk_id)" in ddl
+    assert "UNIQUE(namespace, chunk_id)" not in ddl
     assert "UNIQUE(namespace, source)" not in ddl
-    assert "knowledge_documents_namespace_chunk_id_idx" in ddl
-    assert "knowledge_documents_namespace_source_url_idx" in ddl
-    assert "ON knowledge_documents(namespace, source_url)" in ddl
+    assert "knowledge_documents_tenant_id_chunk_id_idx" in ddl
+    assert "knowledge_documents_tenant_id_source_url_idx" in ddl
+    assert "ON knowledge_documents(tenant_id, source_url)" in ddl
+    assert "DROP COLUMN IF EXISTS namespace" in ddl
 
 
 def test_postgres_schema_scopes_conversations_and_events_by_tenant() -> None:
@@ -119,9 +122,11 @@ def test_pgvector_deletes_url_backed_chunks_by_source_url_column() -> None:
     assert "metadata ->>" not in source
 
 
-def test_postgres_schema_migrates_seed_suffix_to_tenant_namespace() -> None:
+def test_postgres_schema_migrates_seed_suffix_to_knowledge_tenant_id() -> None:
     ddl = schema(1536)
 
     assert "WHEN namespace = 'seed-knowledge' THEN 'default'" in ddl
-    assert "regexp_replace(namespace, ':seed-knowledge$', '')" in ddl
+    assert "SET tenant_id = CASE" in ddl
     assert "regexp_replace(vector_namespace, ':seed-knowledge$', '')" in ddl
+    assert "WHERE vector_namespace = replace(tenant_id, '_', '-')" in ddl
+    assert "knowledge_documents.tenant_id = replace(tenants.tenant_id, '_', '-')" in ddl

@@ -552,16 +552,16 @@ Tenant isolation currently covers:
 - tenant records with immutable generated `tenant_id` values and mutable readable slugs;
 - conversations, scoped by `(tenant_id, channel, external_chat_id)`;
 - message idempotency, scoped by `(tenant_id, event_id)`;
-- tenant-scoped KB retrieval namespaces, using `default` for the default tenant and
-  tenant slugs such as `<tenant_id>` for other tenants;
+- tenant-scoped KB retrieval using the actual `tenant_id`, preserving generated IDs such
+  as `tnt_...` exactly as stored;
 - knowledge grouping via document metadata such as `source_type`, so one tenant
-  namespace can hold onboarding profile docs, website snippets, uploads, and other
+  KB partition can hold onboarding profile docs, website snippets, uploads, and other
   future source types;
 - tenant prompt configuration for answer and planner instructions;
 - LLM project metadata per tenant;
 - LangSmith trace metadata per tenant, written into one deployment-level LangSmith
   project;
-- one shared vector collection/index with per-tenant namespaces;
+- one shared vector collection/index with tenant IDs used as the per-tenant partition;
 - opt-in tenant features, which can later be enforced by a prepaid credit balance;
   basic RAG and human handover are treated as inbuilt capabilities rather than opt-in
   features;
@@ -631,8 +631,8 @@ submit retries all use the same boundary. After the job succeeds, FastAPI sends 
 confirmation email to both the tenant admin and the configured onboarding review email
 address.
 
-The onboarding job also creates the tenant's initial KB entries in the tenant vector
-namespace. It stores an approved onboarding profile/contact/instructions document plus
+The onboarding job also creates the tenant's initial KB entries under the tenant ID. It
+stores an approved onboarding profile/contact/instructions document plus
 URL-backed website research snippets gathered during analysis. URL-backed chunks keep
 their `source_url`, provider, retrieval timestamp, and onboarding session id in metadata
 so later retrieval can cite and audit where the information came from.
@@ -754,7 +754,7 @@ curl -X PUT http://localhost:8000/tenants/tnt_abc123.../config \
     "vector_provider": "pgvector",
     "vector_isolation_mode": "shared_collection",
     "vector_collection": "customer-service",
-    "vector_namespace": "hustle-hq",
+    "vector_namespace": "tnt_abc123",
     "telegram_secret_name": "tenant-hustle-hq-telegram",
     "whatsapp_secret_name": "tenant-hustle-hq-whatsapp"
   }'
@@ -781,7 +781,8 @@ Tenant plans are reference templates for onboarding/deployment decisions. The in
 values include `tenant.plans.sme` and `tenant.plans.enterprise` with suggested defaults
 for features, vector-index mode, and hosting model. After onboarding, runtime behavior
 comes from the resolved tenant fields such as `enabled_features`, `vector_collection`, and
-`vector_namespace`; changing `selected_plan` later does not automatically re-apply a
+`vector_namespace`, whose default value is the actual `tenant_id`; changing
+`selected_plan` later does not automatically re-apply a
 template.
 
 Tenant config reads use a read-through cache. Local Helm defaults to Redis so multiple app
@@ -1008,7 +1009,7 @@ Application configuration uses the `AGENT_` prefix. LangSmith uses its native
 | `AGENT_TENANT_CONFIG_CACHE_PROVIDER` | `memory` | Tenant config cache provider: `memory` or `redis`; Helm defaults to `redis` |
 | `AGENT_TENANT_CONFIG_CACHE_TTL_SECONDS` | `300` | TTL for Redis tenant config cache entries |
 | `AGENT_REDIS_URL` | unset | Redis URL required when `AGENT_TENANT_CONFIG_CACHE_PROVIDER=redis`; Helm points this at the bundled Redis service |
-| `AGENT_VECTOR_COLLECTION` | `customer-service` | Default vector collection/index name used by tenant config defaults; tenant namespaces isolate data |
+| `AGENT_VECTOR_COLLECTION` | `customer-service` | Default vector collection/index name used by tenant config defaults; tenant IDs isolate KB data |
 | `AGENT_TELEGRAM_CREDENTIAL_PROVIDER` | `kubernetes` | Telegram credential provider; only tenant-specific Kubernetes Secret lookup is currently supported |
 | `AGENT_TELEGRAM_SECRET_NAMESPACE` | unset | Kubernetes namespace used for tenant Telegram Secret lookup; Helm defaults this to the pod namespace |
 | `AGENT_TELEGRAM_BOT_TOKEN_SECRET_KEY` | `TELEGRAM_BOT_TOKEN` | Secret key containing a tenant Telegram bot token |

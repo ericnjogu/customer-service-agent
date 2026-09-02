@@ -111,10 +111,11 @@ async def save_onboarding_session_website(
 async def analyze_onboarding_website(
     request: Request,
     session_id: UUID,
+    force: bool = False,
 ) -> OnboardingSessionRecord:
     service = request.app.state.container.onboarding_sessions
     try:
-        return await service.analyze_website(session_id)
+        return await service.analyze_website(session_id, force=force)
     except KeyError:
         raise HTTPException(status_code=404, detail="Onboarding session not found") from None
     except OnboardingValidationError as error:

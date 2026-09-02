@@ -67,6 +67,9 @@ This project currently uses increment-based milestones instead of semantic versi
 - OpenAI answer generation and question planning now call models through LiteLLM instead
   of LangChain `ChatOpenAI`, while keeping the existing app/provider configuration
   surface stable.
+- Onboarding website analysis is idempotent by default after success, while the verified
+  website-email screen can explicitly force a fresh analysis run; moving back from
+  analysis to unchanged website fields no longer sends another verification email.
 - `AGENT_QUESTION_PLANNER_PROVIDER` / `questionPlanner.provider` configuration for
   choosing `rules` or `llm`.
 - Embedding provider boundary with local hash embeddings and OpenAI semantic embeddings.

@@ -192,6 +192,15 @@ class FakeWebsiteAnalyzer:
         )
 
 
+class CountingWebsiteAnalyzer(FakeWebsiteAnalyzer):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def analyze(self, session) -> WebsiteAnalysisResult:
+        self.calls += 1
+        return await super().analyze(session)
+
+
 class FailingWebsiteAnalyzer:
     async def analyze(self, session) -> WebsiteAnalysisResult:
         raise ValueError("sensitive provider failure details")
@@ -610,6 +619,40 @@ def test_onboarding_session_blocks_analysis_until_both_emails_are_verified() -> 
     assert website_verified["current_step"] == "analyzing"
     assert analyze_response.status_code == 200
     assert analyze_response.json()["status"] == "ready_for_review"
+
+
+def test_onboarding_analysis_is_idempotent_after_success() -> None:
+    analyzer = CountingWebsiteAnalyzer()
+    with TestClient(app) as client:
+        client.app.state.container.onboarding_sessions.website_analyzer = analyzer
+        create_response = client.post(
+            "/onboarding/sessions",
+            json=onboarding_session_payload(),
+        )
+        session_id = create_response.json()["session_id"]
+        verify_onboarding_username_email(client, session_id)
+        save_response = client.patch(
+            f"/onboarding/sessions/{session_id}/website",
+            json=onboarding_website_payload(),
+        )
+        assert save_response.status_code == 200
+        verify_onboarding_website_email(client, session_id)
+
+        first_response = client.post(
+            f"/onboarding/sessions/{session_id}/analyze-website",
+        )
+        second_response = client.post(
+            f"/onboarding/sessions/{session_id}/analyze-website",
+        )
+        forced_response = client.post(
+            f"/onboarding/sessions/{session_id}/analyze-website?force=true",
+        )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert forced_response.status_code == 200
+    assert first_response.json()["analysis"] == second_response.json()["analysis"]
+    assert analyzer.calls == 2
 
 
 def test_onboarding_analysis_internal_errors_are_generic() -> None:

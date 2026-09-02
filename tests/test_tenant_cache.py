@@ -29,8 +29,7 @@ class RecordingTenantConfigRepository:
         *,
         selected_plan: TenantPlan | None = None,
         enabled_features: list[str] | None = None,
-        answer_prompt_instructions: str | None = None,
-        planner_prompt_instructions: str | None = None,
+        business_summary: str | None = None,
         llm_project_id: str | None = None,
         llm_project_name: str | None = None,
         langsmith_project: str | None = None,
@@ -56,10 +55,10 @@ class RecordingTenantConfigRepository:
                     if enabled_features is not None
                     else existing.enabled_features
                 ),
-                "answer_prompt_instructions": (
-                    answer_prompt_instructions
-                    if answer_prompt_instructions is not None
-                    else existing.answer_prompt_instructions
+                "business_summary": (
+                    business_summary
+                    if business_summary is not None
+                    else existing.business_summary
                 ),
             }
         )
@@ -116,7 +115,7 @@ async def test_memory_cached_tenant_config_repository_refreshes_cache_after_upse
         "tenant-a",
         selected_plan="enterprise",
         enabled_features=["telegram"],
-        answer_prompt_instructions="Use tenant voice.",
+        business_summary="Use tenant voice.",
     )
     cached = await cache.get("tenant-a")
 
@@ -124,7 +123,7 @@ async def test_memory_cached_tenant_config_repository_refreshes_cache_after_upse
     assert updated.selected_plan == "enterprise"
     assert cached.selected_plan == "enterprise"
     assert cached.enabled_features == ["telegram"]
-    assert cached.answer_prompt_instructions == "Use tenant voice."
+    assert cached.business_summary == "Use tenant voice."
     assert inner.upsert_calls == 1
 
 
@@ -164,14 +163,14 @@ async def test_redis_tenant_config_repository_refreshes_cache_after_upsert() -> 
         "tenant-a",
         selected_plan="enterprise",
         enabled_features=["telegram"],
-        answer_prompt_instructions="Use tenant voice.",
+        business_summary="Use tenant voice.",
     )
     cached = await cache.get("tenant-a")
 
     assert updated.selected_plan == "enterprise"
     assert cached.selected_plan == "enterprise"
     assert cached.enabled_features == ["telegram"]
-    assert cached.answer_prompt_instructions == "Use tenant voice."
+    assert cached.business_summary == "Use tenant voice."
     assert inner.upsert_calls == 1
 
 

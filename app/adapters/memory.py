@@ -251,8 +251,7 @@ class MemoryTenantConfigRepository:
         *,
         selected_plan: TenantPlan | None = None,
         enabled_features: list[str] | None = None,
-        answer_prompt_instructions: str | None = None,
-        planner_prompt_instructions: str | None = None,
+        business_summary: str | None = None,
         llm_project_id: str | None = None,
         llm_project_name: str | None = None,
         langsmith_project: str | None = None,
@@ -278,15 +277,10 @@ class MemoryTenantConfigRepository:
                     if enabled_features is not None
                     else existing.enabled_features
                 ),
-                "answer_prompt_instructions": (
-                    answer_prompt_instructions
-                    if answer_prompt_instructions is not None
-                    else existing.answer_prompt_instructions
-                ),
-                "planner_prompt_instructions": (
-                    planner_prompt_instructions
-                    if planner_prompt_instructions is not None
-                    else existing.planner_prompt_instructions
+                "business_summary": (
+                    business_summary
+                    if business_summary is not None
+                    else existing.business_summary
                 ),
                 "llm_project_id": (
                     llm_project_id
@@ -671,9 +665,7 @@ class MemoryOnboardingRepository:
                 "current_step": "analysis",
                 "analysis": analysis,
                 "business_profile": analysis.business_profile,
-                "agent_name": analysis.agent_name,
-                "agent_description": analysis.agent_description,
-                "answer_prompt_instructions": analysis.answer_prompt_instructions,
+                "business_summary": analysis.business_summary,
                 "contact_info": analysis.contact_info,
                 "knowledge_sources": analysis.knowledge_sources,
                 "updated_at": datetime.now(timezone.utc),

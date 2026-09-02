@@ -53,6 +53,11 @@ This project currently uses increment-based milestones instead of semantic versi
   verification, with required `username_email`, `given_name`, `family_name`, phone,
   role/title, authority confirmation, terms acceptance, and independent username and
   website email verification checkpoints before website analysis.
+- Onboarding website analysis now produces one Markdown `business_summary` field
+  instead of separate assistant profile and tenant prompt-instruction fields, and the
+  React wizard edits it with a rich Markdown editor.
+- The onboarding `business_summary` editor now shows an explicit Markdown toolbar
+  for undo/redo, headings, bold/italic/underline, lists, and links.
 - Onboarding jobs can register tenant Telegram bot webhooks automatically when
   `AGENT_TELEGRAM_WEBHOOK_PUBLIC_BASE_URL` / `telegram.webhookPublicBaseUrl` is
   configured.
@@ -73,8 +78,9 @@ This project currently uses increment-based milestones instead of semantic versi
   partitions.
 - `AGENT_DEFAULT_TENANT_ID` / `tenant.defaultId` configuration for local/default tenant
   routing.
-- Tenant prompt configuration storage and API endpoints for per-tenant answer and planner
-  prompt instruction overlays.
+- Tenant business summary/FAQ configuration storage and API endpoints for per-tenant
+  business context used by planner and answer prompts without allowing tenant-owned
+  instruction overrides.
 - Dedicated tenant API router and tenant config request validation for supported plans,
   features, LLM providers, vector providers, isolation modes, and LLM base URLs.
 - Tenant opt-in feature flags, plus tenant control-plane fields for LLM project

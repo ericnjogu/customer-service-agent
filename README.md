@@ -97,7 +97,7 @@ If `AGENT_PLATFORM_WEB_SEARCH_PROVIDER=tavily`, FastAPI also uses Tavily to coll
 concise business-profile, location, service, and contact notes under the configured
 platform project id. The extracted links and Tavily notes are then sent to OpenAI to
 produce the editable business profile, agent name, agent
-description, prompt instructions, and contact information. `OPENAI_API_KEY` must be
+business summary/FAQ, and contact information. `OPENAI_API_KEY` must be
 configured before `POST /onboarding/sessions/{session_id}/analyze-website` can complete
 when `onboarding.websiteAnalysisProvider=openai`.
 
@@ -735,7 +735,7 @@ For synthetic/API calls, include `tenant_id` in the JSON body or send
 query parameter, for example `/webhooks/telegram?tenant_id=hustle-hq`, or send
 `X-Agent-Tenant-Id`.
 
-Tenant prompt configuration is managed through:
+Tenant business summary/FAQ configuration is managed through:
 
 ```bash
 curl -X PUT http://localhost:8000/tenants/tnt_abc123.../config \
@@ -743,8 +743,7 @@ curl -X PUT http://localhost:8000/tenants/tnt_abc123.../config \
   -d '{
     "selected_plan": "sme",
     "enabled_features": ["telegram", "whatsapp"],
-    "answer_prompt_instructions": "Use Hustle HQ'\''s warm, concise brand voice.",
-    "planner_prompt_instructions": "Questions about table bookings and private events are in scope.",
+    "business_summary": "## Summary\n\nHustle HQ is a warm, concise customer-service business.\n\n## FAQ\n\nQuestions about table bookings and private events are in scope.",
     "llm_project_id": "proj_hustle_hq",
     "llm_project_name": "customer-service-hustle-hq",
     "langsmith_project": "customer-service-hustle-hq",

@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@mdxeditor/editor": "^4.2.3",
     "@vitejs/plugin-react": "^5.0.0",
     "libphonenumber-js": "^1.13.11",
     "react": "^19.0.0",

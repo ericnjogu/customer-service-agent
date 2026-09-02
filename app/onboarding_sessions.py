@@ -169,10 +169,10 @@ class OnboardingSessionService:
             raise RuntimeError("onboarding website analysis failed") from error
         logger.info(
             "Generated onboarding website analysis session_id=%s business_name=%s "
-            "agent_name=%s contact_info=%s analyzer=llm elapsed_seconds=%.3f",
+            "business_summary_chars=%s contact_info=%s analyzer=llm elapsed_seconds=%.3f",
             session.session_id,
             analysis.business_profile.business_name,
-            analysis.agent_name,
+            len(analysis.business_summary),
             len(analysis.contact_info),
             time.perf_counter() - started_at,
         )
@@ -699,12 +699,8 @@ def onboarding_job_from_session(
     missing = []
     if not session.business_profile:
         missing.append("business_profile")
-    if not session.agent_name:
-        missing.append("agent_name")
-    if not session.agent_description:
-        missing.append("agent_description")
-    if not session.answer_prompt_instructions:
-        missing.append("answer_prompt_instructions")
+    if not session.business_summary:
+        missing.append("business_summary")
     if not session.telegram:
         missing.append("telegram")
     if missing:
@@ -719,9 +715,7 @@ def onboarding_job_from_session(
         selected_plan=DEFAULT_TENANT_PLAN,
         admin=session.admin,
         business_profile=session.business_profile,
-        agent_name=session.agent_name,
-        agent_description=session.agent_description,
-        answer_prompt_instructions=session.answer_prompt_instructions,
+        business_summary=session.business_summary,
         contact_info=[
             point for point in session.contact_info if point.kind != "website"
         ],

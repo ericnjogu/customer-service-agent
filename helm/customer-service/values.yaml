@@ -44,8 +44,8 @@ postgres:
   enabled: true
   image: pgvector/pgvector:pg16
   port: 5432
-  database: support
-  username: support
+  database: risto_css
+  username: ristoh_ai
   password: local-only-password
   storage: 1Gi
 

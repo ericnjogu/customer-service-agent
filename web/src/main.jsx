@@ -294,6 +294,25 @@ function App() {
     }
   }
 
+  async function continueFromWebsite() {
+    const websiteUrl = normalizeWebsiteUrl(websiteForm.website_url);
+    const savedWebsiteUrl = session.website_url || "";
+    const savedWebsiteEmail = session.website_verification_email || "";
+    const websiteUnchanged =
+      websiteUrl === savedWebsiteUrl &&
+      websiteForm.website_verification_email === savedWebsiteEmail;
+
+    if (websiteUnchanged && session.website_email_verified && session.analysis) {
+      setStep("analysis");
+      return;
+    }
+    if (websiteUnchanged && session.website_email_verified) {
+      await analyzeWebsite();
+      return;
+    }
+    await submitWebsiteVerification();
+  }
+
   async function resendWebsiteEmailVerification() {
     setBusyAction("resend-website-email");
     setAlert(null);
@@ -343,6 +362,10 @@ function App() {
     setBusyAction("analyze-website");
     setAlert(null);
     try {
+      if (session?.analysis) {
+        setStep("analysis");
+        return;
+      }
       await analyzeWebsiteForSession(session.session_id);
     } catch (error) {
       showError(error.message);
@@ -351,10 +374,23 @@ function App() {
     }
   }
 
-  async function analyzeWebsiteForSession(sessionId) {
+  async function reanalyzeWebsite() {
+    setBusyAction("analyze-website");
+    setAlert(null);
+    try {
+      await analyzeWebsiteForSession(session.session_id, { force: true });
+    } catch (error) {
+      showError(error.message);
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function analyzeWebsiteForSession(sessionId, { force = false } = {}) {
     setStep("analyzing");
+    const query = force ? "?force=true" : "";
     const analyzed = await api(
-      `/onboarding/sessions/${sessionId}/analyze-website`,
+      `/onboarding/sessions/${sessionId}/analyze-website${query}`,
       { method: "POST" },
     );
     setSession(analyzed);
@@ -493,7 +529,7 @@ function App() {
           <WebsiteVerificationScreen
             form={websiteForm}
             setForm={setWebsiteForm}
-            onSubmit={submitWebsiteVerification}
+            onSubmit={continueFromWebsite}
             onBack={() => setStep("username-email-verification")}
             busy={busy}
           />
@@ -506,7 +542,7 @@ function App() {
             onBack={() => setStep("website")}
             onReload={() => loadSession(session.session_id)}
             onResend={resendWebsiteEmailVerification}
-            onContinue={analyzeWebsite}
+            onContinue={reanalyzeWebsite}
             busy={busy}
             busyAction={busyAction}
           />
@@ -519,7 +555,7 @@ function App() {
         {session && step === "analysis" && (
           <AnalysisScreen
             session={session}
-            onBack={() => setStep("website-email-verification")}
+            onBack={() => setStep("website")}
             onNext={(draft) => patchSession(draft, "contact")}
             busy={busy}
           />

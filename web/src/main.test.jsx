@@ -539,6 +539,122 @@ describe("email verification flow", () => {
     expect(window.location.pathname).toBe("/");
     expect(window.location.search).toBe(`?session_id=${sessionId}`);
   });
+
+  test("back from analysis and forward again does not re-run website verification or analysis", async () => {
+    const user = userEvent.setup();
+    const sessionId = "00000000-0000-0000-0000-000000000001";
+    window.history.pushState({}, "", `/?session_id=${sessionId}`);
+    const analyzedSession = {
+      session_id: sessionId,
+      status: "ready_for_review",
+      current_step: "analysis",
+      website_url: "https://example.co.ke",
+      website_verification_email: "admin@example.co.ke",
+      admin: validAdmin(),
+      username_email_verified: true,
+      website_email_verified: true,
+      analysis: {
+        business_profile: {
+          business_name: "John",
+          website_url: "https://example.co.ke",
+        },
+        business_summary: "## Summary\n\nUse approved business details.",
+        contact_info: [],
+      },
+      business_profile: {
+        business_name: "John",
+      },
+      business_summary: "## Summary\n\nUse approved business details.",
+      contact_info: [],
+      provider_projects: {},
+      created_at: "2026-08-20T00:00:00Z",
+      updated_at: "2026-08-20T00:00:00Z",
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => analyzedSession,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    expect(await screen.findByLabelText(/business summary \/ faq/i)).toHaveValue(
+      "## Summary\n\nUse approved business details.",
+    );
+    await user.click(screen.getByRole("button", { name: /back/i }));
+    expect(await screen.findByRole("heading", { name: /website verification/i }))
+      .toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: /send website verification email/i }),
+    );
+
+    expect(await screen.findByLabelText(/business summary \/ faq/i)).toHaveValue(
+      "## Summary\n\nUse approved business details.",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("continue from verified website email screen re-runs analysis", async () => {
+    const user = userEvent.setup();
+    const sessionId = "00000000-0000-0000-0000-000000000001";
+    window.history.pushState({}, "", `/?session_id=${sessionId}`);
+    const analyzedSession = {
+      session_id: sessionId,
+      status: "ready_for_review",
+      current_step: "website-email-verification",
+      website_url: "https://example.co.ke",
+      website_verification_email: "admin@example.co.ke",
+      admin: validAdmin(),
+      username_email_verified: true,
+      website_email_verified: true,
+      analysis: {
+        business_profile: {
+          business_name: "John",
+          website_url: "https://example.co.ke",
+        },
+        business_summary: "## Summary\n\nUse approved business details.",
+        contact_info: [],
+      },
+      business_profile: {
+        business_name: "John",
+      },
+      business_summary: "## Summary\n\nUse approved business details.",
+      contact_info: [],
+      provider_projects: {},
+      created_at: "2026-08-20T00:00:00Z",
+      updated_at: "2026-08-20T00:00:00Z",
+    };
+    const refreshedSession = {
+      ...analyzedSession,
+      current_step: "analysis",
+      business_summary: "## Summary\n\nFresh analysis.",
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => analyzedSession,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => refreshedSession,
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: /verify website email/i }))
+      .toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /continue/i }));
+
+    expect(await screen.findByLabelText(/business summary \/ faq/i)).toHaveValue(
+      "## Summary\n\nFresh analysis.",
+    );
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      `/api/onboarding/sessions/${sessionId}/analyze-website?force=true`,
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
 });
 
 describe("contact information form", () => {

@@ -131,16 +131,33 @@ class OnboardingSessionService:
         await self._require_session(session_id)
         return await self.onboarding.update_session(session_id, update)
 
-    async def analyze_website(self, session_id: UUID) -> OnboardingSessionRecord:
+    async def analyze_website(
+        self,
+        session_id: UUID,
+        *,
+        force: bool = False,
+    ) -> OnboardingSessionRecord:
         started_at = time.perf_counter()
         session = await self._require_session(session_id)
+        if session.analysis is not None and not force:
+            logger.info(
+                "Skipping onboarding website analysis because analysis already exists "
+                "session_id=%s status=%s current_step=%s elapsed_seconds=%.3f",
+                session.session_id,
+                session.status,
+                session.current_step,
+                time.perf_counter() - started_at,
+            )
+            return session
         logger.info(
             "Starting onboarding website analysis session_id=%s website_url=%s "
-            "username_email_verified=%s website_email_verified=%s analyzer=llm",
+            "username_email_verified=%s website_email_verified=%s force=%s "
+            "analyzer=llm",
             session.session_id,
             session.website_url,
             session.username_email_verified,
             session.website_email_verified,
+            force,
         )
         if not session.username_email_verified or not session.website_email_verified:
             logger.info(

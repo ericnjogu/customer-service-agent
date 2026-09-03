@@ -116,7 +116,8 @@ button.icon-button.danger {
   gap: 18px;
 }
 
-label {
+label,
+.field {
   display: grid;
   gap: 8px;
 }
@@ -188,6 +189,30 @@ input[aria-invalid="true"],
 textarea[aria-invalid="true"] {
   border-color: #c7354b;
   box-shadow: 0 0 0 3px rgb(199 53 75 / 12%);
+}
+
+.markdown-editor {
+  background: #fff;
+  border: 1px solid #ccd6e6;
+  border-radius: 12px;
+  min-height: 260px;
+  overflow: hidden;
+}
+
+.markdown-editor[aria-invalid="true"] {
+  border-color: #c7354b;
+  box-shadow: 0 0 0 3px rgb(199 53 75 / 12%);
+}
+
+.markdown-editor-input {
+  min-height: 210px;
+  padding: 1rem;
+}
+
+.markdown-editor .mdxeditor-toolbar {
+  background: #f6f8fc;
+  border-bottom: 1px solid #dbe4f0;
+  padding: 0.5rem;
 }
 
 textarea {

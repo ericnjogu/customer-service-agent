@@ -630,8 +630,10 @@ async def test_graph_passes_tenant_prompt_config_to_planner_and_answer_generator
         "tenant-a",
         selected_plan="enterprise",
         enabled_features=["telegram", "whatsapp"],
-        answer_prompt_instructions="Use Tenant A's cheerful answer voice.",
-        planner_prompt_instructions="Treat Tenant A menu questions as in scope.",
+        business_summary=(
+            "Use Tenant A's cheerful answer voice.\n\n"
+            "## FAQ\n\nTreat Tenant A menu questions as in scope."
+        ),
         llm_project_id="proj_tenant_a",
         llm_provider="langchain-compatible",
         llm_model="deepseek-chat",
@@ -694,14 +696,12 @@ async def test_graph_passes_tenant_prompt_config_to_planner_and_answer_generator
     assert planner.tenant_configs[-1].vector_namespace == "tenant-a"
     assert planner.tenant_configs[-1].telegram_secret_name == "tenant-a-telegram"
     assert planner.tenant_configs[-1].whatsapp_secret_name == "tenant-a-whatsapp"
-    assert (
-        planner.tenant_configs[-1].planner_prompt_instructions
-        == "Treat Tenant A menu questions as in scope."
-    )
     assert generator.tenant_configs[-1] is not None
-    assert (
-        generator.tenant_configs[-1].answer_prompt_instructions
-        == "Use Tenant A's cheerful answer voice."
+    assert "Tenant A's cheerful answer voice" in (
+        generator.tenant_configs[-1].business_summary or ""
+    )
+    assert "Treat Tenant A menu questions as in scope" in (
+        planner.tenant_configs[-1].business_summary or ""
     )
 
 

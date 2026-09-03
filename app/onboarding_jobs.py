@@ -172,7 +172,7 @@ class OnboardingJobService:
                 tenant.tenant_id,
                 selected_plan=request.selected_plan,
                 enabled_features=["telegram"],
-                answer_prompt_instructions=request.answer_prompt_instructions,
+                business_summary=request.business_summary,
                 llm_project_id=provider_projects.llm_project_id,
                 llm_project_name=provider_projects.llm_project_name,
                 langsmith_project=provider_projects.langsmith_project,
@@ -565,15 +565,11 @@ def onboarding_profile_markdown(request: OnboardingJobCreate) -> str:
                 else "- Google place URL:"
             ),
             "",
-            "## Assistant profile",
-            f"- Agent name: {request.agent_name}",
-            f"- Agent description: {request.agent_description}",
-            "",
             "## Contact information",
             *(contact_lines or ["- No contact information was approved."]),
             "",
-            "## Answer instructions",
-            request.answer_prompt_instructions,
+            "## Business summary and FAQ",
+            request.business_summary,
         ]
     )
 

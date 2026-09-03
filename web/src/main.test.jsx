@@ -3,6 +3,46 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+vi.mock("@mdxeditor/editor", () => {
+  const ToolbarButton = ({ label }) => <button type="button">{label}</button>;
+  return {
+    BlockTypeSelect: () => <select aria-label="Block type" />,
+    BoldItalicUnderlineToggles: () => (
+      <>
+        <ToolbarButton label="Bold" />
+        <ToolbarButton label="Italic" />
+        <ToolbarButton label="Underline" />
+      </>
+    ),
+    CreateLink: () => <ToolbarButton label="Create link" />,
+    ListsToggle: () => <ToolbarButton label="List" />,
+    MDXEditor: ({ markdown, onChange, plugins = [], ...props }) => (
+      <div>
+        <div role="toolbar" aria-label="Markdown formatting toolbar">
+          {plugins
+            .map((plugin) => plugin?.toolbarContents)
+            .filter(Boolean)
+            .map((ToolbarContents, index) => (
+              <ToolbarContents key={index} />
+            ))}
+        </div>
+        <textarea
+          aria-label={props["aria-label"] || "Markdown editor"}
+          value={markdown}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </div>
+    ),
+    Separator: () => <span aria-hidden="true" />,
+    UndoRedo: () => <ToolbarButton label="Undo" />,
+    headingsPlugin: () => ({}),
+    linkPlugin: () => ({}),
+    listsPlugin: () => ({}),
+    markdownShortcutPlugin: () => ({}),
+    toolbarPlugin: (options) => options,
+  };
+});
+
 import {
   App,
   ContactInfoScreen,
@@ -374,9 +414,7 @@ describe("email verification flow", () => {
         business_profile: {
           business_name: "John",
         },
-        agent_name: "Example Assistant",
-        agent_description: "Customer-service agent for Example.",
-        answer_prompt_instructions: "Use approved business details.",
+        business_summary: "## Summary\n\nUse approved business details.",
         contact_info: [
           {
             kind: "website",
@@ -389,12 +427,14 @@ describe("email verification flow", () => {
         updated_at: "2026-08-20T00:00:00Z",
       }),
     });
-    expect(await screen.findByDisplayValue("Example Assistant")).toBeInTheDocument();
+    expect(await screen.findByLabelText(/business summary \/ faq/i)).toHaveValue(
+      "## Summary\n\nUse approved business details.",
+    );
+    expect(screen.getByRole("toolbar", { name: /markdown formatting toolbar/i }))
+      .toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /bold/i })).toBeInTheDocument();
     expect(window.location.pathname).toBe("/");
     expect(window.location.search).toBe(`?session_id=${sessionId}`);
-    expect(
-      screen.getByDisplayValue("Customer-service agent for Example."),
-    ).toBeInTheDocument();
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
       "/api/onboarding/sessions/00000000-0000-0000-0000-000000000001/verify-website-email",
@@ -409,8 +449,11 @@ describe("email verification flow", () => {
         method: "POST",
       }),
     );
-    await userEvent.clear(screen.getByLabelText(/agent name/i));
-    await userEvent.type(screen.getByLabelText(/agent name/i), "Example Concierge");
+    await userEvent.clear(screen.getByLabelText(/business summary \/ faq/i));
+    await userEvent.type(
+      screen.getByLabelText(/business summary \/ faq/i),
+      "## FAQ\n\nCustomers can ask about bookings.",
+    );
     fetchMock.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
@@ -425,9 +468,7 @@ describe("email verification flow", () => {
         business_profile: {
           business_name: "John",
         },
-        agent_name: "Example Concierge",
-        agent_description: "Customer-service agent for Example.",
-        answer_prompt_instructions: "Use approved business details.",
+        business_summary: "## FAQ\n\nCustomers can ask about bookings.",
         contact_info: [
           {
             kind: "website",
@@ -445,7 +486,7 @@ describe("email verification flow", () => {
       "/api/onboarding/sessions/00000000-0000-0000-0000-000000000001",
       expect.objectContaining({
         method: "PATCH",
-        body: expect.stringContaining("Example Concierge"),
+        body: expect.stringContaining("Customers can ask about bookings."),
       }),
     );
   });
@@ -471,9 +512,7 @@ describe("email verification flow", () => {
         business_profile: {
           business_name: "John",
         },
-        agent_name: "Example Assistant",
-        agent_description: "Customer-service agent for Example.",
-        answer_prompt_instructions: "Use approved business details.",
+        business_summary: "Use approved business details.",
         contact_info: [
           {
             kind: "website",

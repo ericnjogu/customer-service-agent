@@ -1,6 +1,21 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { parsePhoneNumberFromString } from "libphonenumber-js/min";
+import {
+  BlockTypeSelect,
+  BoldItalicUnderlineToggles,
+  CreateLink,
+  ListsToggle,
+  MDXEditor,
+  Separator,
+  UndoRedo,
+  headingsPlugin,
+  linkPlugin,
+  listsPlugin,
+  markdownShortcutPlugin,
+  toolbarPlugin,
+} from "@mdxeditor/editor";
+import "@mdxeditor/editor/style.css";
 import "./styles.css";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
@@ -963,7 +978,7 @@ function AnalyzingScreen({ session }) {
       <h2>Analyzing website</h2>
       <p>
         We are reviewing {session.website_url} and preparing the business profile,
-        agent name, description, and links found on the site.
+        business summary, FAQ, and contact information found on the site.
       </p>
     </section>
   );
@@ -974,9 +989,7 @@ function AnalysisScreen({ session, onBack, onNext, busy }) {
     business_profile: {
       ...(session.business_profile || {}),
     },
-    agent_name: session.agent_name || "",
-    agent_description: session.agent_description || "",
-    answer_prompt_instructions: session.answer_prompt_instructions || "",
+    business_summary: session.business_summary || "",
   }));
   const validation = useFormValidation(draft, validateAnalysisDraft);
 
@@ -999,9 +1012,7 @@ function AnalysisScreen({ session, onBack, onNext, busy }) {
     if (!validation.validateForSubmit()) return;
     onNext({
       business_profile: draft.business_profile,
-      agent_name: draft.agent_name,
-      agent_description: draft.agent_description,
-      answer_prompt_instructions: draft.answer_prompt_instructions,
+      business_summary: draft.business_summary,
     });
   }
 
@@ -1026,54 +1037,70 @@ function AnalysisScreen({ session, onBack, onNext, busy }) {
           onBlur={() => validation.validateField("business_profile.business_name")}
         />
       </Field>
-      <Field
-        label="Agent name"
-        name="agent_name"
-        error={validation.errorFor("agent_name")}
-        help="This is the name customers will see or hear when the assistant replies."
+      <MarkdownField
+        label="Business summary / FAQ"
+        name="business_summary"
+        error={validation.errorFor("business_summary")}
+        help="This Markdown summary becomes business context for customer answers and can include frequently asked questions."
       >
-        <input
-          aria-invalid={Boolean(validation.errorFor("agent_name"))}
-          aria-describedby={fieldErrorId("agent_name")}
-          value={draft.agent_name}
-          onChange={(event) => updateDraft("agent_name", event.target.value)}
-          onBlur={() => validation.validateField("agent_name")}
+        <MarkdownRichEditor
+          id="business-summary-faq-editor"
+          ariaLabel="Business summary / FAQ"
+          aria-invalid={Boolean(validation.errorFor("business_summary"))}
+          aria-describedby={fieldErrorId("business_summary")}
+          value={draft.business_summary}
+          onChange={(value) => updateDraft("business_summary", value)}
+          onBlur={() => validation.validateField("business_summary")}
         />
-      </Field>
-      <Field
-        label="Agent description"
-        name="agent_description"
-        error={validation.errorFor("agent_description")}
-        help="This short internal description explains what the assistant is meant to do for this business."
-      >
-        <textarea
-          aria-invalid={Boolean(validation.errorFor("agent_description"))}
-          aria-describedby={fieldErrorId("agent_description")}
-          rows="3"
-          value={draft.agent_description}
-          onChange={(event) => updateDraft("agent_description", event.target.value)}
-          onBlur={() => validation.validateField("agent_description")}
-        />
-      </Field>
-      <Field
-        label="Answer prompt instructions"
-        name="answer_prompt_instructions"
-        error={validation.errorFor("answer_prompt_instructions")}
-        help="These instructions guide the assistant's tone, boundaries, and business-specific answer behavior."
-      >
-        <textarea
-          aria-invalid={Boolean(validation.errorFor("answer_prompt_instructions"))}
-          aria-describedby={fieldErrorId("answer_prompt_instructions")}
-          rows="5"
-          value={draft.answer_prompt_instructions}
-          onChange={(event) =>
-            updateDraft("answer_prompt_instructions", event.target.value)
-          }
-          onBlur={() => validation.validateField("answer_prompt_instructions")}
-        />
-      </Field>
+      </MarkdownField>
       <NavButtons onBack={onBack} busy={busy} submitLabel="Review contact information" />
     </form>
+  );
+}
+
+function MarkdownRichEditor({
+  id,
+  value,
+  onChange,
+  onBlur,
+  ariaLabel,
+  ...ariaProps
+}) {
+  const plugins = useMemo(
+    () => [
+      headingsPlugin(),
+      listsPlugin(),
+      linkPlugin(),
+      markdownShortcutPlugin(),
+      toolbarPlugin({
+        toolbarContents: () => (
+          <>
+            <UndoRedo />
+            <Separator />
+            <BlockTypeSelect />
+            <Separator />
+            <BoldItalicUnderlineToggles />
+            <Separator />
+            <ListsToggle />
+            <Separator />
+            <CreateLink />
+          </>
+        ),
+      }),
+    ],
+    [],
+  );
+
+  return (
+    <div id={id} className="markdown-editor" onBlur={onBlur} {...ariaProps}>
+      <MDXEditor
+        aria-label={ariaLabel}
+        markdown={value}
+        onChange={(markdown) => onChange(markdown || "")}
+        plugins={plugins}
+        contentEditableClassName="markdown-editor-input"
+      />
+    </div>
   );
 }
 
@@ -1344,8 +1371,7 @@ function OnboardingSummary({ session }) {
     ["Business phone", profile.business_phone],
     ["Business email", profile.business_email],
     ["Google place URL", profile.google_place_url],
-    ["Agent name", session.agent_name],
-    ["Agent description", session.agent_description],
+    ["Business summary / FAQ", session.business_summary],
     ["AI provider project", projects.llm_project_name],
     ["LangSmith project", projects.langsmith_project],
   ].filter(([, value]) => value);
@@ -1433,6 +1459,23 @@ function Field({ label, name, error, help, children }) {
         </small>
       )}
     </label>
+  );
+}
+
+function MarkdownField({ label, name, error, help, children }) {
+  return (
+    <div className="field">
+      <span className="field-label">
+        <span>{label}</span>
+        {help && <InfoTooltip text={help} />}
+      </span>
+      {children}
+      {error && (
+        <small className="field-error" id={fieldErrorId(name)}>
+          {error}
+        </small>
+      )}
+    </div>
   );
 }
 
@@ -1618,14 +1661,8 @@ function validateAnalysisDraft(draft) {
   if (!String(draft.business_profile?.business_name || "").trim()) {
     errors["business_profile.business_name"] = "Business name is required.";
   }
-  if (!draft.agent_name.trim()) {
-    errors.agent_name = "Agent name is required.";
-  }
-  if (!draft.agent_description.trim()) {
-    errors.agent_description = "Agent description is required.";
-  }
-  if (!draft.answer_prompt_instructions.trim()) {
-    errors.answer_prompt_instructions = "Answer prompt instructions are required.";
+  if (!draft.business_summary.trim()) {
+    errors.business_summary = "Business summary / FAQ is required.";
   }
   return errors;
 }

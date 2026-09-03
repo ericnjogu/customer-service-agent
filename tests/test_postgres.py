@@ -80,8 +80,9 @@ def test_postgres_schema_includes_tenant_prompt_config() -> None:
     assert "PRIMARY KEY (tenant_id, feature_key)" in ddl
     assert "DROP COLUMN IF EXISTS enabled_features" in ddl
     assert "DROP COLUMN IF EXISTS category" in ddl
-    assert "answer_prompt_instructions text" in ddl
-    assert "planner_prompt_instructions text" in ddl
+    assert "business_summary text" in ddl
+    assert "DROP COLUMN IF EXISTS answer_prompt_instructions" in ddl
+    assert "DROP COLUMN IF EXISTS planner_prompt_instructions" in ddl
     assert "llm_project_id text" in ddl
     assert "llm_project_name text" in ddl
     assert "DROP COLUMN IF EXISTS openai_project_id" in ddl

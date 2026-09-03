@@ -140,8 +140,7 @@ class TenantConfig(BaseModel):
     tenant_id: str = Field(min_length=1)
     selected_plan: TenantPlan = DEFAULT_TENANT_PLAN
     enabled_features: list[TenantFeature] = Field(default_factory=list)
-    answer_prompt_instructions: str | None = Field(default=None, max_length=10_000)
-    planner_prompt_instructions: str | None = Field(default=None, max_length=10_000)
+    business_summary: str | None = Field(default=None, max_length=10_000)
     llm_project_id: str | None = Field(default=None, max_length=500)
     llm_project_name: str | None = Field(default=None, max_length=500)
     langsmith_project: str | None = Field(default=None, max_length=500)
@@ -175,8 +174,7 @@ class TenantConfig(BaseModel):
         *,
         selected_plan: TenantPlan = DEFAULT_TENANT_PLAN,
         enabled_features: list[TenantFeature] | None = None,
-        answer_prompt_instructions: str | None = None,
-        planner_prompt_instructions: str | None = None,
+        business_summary: str | None = None,
         llm_project_id: str | None = None,
         llm_project_name: str | None = None,
         langsmith_project: str | None = None,
@@ -197,8 +195,7 @@ class TenantConfig(BaseModel):
             tenant_id=normalized_tenant_id,
             selected_plan=selected_plan,
             enabled_features=enabled_features or [],
-            answer_prompt_instructions=answer_prompt_instructions,
-            planner_prompt_instructions=planner_prompt_instructions,
+            business_summary=business_summary,
             llm_project_id=llm_project_id,
             llm_project_name=(
                 llm_project_name or default_llm_project_name(normalized_tenant_id)
@@ -223,8 +220,7 @@ class TenantConfig(BaseModel):
 class TenantConfigUpdate(BaseModel):
     selected_plan: TenantPlan | None = None
     enabled_features: list[TenantFeature] | None = None
-    answer_prompt_instructions: str | None = Field(default=None, max_length=10_000)
-    planner_prompt_instructions: str | None = Field(default=None, max_length=10_000)
+    business_summary: str | None = Field(default=None, max_length=10_000)
     llm_project_id: str | None = Field(default=None, max_length=500)
     llm_project_name: str | None = Field(default=None, max_length=500)
     langsmith_project: str | None = Field(default=None, max_length=500)
@@ -420,9 +416,7 @@ class OnboardingSessionCreate(BaseModel):
 
 class WebsiteAnalysisResult(BaseModel):
     business_profile: OnboardingBusinessProfile
-    agent_name: str = Field(default="", max_length=500)
-    agent_description: str = Field(default="", max_length=1_000)
-    answer_prompt_instructions: str = Field(default="", max_length=10_000)
+    business_summary: str = Field(default="", max_length=10_000)
     contact_info: list[OnboardingContactPoint] = Field(default_factory=list)
     knowledge_sources: list[WebsiteResearchSource] = Field(default_factory=list)
 
@@ -430,9 +424,7 @@ class WebsiteAnalysisResult(BaseModel):
 class OnboardingSessionUpdate(BaseModel):
     current_step: str | None = Field(default=None, max_length=100)
     business_profile: OnboardingBusinessProfile | None = None
-    agent_name: str | None = Field(default=None, max_length=500)
-    agent_description: str | None = Field(default=None, max_length=1_000)
-    answer_prompt_instructions: str | None = Field(default=None, max_length=10_000)
+    business_summary: str | None = Field(default=None, max_length=10_000)
     contact_info: list[OnboardingContactPoint] | None = None
     provider_projects: OnboardingProviderProjects | None = None
     knowledge_sources: list[WebsiteResearchSource] | None = None
@@ -482,9 +474,7 @@ class OnboardingSessionRecord(BaseModel):
     website_email_verification_expires_at: datetime | None = None
     analysis: WebsiteAnalysisResult | None = None
     business_profile: OnboardingBusinessProfile | None = None
-    agent_name: str | None = None
-    agent_description: str | None = None
-    answer_prompt_instructions: str | None = None
+    business_summary: str | None = None
     contact_info: list[OnboardingContactPoint] = Field(default_factory=list)
     telegram: OnboardingTelegramSetup | None = None
     provider_projects: OnboardingProviderProjects = Field(
@@ -505,9 +495,7 @@ class OnboardingJobCreate(BaseModel):
     selected_plan: TenantPlan = DEFAULT_TENANT_PLAN
     admin: OnboardingAdmin
     business_profile: OnboardingBusinessProfile
-    agent_name: str = Field(min_length=1, max_length=500)
-    agent_description: str = Field(min_length=1, max_length=1_000)
-    answer_prompt_instructions: str = Field(min_length=1, max_length=10_000)
+    business_summary: str = Field(min_length=1, max_length=10_000)
     contact_info: list[OnboardingContactPoint] = Field(default_factory=list)
     telegram: OnboardingTelegramSetup
     provider_projects: OnboardingProviderProjects = Field(

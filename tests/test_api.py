@@ -170,9 +170,7 @@ class FakeWebsiteAnalyzer:
                 business_phone="+254110101010",
                 business_email="hello@hustlehq.example",
             ),
-            agent_name="Hustle HQ Assistant",
-            agent_description="Customer service assistant for Hustle HQ.",
-            answer_prompt_instructions=(
+            business_summary=(
                 "Represent Hustle HQ and answer from approved business facts."
             ),
             contact_info=[
@@ -394,9 +392,7 @@ def onboarding_job_payload() -> dict:
             "business_email": "hello@hustlehq.example",
             "google_place_url": "https://maps.google.com/?q=Hustle+HQ",
         },
-        "agent_name": "Hustle HQ Assistant",
-        "agent_description": "Customer service assistant for Hustle HQ.",
-        "answer_prompt_instructions": "Represent Hustle HQ and answer from business facts.",
+        "business_summary": "Represent Hustle HQ and answer from business facts.",
         "contact_info": [
             {
                 "kind": "instagram",
@@ -494,9 +490,7 @@ def create_reviewed_onboarding_session_with_options(
             "business_phone": "+254110101010",
             "business_email": "hello@hustlehq.example",
         },
-        "agent_name": "Hustle HQ Assistant",
-        "agent_description": "Customer service assistant for Hustle HQ.",
-        "answer_prompt_instructions": (
+        "business_summary": (
             "Represent Hustle HQ and answer from approved facts."
         ),
         "contact_info": [
@@ -877,7 +871,9 @@ def test_onboarding_session_can_save_and_reload_wizard_data() -> None:
 
     assert response.status_code == 200
     assert response.json()["business_profile"]["business_name"] == "Hustle HQ Session"
-    assert response.json()["agent_name"] == "Hustle HQ Assistant"
+    assert response.json()["business_summary"] == (
+        "Represent Hustle HQ and answer from approved facts."
+    )
     assert response.json()["contact_info"][0]["kind"] == "instagram"
 
 
@@ -1152,7 +1148,7 @@ def test_onboarding_job_accepts_and_provisions_internal_records() -> None:
     assert job_response.json()["status"] == "succeeded"
     assert job_response.json()["tenant_slug"] == "hustle-hq-onboarding"
     assert config_response.status_code == 200
-    assert config_response.json()["answer_prompt_instructions"] == (
+    assert config_response.json()["business_summary"] == (
         "Represent Hustle HQ and answer from business facts."
     )
     assert config_response.json()["telegram_secret_name"] == (
@@ -1614,8 +1610,7 @@ def test_tenant_config_can_be_read_and_updated() -> None:
             json={
                 "selected_plan": "enterprise",
                 "enabled_features": ["telegram", "whatsapp"],
-                "answer_prompt_instructions": "Use Tenant A's concise tone.",
-                "planner_prompt_instructions": "Tenant A bookings are in scope.",
+                "business_summary": "Use Tenant A's concise tone.",
                 "llm_project_id": "proj_tenant_a",
                 "llm_project_name": "customer-service-tenant-a",
                 "langsmith_project": "customer-service-tenant-a",
@@ -1643,14 +1638,11 @@ def test_tenant_config_can_be_read_and_updated() -> None:
         "telegram",
         "whatsapp",
     ]
-    assert update_response.json()["answer_prompt_instructions"] == (
+    assert update_response.json()["business_summary"] == (
         "Use Tenant A's concise tone."
     )
-    assert update_response.json()["planner_prompt_instructions"] == (
-        "Tenant A bookings are in scope."
-    )
     assert get_response.status_code == 200
-    assert get_response.json()["answer_prompt_instructions"] == (
+    assert get_response.json()["business_summary"] == (
         "Use Tenant A's concise tone."
     )
     assert get_response.json()["llm_project_id"] == "proj_tenant_a"

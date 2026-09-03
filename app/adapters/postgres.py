@@ -91,6 +91,7 @@ def row_to_onboarding_job(row: asyncpg.Record) -> OnboardingJobRecord:
 def row_to_onboarding_session(row: asyncpg.Record) -> OnboardingSessionRecord:
     data = dict(row)
     payload = decode_metadata(data.pop("session_payload"))
+    payload = normalize_onboarding_session_payload(payload)
     return OnboardingSessionRecord(
         session_id=data["session_id"],
         status=data["status"],
@@ -110,9 +111,7 @@ def row_to_onboarding_session(row: asyncpg.Record) -> OnboardingSessionRecord:
         ],
         analysis=payload.get("analysis"),
         business_profile=payload.get("business_profile"),
-        agent_name=payload.get("agent_name"),
-        agent_description=payload.get("agent_description"),
-        answer_prompt_instructions=payload.get("answer_prompt_instructions"),
+        business_summary=payload.get("business_summary"),
         contact_info=payload.get("contact_info") or payload.get("social_links") or [],
         telegram=payload.get("telegram"),
         provider_projects=payload.get("provider_projects") or {},
@@ -126,6 +125,16 @@ def row_to_onboarding_session(row: asyncpg.Record) -> OnboardingSessionRecord:
     )
 
 
+def normalize_onboarding_session_payload(payload: dict) -> dict:
+    if "business_summary" not in payload and "business_summary_faq" in payload:
+        payload["business_summary"] = payload.get("business_summary_faq")
+    analysis = payload.get("analysis")
+    if isinstance(analysis, dict):
+        if "business_summary" not in analysis and "business_summary_faq" in analysis:
+            analysis["business_summary"] = analysis.get("business_summary_faq")
+    return payload
+
+
 def session_payload(session: OnboardingSessionRecord) -> dict:
     return {
         "admin": session.admin.model_dump(mode="json"),
@@ -133,9 +142,7 @@ def session_payload(session: OnboardingSessionRecord) -> dict:
         "terms_accepted_at": model_to_json(session.terms_accepted_at),
         "analysis": model_to_json(session.analysis),
         "business_profile": model_to_json(session.business_profile),
-        "agent_name": session.agent_name,
-        "agent_description": session.agent_description,
-        "answer_prompt_instructions": session.answer_prompt_instructions,
+        "business_summary": session.business_summary,
         "contact_info": [point.model_dump(mode="json") for point in session.contact_info],
         "telegram": model_to_json(session.telegram),
         "provider_projects": session.provider_projects.model_dump(mode="json"),
@@ -596,8 +603,7 @@ class PostgresTenantConfigRepository:
                     FILTER (WHERE tenant_enabled_features.feature_key IS NOT NULL),
                     ARRAY[]::text[]
                 ) AS enabled_features,
-                tenant_configs.answer_prompt_instructions,
-                tenant_configs.planner_prompt_instructions,
+                tenant_configs.business_summary,
                 tenant_configs.llm_project_id,
                 tenant_configs.llm_project_name,
                 tenant_configs.langsmith_project,
@@ -632,8 +638,7 @@ class PostgresTenantConfigRepository:
         *,
         selected_plan: TenantPlan | None = None,
         enabled_features: list[str] | None = None,
-        answer_prompt_instructions: str | None = None,
-        planner_prompt_instructions: str | None = None,
+        business_summary: str | None = None,
         llm_project_id: str | None = None,
         llm_project_name: str | None = None,
         langsmith_project: str | None = None,
@@ -657,8 +662,7 @@ class PostgresTenantConfigRepository:
             INSERT INTO tenant_configs(
                 tenant_id,
                 selected_plan,
-                answer_prompt_instructions,
-                planner_prompt_instructions,
+                business_summary,
                 llm_project_id,
                 llm_project_name,
                 langsmith_project,
@@ -675,14 +679,13 @@ class PostgresTenantConfigRepository:
                 web_search_project_name
             )
             VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8,
-                $9, $10, $11, $12, $13, $14, $15, $16,
-                $17, $18
+                $1, $2, $3, $4, $5, $6, $7,
+                $8, $9, $10, $11, $12, $13, $14, $15,
+                $16, $17
             )
             ON CONFLICT (tenant_id) DO UPDATE
             SET selected_plan = EXCLUDED.selected_plan,
-                answer_prompt_instructions = EXCLUDED.answer_prompt_instructions,
-                planner_prompt_instructions = EXCLUDED.planner_prompt_instructions,
+                business_summary = EXCLUDED.business_summary,
                 llm_project_id = EXCLUDED.llm_project_id,
                 llm_project_name = EXCLUDED.llm_project_name,
                 langsmith_project = EXCLUDED.langsmith_project,
@@ -701,12 +704,9 @@ class PostgresTenantConfigRepository:
             """,
             normalized_tenant_id,
             selected_plan or existing.selected_plan,
-            answer_prompt_instructions
-            if answer_prompt_instructions is not None
-            else existing.answer_prompt_instructions,
-            planner_prompt_instructions
-            if planner_prompt_instructions is not None
-            else existing.planner_prompt_instructions,
+            business_summary
+            if business_summary is not None
+            else existing.business_summary,
             llm_project_id if llm_project_id is not None else existing.llm_project_id,
             llm_project_name
             if llm_project_name is not None
@@ -1193,9 +1193,7 @@ class PostgresOnboardingRepository:
             {
                 "analysis": analysis.model_dump(mode="json"),
                 "business_profile": analysis.business_profile.model_dump(mode="json"),
-                "agent_name": analysis.agent_name,
-                "agent_description": analysis.agent_description,
-                "answer_prompt_instructions": analysis.answer_prompt_instructions,
+                "business_summary": analysis.business_summary,
                 "contact_info": [
                     point.model_dump(mode="json") for point in analysis.contact_info
                 ],
@@ -1673,8 +1671,7 @@ CREATE TABLE IF NOT EXISTS tenant_configs (
     tenant_id text PRIMARY KEY,
     selected_plan text NOT NULL DEFAULT 'sme'
         CHECK (selected_plan IN ('sme', 'enterprise')),
-    answer_prompt_instructions text,
-    planner_prompt_instructions text,
+    business_summary text,
     llm_project_id text,
     llm_project_name text,
     langsmith_project text,
@@ -2022,6 +2019,74 @@ DROP COLUMN IF EXISTS openai_project_id;
 
 ALTER TABLE tenant_configs
 DROP COLUMN IF EXISTS openai_project_name;
+
+ALTER TABLE tenant_configs
+ADD COLUMN IF NOT EXISTS business_summary text;
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'tenant_configs'
+          AND column_name = 'business_summary_faq'
+    ) THEN
+        EXECUTE $backfill$
+            UPDATE tenant_configs
+            SET business_summary = business_summary_faq
+            WHERE (
+                business_summary IS NULL
+                OR btrim(business_summary) = ''
+            )
+            AND NULLIF(btrim(business_summary_faq), '') IS NOT NULL
+        $backfill$;
+    END IF;
+END $$;
+
+ALTER TABLE tenant_configs
+DROP COLUMN IF EXISTS business_summary_faq;
+
+ALTER TABLE tenant_configs
+ADD COLUMN IF NOT EXISTS answer_prompt_instructions text;
+
+ALTER TABLE tenant_configs
+ADD COLUMN IF NOT EXISTS planner_prompt_instructions text;
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'tenant_configs'
+          AND column_name = 'answer_prompt_instructions'
+    ) OR EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'tenant_configs'
+          AND column_name = 'planner_prompt_instructions'
+    ) THEN
+        EXECUTE $backfill$
+            UPDATE tenant_configs
+            SET business_summary = btrim(concat_ws(
+                E'\n\n',
+                NULLIF(btrim(business_summary), ''),
+                NULLIF(btrim(answer_prompt_instructions), ''),
+                NULLIF(btrim(planner_prompt_instructions), '')
+            ))
+            WHERE (
+                business_summary IS NULL
+                OR btrim(business_summary) = ''
+            )
+            AND (
+                NULLIF(btrim(answer_prompt_instructions), '') IS NOT NULL
+                OR NULLIF(btrim(planner_prompt_instructions), '') IS NOT NULL
+            )
+        $backfill$;
+    END IF;
+END $$;
+
+ALTER TABLE tenant_configs
+DROP COLUMN IF EXISTS answer_prompt_instructions;
+
+ALTER TABLE tenant_configs
+DROP COLUMN IF EXISTS planner_prompt_instructions;
 
 ALTER TABLE tenant_configs
 ADD COLUMN IF NOT EXISTS langsmith_project text;

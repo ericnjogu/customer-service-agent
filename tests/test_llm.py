@@ -412,14 +412,14 @@ async def test_llm_answer_generator_includes_tenant_answer_instructions() -> Non
         [Document(page_content="Tenant A serves tea.")],
         tenant_config=TenantConfig(
             tenant_id="tenant-a",
-            answer_prompt_instructions="Use Tenant A's warm brand voice.",
+            business_summary="Use Tenant A's warm brand voice.",
         ),
     )
 
     system_prompt = chat_model.last_messages[0].content
     prompt = chat_model.last_messages[1].content
-    assert "Tenant-specific answer instructions may customize" in system_prompt
-    assert "Tenant-specific answer instructions" in prompt
+    assert "Business summary and FAQ context may describe" in system_prompt
+    assert "Business summary and FAQ" in prompt
     assert "Use Tenant A's warm brand voice." in prompt
 
 
@@ -716,14 +716,14 @@ async def test_llm_question_planner_includes_tenant_planner_instructions() -> No
         ),
         tenant_config=TenantConfig(
             tenant_id="tenant-a",
-            planner_prompt_instructions="Tenant A menu questions are in scope.",
+            business_summary="## FAQ\n\nTenant A menu questions are in scope.",
         ),
     )
 
     system_prompt = chat_model.last_messages[0].content
     prompt = chat_model.last_messages[1].content
-    assert "Tenant-specific planner instructions may customize" in system_prompt
-    assert "Tenant-specific planner instructions" in prompt
+    assert "Business summary and FAQ context may describe" in system_prompt
+    assert "Business summary and FAQ" in prompt
     assert "Tenant A menu questions are in scope." in prompt
 
 
@@ -814,9 +814,7 @@ def test_website_analysis_keeps_contact_uris() -> None:
                 "business_phone": "+254 700 000000",
                 "business_email": "hello@hustlehq.example",
             },
-            "agent_name": "Hustle HQ Assistant",
-            "agent_description": "Customer service assistant for Hustle HQ.",
-            "answer_prompt_instructions": "Represent Hustle HQ.",
+            "business_summary": "Represent Hustle HQ.",
             "contact_info": [
                 {
                     "kind": "email",
@@ -899,9 +897,7 @@ def test_website_analysis_leaves_unknown_fields_blank() -> None:
             "business_profile": {
                 "website_url": "https://hustlehq.example",
             },
-            "agent_name": "Hustle HQ Assistant",
-            "agent_description": "Customer service assistant for Hustle HQ.",
-            "answer_prompt_instructions": "Represent Hustle HQ.",
+            "business_summary": "Represent Hustle HQ.",
             "contact_info": [],
         },
         fallback_website_url="https://hustlehq.example",
@@ -923,9 +919,7 @@ async def test_website_analysis_prompt_only_includes_website_url() -> None:
                 "business_profile": {
                     "website_url": "https://hustlehq.example",
                 },
-                "agent_name": "Hustle HQ Assistant",
-                "agent_description": "Customer service assistant for Hustle HQ.",
-                "answer_prompt_instructions": "Represent Hustle HQ.",
+                "business_summary": "Represent Hustle HQ.",
                 "contact_info": [],
             },
         )
@@ -980,9 +974,7 @@ async def test_website_analysis_can_optionally_send_temperature() -> None:
                 "business_profile": {
                     "website_url": "https://hustlehq.example",
                 },
-                "agent_name": "",
-                "agent_description": "",
-                "answer_prompt_instructions": "",
+                "business_summary": "",
                 "contact_info": [],
             },
         )

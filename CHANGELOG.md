@@ -63,6 +63,7 @@ This project currently uses increment-based milestones instead of semantic versi
   configured.
 - Onboarding jobs create or update the tenant Telegram Kubernetes Secret using the
   derived `tenant-<tenant-slug>-telegram` name before registering the webhook.
+- Local Helm Postgres defaults now use database `risto_css` and user `ristoh_ai`.
 - `AGENT_QUESTION_PLANNER_PROVIDER` / `questionPlanner.provider` configuration for
   choosing `rules` or `llm`.
 - Embedding provider boundary with local hash embeddings and OpenAI semantic embeddings.

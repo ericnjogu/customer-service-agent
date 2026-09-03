@@ -245,21 +245,24 @@ def test_langsmith_runnable_config_uses_tenant_project_destination(monkeypatch) 
 
 
 async def test_openai_answer_generator_uses_tenant_project_header(monkeypatch) -> None:
-    captured_models = []
+    captured_requests = []
 
-    class FakeOpenAIChat:
-        def __init__(self, **kwargs) -> None:
-            captured_models.append(kwargs)
+    async def fake_acompletion(**kwargs):
+        captured_requests.append(kwargs)
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            '{"answer": "Refunds are available within 30 days.", '
+                            '"confidence": 0.82, "grounded": true}'
+                        )
+                    }
+                }
+            ]
+        }
 
-        async def ainvoke(self, messages, config=None):
-            return AIMessage(
-                content=(
-                    '{"answer": "Refunds are available within 30 days.", '
-                    '"confidence": 0.82, "grounded": true}'
-                )
-            )
-
-    monkeypatch.setattr("langchain_openai.ChatOpenAI", FakeOpenAIChat)
+    monkeypatch.setattr("litellm.acompletion", fake_acompletion)
     generator = create_openai_answer_generator(
         api_key="test-key",
         model="gpt-4.1-mini",
@@ -275,28 +278,31 @@ async def test_openai_answer_generator_uses_tenant_project_header(monkeypatch) -
         ),
     )
 
-    assert captured_models[0]["default_headers"] is None
-    assert captured_models[-1]["default_headers"] == {
-        "OpenAI-Project": "proj_tenant_a"
-    }
+    assert captured_requests[-1]["api_key"] == "test-key"
+    assert captured_requests[-1]["model"] == "gpt-4.1-mini"
+    assert captured_requests[-1]["response_format"] == {"type": "json_object"}
+    assert captured_requests[-1]["extra_headers"] == {"OpenAI-Project": "proj_tenant_a"}
 
 
 async def test_openai_question_planner_uses_tenant_project_header(monkeypatch) -> None:
-    captured_models = []
+    captured_requests = []
 
-    class FakeOpenAIChat:
-        def __init__(self, **kwargs) -> None:
-            captured_models.append(kwargs)
+    async def fake_acompletion(**kwargs):
+        captured_requests.append(kwargs)
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            '{"in_scope": true, "needs_conversation_history": false, '
+                            '"explicit_human_request": false, "explanation": "standalone"}'
+                        )
+                    }
+                }
+            ]
+        }
 
-        async def ainvoke(self, messages, config=None):
-            return AIMessage(
-                content=(
-                    '{"in_scope": true, "needs_conversation_history": false, '
-                    '"explicit_human_request": false, "explanation": "standalone"}'
-                )
-            )
-
-    monkeypatch.setattr("langchain_openai.ChatOpenAI", FakeOpenAIChat)
+    monkeypatch.setattr("litellm.acompletion", fake_acompletion)
     planner = create_openai_question_planner(
         api_key="test-key",
         model="gpt-4.1-mini",
@@ -316,10 +322,49 @@ async def test_openai_question_planner_uses_tenant_project_header(monkeypatch) -
         ),
     )
 
-    assert captured_models[0]["default_headers"] is None
-    assert captured_models[-1]["default_headers"] == {
-        "OpenAI-Project": "proj_tenant_a"
-    }
+    assert captured_requests[-1]["api_key"] == "test-key"
+    assert captured_requests[-1]["model"] == "gpt-4.1-mini"
+    assert captured_requests[-1]["response_format"] == {"type": "json_object"}
+    assert captured_requests[-1]["extra_headers"] == {"OpenAI-Project": "proj_tenant_a"}
+
+
+async def test_openai_question_planner_omits_temperature_for_gpt_5(monkeypatch) -> None:
+    captured_requests = []
+
+    async def fake_acompletion(**kwargs):
+        captured_requests.append(kwargs)
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            '{"in_scope": true, "needs_conversation_history": false, '
+                            '"explicit_human_request": false, "explanation": "standalone"}'
+                        )
+                    }
+                }
+            ]
+        }
+
+    monkeypatch.setattr("litellm.acompletion", fake_acompletion)
+    planner = create_openai_question_planner(
+        api_key="test-key",
+        model="gpt-5-mini",
+        temperature=0,
+    )
+
+    await planner.plan(
+        IncomingMessage(
+            event_id="plan-gpt-5-temperature",
+            external_chat_id="chat-1",
+            external_user_id="user-1",
+            text="Where are you located?",
+        ),
+        tenant_config=TenantConfig.with_defaults("tenant-a"),
+    )
+
+    assert captured_requests[-1]["model"] == "gpt-5-mini"
+    assert "temperature" not in captured_requests[-1]
 
 
 async def test_llm_answer_generator_returns_grounded_confidence() -> None:

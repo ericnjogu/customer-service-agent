@@ -4,6 +4,7 @@ import logging
 import os
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
 from html.parser import HTMLParser
@@ -12,7 +13,6 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 from langchain_core.documents import Document
-from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tracers.langchain import LangChainTracer, wait_for_all_tracers
 from langsmith import Client as LangSmithClient
 from langsmith.run_helpers import traceable, tracing_context
@@ -33,6 +33,17 @@ from app.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ChatPromptMessage:
+    role: str
+    content: str
+
+
+@dataclass(frozen=True)
+class ChatModelResponse:
+    content: str
 
 SYSTEM_PROMPT = """You are a customer service assistant.
 Answer only from the provided information.
@@ -740,6 +751,85 @@ def openai_project_headers(tenant_config: TenantConfig | None) -> dict[str, str]
     return {"OpenAI-Project": tenant_config.llm_project_id}
 
 
+def litellm_messages(messages: list[ChatPromptMessage]) -> list[dict[str, str]]:
+    return [{"role": message.role, "content": message.content} for message in messages]
+
+
+def litellm_response_content(response: Any) -> str:
+    if isinstance(response, dict):
+        choices = response.get("choices") or []
+        if choices:
+            message = choices[0].get("message") or {}
+            return str(message.get("content") or "")
+        return str(response.get("content") or "")
+
+    choices = getattr(response, "choices", None) or []
+    if choices:
+        choice = choices[0]
+        message = getattr(choice, "message", None)
+        if isinstance(message, dict):
+            return str(message.get("content") or "")
+        if message is not None:
+            return str(getattr(message, "content", "") or "")
+    return str(getattr(response, "content", "") or "")
+
+
+def litellm_model_name(default_model: str, tenant_config: TenantConfig | None) -> str:
+    if tenant_config is None or not tenant_config.llm_model:
+        return default_model
+    return tenant_config.llm_model
+
+
+def litellm_base_url(tenant_config: TenantConfig | None) -> str | None:
+    if tenant_config is None or not tenant_config.llm_base_url:
+        return None
+    return str(tenant_config.llm_base_url)
+
+
+def litellm_supports_temperature(model: str) -> bool:
+    normalized_model = model.split("/", 1)[-1].lower()
+    return not normalized_model.startswith("gpt-5")
+
+
+class LiteLLMChatModel:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        temperature: float | None,
+        tenant_config: TenantConfig | None = None,
+    ) -> None:
+        self.api_key = api_key
+        self.model = litellm_model_name(model, tenant_config)
+        self.temperature = temperature
+        self.base_url = litellm_base_url(tenant_config)
+        self.extra_headers = openai_project_headers(tenant_config)
+
+    async def ainvoke(
+        self,
+        messages: list[ChatPromptMessage],
+        config: dict[str, Any] | None = None,
+    ) -> ChatModelResponse:
+        from litellm import acompletion
+
+        request: dict[str, Any] = {
+            "api_key": self.api_key,
+            "model": self.model,
+            "messages": litellm_messages(messages),
+            "response_format": {"type": "json_object"},
+        }
+        if self.temperature is not None and litellm_supports_temperature(self.model):
+            request["temperature"] = self.temperature
+        if self.base_url:
+            request["base_url"] = self.base_url
+        if self.extra_headers:
+            request["extra_headers"] = self.extra_headers
+
+        response = await acompletion(**request)
+        return ChatModelResponse(content=litellm_response_content(response))
+
+
 def langsmith_tracing_enabled() -> bool:
     tracing_value = os.getenv("LANGSMITH_TRACING", os.getenv("LANGCHAIN_TRACING_V2", ""))
     tracing_disabled = tracing_value.strip().lower() in {"0", "false", "no", "off"}
@@ -822,8 +912,9 @@ class LlmAnswerGenerator:
             )
 
         messages = [
-            SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(
+            ChatPromptMessage(role="system", content=SYSTEM_PROMPT),
+            ChatPromptMessage(
+                role="user",
                 content=(
                     "Business summary and FAQ:\n"
                     f"{format_business_summary(tenant_config)}\n\n"
@@ -917,8 +1008,9 @@ class LlmQuestionPlanner:
         tenant_config: TenantConfig | None = None,
     ) -> QuestionPlan:
         messages = [
-            SystemMessage(content=QUESTION_PLANNING_PROMPT),
-            HumanMessage(
+            ChatPromptMessage(role="system", content=QUESTION_PLANNING_PROMPT),
+            ChatPromptMessage(
+                role="user",
                 content=(
                     f"sender_name: {message.sender_name or 'none'}\n"
                     "Business summary and FAQ:\n"
@@ -1345,15 +1437,12 @@ def create_openai_answer_generator(
     model: str,
     temperature: float,
 ) -> LlmAnswerGenerator:
-    from langchain_openai import ChatOpenAI
-
     def build_chat_model(tenant_config: TenantConfig | None = None) -> Any:
-        return ChatOpenAI(
+        return LiteLLMChatModel(
             api_key=api_key,
             model=model,
             temperature=temperature,
-            model_kwargs={"response_format": {"type": "json_object"}},
-            default_headers=openai_project_headers(tenant_config),
+            tenant_config=tenant_config,
         )
 
     return LlmAnswerGenerator(build_chat_model(), chat_model_factory=build_chat_model)
@@ -1365,15 +1454,12 @@ def create_openai_question_planner(
     model: str,
     temperature: float,
 ) -> LlmQuestionPlanner:
-    from langchain_openai import ChatOpenAI
-
     def build_chat_model(tenant_config: TenantConfig | None = None) -> Any:
-        return ChatOpenAI(
+        return LiteLLMChatModel(
             api_key=api_key,
             model=model,
             temperature=temperature,
-            model_kwargs={"response_format": {"type": "json_object"}},
-            default_headers=openai_project_headers(tenant_config),
+            tenant_config=tenant_config,
         )
 
     return LlmQuestionPlanner(build_chat_model(), chat_model_factory=build_chat_model)

@@ -1,7 +1,7 @@
 image:
   repository: 371664303664.dkr.ecr.eu-central-1.amazonaws.com/customer-service
   tag: ignored-when-digest-is-set
-  digest: sha256:febae318331fa07df327e66438c7ea3a67da040f2744eaaa467823df6fd42e4f
+  digest: sha256:e94bb82c30fb571c4357f0566699f32739deca3227b19abb5fb1e75079cdafc7
   pullPolicy: IfNotPresent
 
 podLabels:
@@ -72,7 +72,7 @@ web:
   image:
     repository: 371664303664.dkr.ecr.eu-central-1.amazonaws.com/customer-service-web
     tag: ignored-when-digest-is-set
-    digest: sha256:5d7e8c487de6c14224e811edd2c4e3655ff4cd9e4321150f06e9b1183dd48b98
+    digest: sha256:9701e98b7aa728b97d9d8d1971b3dda816dda6a53bc8031cb64aeb7bbb3f7756
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP

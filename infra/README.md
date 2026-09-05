@@ -8,6 +8,11 @@ Regional resources are fixed to `eu-central-1`:
 3. `staging`: fresh PostgreSQL, Valkey, security groups, and workload IRSA.
 4. `cluster-bootstrap`: private Argo CD and the staging root Application.
 
+The GitHub OIDC trust uses the immutable owner and repository IDs emitted in this
+repository's token subject. If the repository is transferred or recreated, update
+`github_oidc_repository` from the subject observed in CloudTrail before applying the
+bootstrap root.
+
 The cluster-bootstrap root also installs External Secrets Operator 2.8.0. Its controller
 uses IRSA to read only `ristoh-ai-chatbot/staging/api-keys` from Secrets Manager and
 maintains the `api-keys` Kubernetes Secret in `customer-service-staging`. Secret values
@@ -64,9 +69,8 @@ AWS_PROFILE=new-project tofu -chdir=infra/platform apply platform.tfplan
 
 Repeat for `staging` and `cluster-bootstrap`. Before cluster bootstrap, update
 `values-staging.yaml` from the staging outputs. The checked-in staging profile deliberately
-uses local/extractive providers and therefore does not require an API-key Secret. If a
-remote provider is enabled later, create its Secret in `customer-service-staging` without
-checking secret values into Git.
+uses local/extractive providers, but its optional remote integrations reference the
+External Secrets-managed `api-keys` Secret without checking values into Git.
 
 The ECR `import` blocks intentionally transfer only `customer-service` and
 `customer-service-web`. OpenTofu never adopts or destroys the old eksctl/CloudFormation

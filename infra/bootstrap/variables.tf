@@ -15,8 +15,8 @@ variable "aws_account_id" {
   default     = "371664303664"
 }
 
-variable "github_repository" {
+variable "github_oidc_repository" {
   type        = string
-  description = "GitHub owner/repository allowed to assume the CI roles."
-  default     = "ericnjogu/customer-service-agent"
+  description = "GitHub OIDC owner/repository identity allowed to assume the CI roles."
+  default     = "ericnjogu@310578/customer-service-agent@1301957414"
 }

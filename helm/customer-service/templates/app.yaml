@@ -274,6 +274,13 @@ spec:
             - name: AGENT_DATABASE_NAME
               value: {{ .Values.database.name | quote }}
             {{- end }}
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 60
           readinessProbe:
             httpGet:
               path: /healthz

@@ -43,6 +43,15 @@ resource "aws_security_group" "workload" {
   }
 }
 
+resource "aws_vpc_security_group_ingress_rule" "cluster_api" {
+  security_group_id            = data.terraform_remote_state.platform.outputs.cluster_security_group_id
+  referenced_security_group_id = aws_security_group.workload.id
+  ip_protocol                  = "tcp"
+  from_port                    = 443
+  to_port                      = 443
+  description                  = "EKS API from staging workload pods"
+}
+
 resource "aws_security_group" "database" {
   name        = "${local.name}-${local.env_name}-database"
   description = "PostgreSQL from staging application pods only"

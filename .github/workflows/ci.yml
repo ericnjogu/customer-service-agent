@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: eu-central-1
+  AWS_ACCOUNT_ID: "371664303664"
+  TOFU_VERSION: 1.12.6
+
+jobs:
+  application:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@b75a909f75acd358c2196fb9a5f1299a9a8868a4 # v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run ruff check app tests
+      - run: uv run pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+        with:
+          version: v3.18.6
+      - run: helm lint helm/customer-service -f helm/customer-service/values-staging.yaml
+      - name: Render digest-pinned staging release
+        run: |
+          helm template aws-csa helm/customer-service \
+            --namespace customer-service-staging \
+            -f helm/customer-service/values-staging.yaml > /tmp/aws-csa.yaml
+          grep -q '371664303664.dkr.ecr.eu-central-1.amazonaws.com/customer-service@sha256:' /tmp/aws-csa.yaml
+          grep -q '371664303664.dkr.ecr.eu-central-1.amazonaws.com/customer-service-web@sha256:' /tmp/aws-csa.yaml
+          grep -q 'arn:aws:iam::371664303664:role/ristoh-ai-chatbot-staging-workload' /tmp/aws-csa.yaml
+
+  tofu-static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f # v1
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+      - run: tofu fmt -check -recursive infra
+      - name: Validate roots
+        run: |
+          for root in bootstrap platform staging cluster-bootstrap; do
+            tofu -chdir="infra/$root" init -backend=false
+            tofu -chdir="infra/$root" validate
+          done
+
+  tofu-plan:
+    if: github.event_name == 'pull_request'
+    needs: tofu-static
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f # v1
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+      - uses: aws-actions/configure-aws-credentials@cabfdba3510de1431bac9dba27511d97497fc100 # v5
+        with:
+          role-to-assume: arn:aws:iam::371664303664:role/ristoh-ai-chatbot-github-plan
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Create non-mutating saved plans
+        env:
+          TF_VAR_operator_cidr: 192.0.2.1/32
+        run: |
+          for root in bootstrap platform staging cluster-bootstrap; do
+            tofu -chdir="infra/$root" init \
+              -backend-config="bucket=ristoh-ai-chatbot-tofu-state-${AWS_ACCOUNT_ID}-${AWS_REGION}" \
+              -backend-config="key=$root/terraform.tfstate" \
+              -backend-config="region=${AWS_REGION}" \
+              -backend-config="encrypt=true" \
+              -backend-config="use_lockfile=true"
+            tofu -chdir="infra/$root" plan -refresh=false -lock=false -out="$root.tfplan"
+          done

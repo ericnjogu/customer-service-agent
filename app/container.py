@@ -1,3 +1,4 @@
+import json
 import logging
 from dataclasses import dataclass
 
@@ -207,11 +208,43 @@ async def create_container(settings: Settings) -> Container:
         raise ValueError(f"Unsupported embedding provider: {settings.embedding_provider}")
 
     if settings.retrieval_provider == "pgvector":
-        if not settings.database_url:
-            raise ValueError("AGENT_DATABASE_URL is required when using pgvector")
+        database_connect_kwargs: dict[str, object] = {}
+        if settings.database_secret_arn:
+            if not settings.database_host:
+                raise ValueError(
+                    "AGENT_DATABASE_HOST is required with AGENT_DATABASE_SECRET_ARN"
+                )
+            import boto3
+            from botocore.config import Config
+
+            secrets = boto3.client(
+                "secretsmanager",
+                region_name=settings.aws_region,
+                config=Config(
+                    retries={"total_max_attempts": 3, "mode": "adaptive"},
+                    connect_timeout=5,
+                    read_timeout=10,
+                ),
+            )
+            secret = secrets.get_secret_value(SecretId=settings.database_secret_arn)
+            credentials = json.loads(secret["SecretString"])
+            database_connect_kwargs = {
+                "host": settings.database_host,
+                "port": settings.database_port,
+                "database": settings.database_name,
+                "user": credentials["username"],
+                "password": credentials["password"],
+                "ssl": "require",
+            }
+        elif not settings.database_url:
+            raise ValueError(
+                "AGENT_DATABASE_URL or AGENT_DATABASE_SECRET_ARN is required when "
+                "using pgvector"
+            )
         database = PostgresDatabase(
             settings.database_url,
             embedding_dimensions=embeddings.dimensions,
+            connect_kwargs=database_connect_kwargs,
         )
         await database.initialize()
         conversations = PostgresConversationRepository(database)
@@ -241,7 +274,16 @@ async def create_container(settings: Settings) -> Container:
             )
         tenant_configs = RedisTenantConfigRepository(
             tenant_configs,
-            create_redis_client(settings.redis_url),
+            create_redis_client(
+                settings.redis_url,
+                iam_cache_name=(
+                    settings.redis_iam_cache_name if settings.redis_iam_auth else None
+                ),
+                iam_username=(
+                    settings.redis_iam_username if settings.redis_iam_auth else None
+                ),
+                aws_region=settings.aws_region,
+            ),
             ttl_seconds=settings.tenant_config_cache_ttl_seconds,
         )
     elif settings.tenant_config_cache_provider == "memory":

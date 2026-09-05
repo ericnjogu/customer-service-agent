@@ -1,0 +1,89 @@
+image:
+  repository: 371664303664.dkr.ecr.eu-central-1.amazonaws.com/customer-service
+  tag: ignored-when-digest-is-set
+  digest: sha256:e94bb82c30fb571c4357f0566699f32739deca3227b19abb5fb1e75079cdafc7
+  pullPolicy: IfNotPresent
+
+podLabels:
+  aws-csa/data-access: "true"
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::371664303664:role/ristoh-ai-chatbot-staging-workload
+
+postgres:
+  enabled: false
+
+database:
+  secretArn: arn:aws:secretsmanager:eu-central-1:371664303664:secret:rds!db-48c33da1-2114-4f9b-90d5-df42a4fe5e28-JSkJgF
+  host: ristoh-ai-chatbot-staging.cz444kcgo2oe.eu-central-1.rds.amazonaws.com
+  port: 5432
+  name: risto_css
+
+redis:
+  enabled: false
+  url: rediss://master.ristoh-ai-chatbot-staging-cache.pbtg6e.euc1.cache.amazonaws.com:6379/0
+  iamAuth:
+    enabled: true
+    cacheName: ristoh-ai-chatbot-staging-cache
+    username: ristoh-ai-chatbot-staging-app
+    region: eu-central-1
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: "1"
+    memory: 2Gi
+
+answer:
+  provider: extractive
+
+embedding:
+  provider: local
+  dimensions: 64
+
+questionPlanner:
+  provider: rules
+
+platform:
+  webSearchApiKeySecretName: api-keys
+
+providerProjects:
+  provisioner: metadata
+  openaiAdminKeySecretName: api-keys
+
+email:
+  provider: log
+  resendApiKeySecretName: api-keys
+
+llm:
+  existingSecret: api-keys
+
+langsmith:
+  LANGSMITH_TRACING: "false"
+  LANGSMITH_TRACING_V2: "false"
+  LANGCHAIN_TRACING_V2: "false"
+  existingSecret: api-keys
+
+web:
+  enabled: true
+  image:
+    repository: 371664303664.dkr.ecr.eu-central-1.amazonaws.com/customer-service-web
+    tag: ignored-when-digest-is-set
+    digest: sha256:9701e98b7aa728b97d9d8d1971b3dda816dda6a53bc8031cb64aeb7bbb3f7756
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+    annotations: {}
+  publicBaseUrl: http://localhost:5173
+  apiBaseUrl: /api
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi

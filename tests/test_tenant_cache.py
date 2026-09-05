@@ -1,6 +1,7 @@
 import pytest
 
 from app.adapters.tenant_cache import (
+    ElastiCacheIAMCredentialProvider,
     MemoryCachedTenantConfigRepository,
     RedisTenantConfigRepository,
 )
@@ -88,6 +89,62 @@ class FakeRedis:
 class FailingRedis(FakeRedis):
     async def get(self, key: str) -> str | None:
         raise RuntimeError("redis unavailable")
+
+
+class FakeBotocoreSession:
+    class EventEmitter:
+        pass
+
+    def get_credentials(self) -> object:
+        return object()
+
+    def get_component(self, name: str) -> object:
+        assert name == "event_emitter"
+        return self.EventEmitter()
+
+
+class FakeRequestSigner:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def generate_presigned_url(self, *args: object, **kwargs: object) -> str:
+        self.calls += 1
+        return "https://signed-token"
+
+
+def test_elasticache_iam_credentials_are_cached_and_cache_name_is_lowercase() -> None:
+    provider = ElastiCacheIAMCredentialProvider(
+        "RISTOH-AI-CACHE",
+        "risto-cache-app",
+        "eu-central-1",
+        session=FakeBotocoreSession(),
+    )
+    signer = FakeRequestSigner()
+    provider._signer = signer
+
+    assert provider.get_credentials() == ("risto-cache-app", "signed-token")
+    assert provider.get_credentials() == ("risto-cache-app", "signed-token")
+    assert provider.cache_name == "ristoh-ai-cache"
+    assert signer.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_elasticache_iam_credentials_support_async_clients() -> None:
+    provider = ElastiCacheIAMCredentialProvider(
+        "RISTOH-AI-CACHE",
+        "risto-cache-app",
+        "eu-central-1",
+        session=FakeBotocoreSession(),
+    )
+    signer = FakeRequestSigner()
+    provider._signer = signer
+
+    assert await provider.get_credentials_async() == (
+        "risto-cache-app",
+        "signed-token",
+    )
+    assert provider.get_credentials() == ("risto-cache-app", "signed-token")
+    assert signer.calls == 1
 
     async def set(self, key: str, value: str, ex: int) -> None:
         raise RuntimeError("redis unavailable")

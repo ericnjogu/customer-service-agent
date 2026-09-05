@@ -52,6 +52,33 @@ resource "aws_vpc_security_group_ingress_rule" "cluster_api" {
   description                  = "EKS API from staging workload pods"
 }
 
+resource "aws_vpc_security_group_ingress_rule" "cluster_dns_udp" {
+  security_group_id            = data.terraform_remote_state.platform.outputs.cluster_security_group_id
+  referenced_security_group_id = aws_security_group.workload.id
+  ip_protocol                  = "udp"
+  from_port                    = 53
+  to_port                      = 53
+  description                  = "CoreDNS UDP from staging workload pods"
+}
+
+resource "aws_vpc_security_group_ingress_rule" "cluster_dns_tcp" {
+  security_group_id            = data.terraform_remote_state.platform.outputs.cluster_security_group_id
+  referenced_security_group_id = aws_security_group.workload.id
+  ip_protocol                  = "tcp"
+  from_port                    = 53
+  to_port                      = 53
+  description                  = "CoreDNS TCP from staging workload pods"
+}
+
+resource "aws_vpc_security_group_ingress_rule" "workload_kubelet" {
+  security_group_id            = aws_security_group.workload.id
+  referenced_security_group_id = data.terraform_remote_state.platform.outputs.cluster_security_group_id
+  ip_protocol                  = "tcp"
+  from_port                    = 10250
+  to_port                      = 10250
+  description                  = "EKS control plane diagnostics to staging Fargate pods"
+}
+
 resource "aws_security_group" "database" {
   name        = "${local.name}-${local.env_name}-database"
   description = "PostgreSQL from staging application pods only"

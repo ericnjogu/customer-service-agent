@@ -31,6 +31,9 @@ spec:
       labels:
         app.kubernetes.io/component: app
         app.kubernetes.io/instance: {{ .Release.Name }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
       serviceAccountName: {{ include "customer-service.fullname" . }}-app
       {{- if .Values.postgres.enabled }}
@@ -51,7 +54,7 @@ spec:
       {{- end }}
       containers:
         - name: app
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: {{ include "customer-service.image" .Values.image | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
@@ -91,6 +94,22 @@ spec:
             {{- else if .Values.redis.url }}
             - name: AGENT_REDIS_URL
               value: {{ .Values.redis.url | quote }}
+            {{- else if .Values.redis.existingSecret }}
+            - name: AGENT_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.redis.existingSecret | quote }}
+                  key: {{ .Values.redis.secretKey | quote }}
+            {{- end }}
+            - name: AGENT_REDIS_IAM_AUTH
+              value: {{ .Values.redis.iamAuth.enabled | quote }}
+            {{- if .Values.redis.iamAuth.enabled }}
+            - name: AGENT_REDIS_IAM_CACHE_NAME
+              value: {{ required "redis.iamAuth.cacheName is required" .Values.redis.iamAuth.cacheName | quote }}
+            - name: AGENT_REDIS_IAM_USERNAME
+              value: {{ required "redis.iamAuth.username is required" .Values.redis.iamAuth.username | quote }}
+            - name: AGENT_AWS_REGION
+              value: {{ .Values.redis.iamAuth.region | quote }}
             {{- end }}
             - name: AGENT_TELEGRAM_CREDENTIAL_PROVIDER
               value: {{ .Values.telegram.credentialProvider | quote }}
@@ -232,10 +251,29 @@ spec:
                   key: {{ .Values.langsmith.secretKey | quote }}
             {{- end }}
             - name: AGENT_DATABASE_URL
+              {{- if or .Values.postgres.enabled .Values.database.existingSecret }}
               valueFrom:
                 secretKeyRef:
+                  {{- if .Values.postgres.enabled }}
                   name: {{ include "customer-service.fullname" . }}-postgres
                   key: database-url
+                  {{- else }}
+                  name: {{ required "database.existingSecret is required when postgres.enabled=false" .Values.database.existingSecret | quote }}
+                  key: {{ .Values.database.secretKey | quote }}
+                  {{- end }}
+              {{- else }}
+              value: ""
+              {{- end }}
+            {{- if .Values.database.secretArn }}
+            - name: AGENT_DATABASE_SECRET_ARN
+              value: {{ .Values.database.secretArn | quote }}
+            - name: AGENT_DATABASE_HOST
+              value: {{ required "database.host is required with database.secretArn" .Values.database.host | quote }}
+            - name: AGENT_DATABASE_PORT
+              value: {{ .Values.database.port | quote }}
+            - name: AGENT_DATABASE_NAME
+              value: {{ .Values.database.name | quote }}
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /healthz

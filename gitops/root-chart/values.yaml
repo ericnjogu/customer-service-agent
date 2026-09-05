@@ -1,0 +1,5 @@
+repository: https://github.com/ericnjogu/customer-service-agent.git
+revision: deploy/staging
+workloadSecurityGroupId: ""
+fargateLogGroup: /aws/eks/ristoh-ai-chatbot/fargate
+region: eu-central-1

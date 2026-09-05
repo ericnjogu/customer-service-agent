@@ -10,6 +10,10 @@ class Settings(BaseSettings):
     app_name: str = "customer-service-agent"
     default_tenant_id: str = Field(default="default", min_length=1)
     database_url: str | None = None
+    database_secret_arn: str | None = None
+    database_host: str | None = None
+    database_port: int = Field(default=5432, gt=0, le=65535)
+    database_name: str = "risto_css"
     retrieval_provider: str = "memory"
     answer_provider: str = "extractive"
     embedding_provider: str = "local"
@@ -27,6 +31,10 @@ class Settings(BaseSettings):
     tenant_config_cache_provider: str = "memory"
     tenant_config_cache_ttl_seconds: int = Field(default=300, gt=0)
     redis_url: str | None = None
+    redis_iam_auth: bool = False
+    redis_iam_cache_name: str | None = None
+    redis_iam_username: str | None = None
+    aws_region: str = "eu-central-1"
     vector_collection: str = Field(default="customer-service", min_length=1)
     telegram_credential_provider: str = "kubernetes"
     telegram_secret_namespace: str | None = None

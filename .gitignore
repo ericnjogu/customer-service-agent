@@ -11,3 +11,12 @@ build/
 bruno/environments/
 local-docs/
 private-deploy-local.sh
+.elasticache/
+.terraform/
+*.tfplan
+*.tfstate
+*.tfstate.*
+*.auto.tfvars
+!*.auto.tfvars.example
+infra/**/backend.hcl
+infra/**/generated.auto.tfvars.json

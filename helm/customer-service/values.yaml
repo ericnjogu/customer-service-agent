@@ -1,9 +1,12 @@
 image:
   repository: customer-service
   tag: local
+  digest: ""
   pullPolicy: IfNotPresent
 
 replicaCount: 1
+
+podLabels: {}
 
 service:
   type: ClusterIP
@@ -14,12 +17,26 @@ web:
   image:
     repository: customer-service-web
     tag: local
+    digest: ""
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
     port: 8080
+    annotations: {}
   publicBaseUrl: "http://localhost:5173"
   apiBaseUrl: "/api"
+  resources: {}
+
+serviceAccount:
+  annotations: {}
+
+database:
+  existingSecret: ""
+  secretKey: database-url
+  secretArn: ""
+  host: ""
+  port: 5432
+  name: risto_css
 
 tenant:
   defaultId: default
@@ -54,6 +71,13 @@ redis:
   image: redis:7-alpine
   port: 6379
   url: ""
+  existingSecret: ""
+  secretKey: redis-url
+  iamAuth:
+    enabled: false
+    cacheName: ""
+    username: ""
+    region: eu-central-1
 
 n8n:
   enabled: false

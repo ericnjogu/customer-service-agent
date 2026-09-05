@@ -1,0 +1,9 @@
+output "database_endpoint" { value = aws_db_instance.postgresql.address }
+output "database_port" { value = aws_db_instance.postgresql.port }
+output "database_name" { value = aws_db_instance.postgresql.db_name }
+output "database_secret_arn" { value = aws_db_instance.postgresql.master_user_secret[0].secret_arn }
+output "cache_endpoint" { value = aws_elasticache_replication_group.this.primary_endpoint_address }
+output "cache_name" { value = aws_elasticache_replication_group.this.replication_group_id }
+output "cache_user" { value = aws_elasticache_user.application.user_name }
+output "workload_role_arn" { value = aws_iam_role.workload.arn }
+output "workload_security_group_id" { value = aws_security_group.workload.id }

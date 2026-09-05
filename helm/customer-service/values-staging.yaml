@@ -1,0 +1,89 @@
+image:
+  repository: 371664303664.dkr.ecr.eu-central-1.amazonaws.com/customer-service
+  tag: ignored-when-digest-is-set
+  digest: sha256:febae318331fa07df327e66438c7ea3a67da040f2744eaaa467823df6fd42e4f
+  pullPolicy: IfNotPresent
+
+podLabels:
+  aws-csa/data-access: "true"
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::371664303664:role/ristoh-ai-chatbot-staging-workload
+
+postgres:
+  enabled: false
+
+database:
+  secretArn: arn:aws:secretsmanager:eu-central-1:371664303664:secret:rds!db-48c33da1-2114-4f9b-90d5-df42a4fe5e28-JSkJgF
+  host: ristoh-ai-chatbot-staging.cz444kcgo2oe.eu-central-1.rds.amazonaws.com
+  port: 5432
+  name: risto_css
+
+redis:
+  enabled: false
+  url: rediss://master.ristoh-ai-chatbot-staging-cache.pbtg6e.euc1.cache.amazonaws.com:6379/0
+  iamAuth:
+    enabled: true
+    cacheName: ristoh-ai-chatbot-staging-cache
+    username: ristoh-ai-chatbot-staging-app
+    region: eu-central-1
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: "1"
+    memory: 2Gi
+
+answer:
+  provider: extractive
+
+embedding:
+  provider: local
+  dimensions: 64
+
+questionPlanner:
+  provider: rules
+
+platform:
+  webSearchApiKeySecretName: ""
+
+providerProjects:
+  provisioner: metadata
+  openaiAdminKeySecretName: ""
+
+email:
+  provider: log
+  resendApiKeySecretName: ""
+
+llm:
+  existingSecret: ""
+
+langsmith:
+  LANGSMITH_TRACING: "false"
+  LANGSMITH_TRACING_V2: "false"
+  LANGCHAIN_TRACING_V2: "false"
+  existingSecret: ""
+
+web:
+  enabled: true
+  image:
+    repository: 371664303664.dkr.ecr.eu-central-1.amazonaws.com/customer-service-web
+    tag: ignored-when-digest-is-set
+    digest: sha256:5d7e8c487de6c14224e811edd2c4e3655ff4cd9e4321150f06e9b1183dd48b98
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+    annotations: {}
+  publicBaseUrl: http://localhost:5173
+  apiBaseUrl: /api
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi

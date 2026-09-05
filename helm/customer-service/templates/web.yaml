@@ -34,6 +34,10 @@ metadata:
   name: {{ include "customer-service.fullname" . }}-web
   labels:
     {{- include "customer-service.labels" . | nindent 4 }}
+  {{- with .Values.web.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   selector:
     app.kubernetes.io/component: web
@@ -64,7 +68,7 @@ spec:
     spec:
       containers:
         - name: web
-          image: "{{ .Values.web.image.repository }}:{{ .Values.web.image.tag }}"
+          image: {{ include "customer-service.image" .Values.web.image | quote }}
           imagePullPolicy: {{ .Values.web.image.pullPolicy }}
           ports:
             - name: http
@@ -85,6 +89,8 @@ spec:
               port: http
             initialDelaySeconds: 15
             periodSeconds: 20
+          resources:
+            {{- toYaml .Values.web.resources | nindent 12 }}
       volumes:
         - name: nginx-config
           configMap:

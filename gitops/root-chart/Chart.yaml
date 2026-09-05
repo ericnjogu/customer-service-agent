@@ -2,4 +2,4 @@ apiVersion: v2
 name: gitops-root
 description: Root Argo CD Application and Fargate logging configuration
 type: application
-version: 0.1.0
+version: 0.1.1

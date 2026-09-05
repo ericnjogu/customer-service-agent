@@ -8,6 +8,29 @@ Regional resources are fixed to `eu-central-1`:
 3. `staging`: fresh PostgreSQL, Valkey, security groups, and workload IRSA.
 4. `cluster-bootstrap`: private Argo CD and the staging root Application.
 
+The platform root also creates `ristoh-ai-chatbot-kubernetes-operator`, a role with no
+AWS service permissions. Its EKS access entry maps it to namespace-scoped Kubernetes
+RBAC installed by the cluster-bootstrap root. The base IAM user can only refresh its
+local AWS login and assume this role. Use the role for routine `kubectl` access; the
+cluster creator's administrator access is reserved for local infrastructure bootstrap.
+
+After both roots have been applied, create the operator context and make it current:
+
+```bash
+AWS_PROFILE=kubernetes-operator-base aws eks update-kubeconfig \
+  --region eu-central-1 \
+  --name ristoh-ai-chatbot \
+  --alias ristoh-ai-chatbot-operator \
+  --user-alias ristoh-ai-chatbot-operator \
+  --role-arn arn:aws:iam::371664303664:role/ristoh-ai-chatbot-kubernetes-operator
+kubectl config set-context ristoh-ai-chatbot-operator --namespace customer-service-staging
+```
+
+The operator can inspect pods, workloads, services, endpoints and events; read pod logs;
+and port-forward pods in `argocd` and `customer-service-staging`. It can patch only the
+`aws-csa-staging` Argo CD Application. It cannot read Secrets, exec into pods, administer
+RBAC or namespaces, or create/delete workloads.
+
 Create an untracked `backend.hcl` in each root from its example. Create
 `infra/platform/operator.auto.tfvars` containing the operator's current restricted public
 CIDR. Never commit that file.

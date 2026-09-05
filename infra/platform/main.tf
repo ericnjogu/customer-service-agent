@@ -190,6 +190,48 @@ resource "aws_eks_cluster" "this" {
   ]
 }
 
+data "aws_iam_policy_document" "kubernetes_operator_trust" {
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "AWS"
+      identifiers = [var.kubernetes_operator_principal_arn]
+    }
+  }
+}
+
+resource "aws_iam_role" "kubernetes_operator" {
+  name                 = "${local.name}-kubernetes-operator"
+  description          = "Assumed by project team members for least-privilege Kubernetes access"
+  assume_role_policy   = data.aws_iam_policy_document.kubernetes_operator_trust.json
+  max_session_duration = 14400
+}
+
+data "aws_iam_policy_document" "assume_kubernetes_operator" {
+  statement {
+    actions   = ["sts:AssumeRole"]
+    resources = [aws_iam_role.kubernetes_operator.arn]
+  }
+}
+
+resource "aws_iam_user_policy" "assume_kubernetes_operator" {
+  name   = "AssumeKubernetesOperatorRole"
+  user   = var.kubernetes_operator_user_name
+  policy = data.aws_iam_policy_document.assume_kubernetes_operator.json
+}
+
+resource "aws_iam_user_policy_attachment" "operator_local_login" {
+  user       = var.kubernetes_operator_user_name
+  policy_arn = "arn:aws:iam::aws:policy/SignInLocalDevelopmentAccess"
+}
+
+resource "aws_eks_access_entry" "kubernetes_operator" {
+  cluster_name      = aws_eks_cluster.this.name
+  principal_arn     = aws_iam_role.kubernetes_operator.arn
+  kubernetes_groups = ["${local.name}-operator"]
+  type              = "STANDARD"
+}
+
 data "tls_certificate" "eks" {
   url = aws_eks_cluster.this.identity[0].oidc[0].issuer
 }

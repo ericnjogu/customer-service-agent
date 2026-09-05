@@ -8,3 +8,4 @@ output "workload_subnet_ids" { value = values(aws_subnet.workload)[*].id }
 output "data_subnet_ids" { value = values(aws_subnet.data)[*].id }
 output "cluster_security_group_id" { value = aws_eks_cluster.this.vpc_config[0].cluster_security_group_id }
 output "ecr_repository_urls" { value = { for name, repo in aws_ecr_repository.application : name => repo.repository_url } }
+output "kubernetes_operator_role_arn" { value = aws_iam_role.kubernetes_operator.arn }

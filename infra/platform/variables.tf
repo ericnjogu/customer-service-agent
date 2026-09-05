@@ -22,3 +22,20 @@ variable "operator_cidr" {
     error_message = "operator_cidr must be a valid restricted CIDR; 0.0.0.0/0 is forbidden."
   }
 }
+
+variable "kubernetes_operator_principal_arn" {
+  type        = string
+  description = "ARN of the IAM user allowed to assume the Kubernetes operator role."
+  default     = "arn:aws:iam::371664303664:user/tmp-admin"
+
+  validation {
+    condition     = startswith(var.kubernetes_operator_principal_arn, "arn:aws:iam::${var.aws_account_id}:user/")
+    error_message = "kubernetes_operator_principal_arn must be an IAM user in this AWS project."
+  }
+}
+
+variable "kubernetes_operator_user_name" {
+  type        = string
+  description = "Name of the IAM user allowed to assume the Kubernetes operator role."
+  default     = "tmp-admin"
+}

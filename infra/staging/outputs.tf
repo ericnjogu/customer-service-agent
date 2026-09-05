@@ -7,3 +7,4 @@ output "cache_name" { value = aws_elasticache_replication_group.this.replication
 output "cache_user" { value = aws_elasticache_user.application.user_name }
 output "workload_role_arn" { value = aws_iam_role.workload.arn }
 output "workload_security_group_id" { value = aws_security_group.workload.id }
+output "external_secrets_role_arn" { value = aws_iam_role.external_secrets.arn }

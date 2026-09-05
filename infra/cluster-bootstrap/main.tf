@@ -74,13 +74,45 @@ resource "helm_release" "argocd" {
   })]
 }
 
+resource "helm_release" "external_secrets" {
+  name             = "external-secrets"
+  namespace        = "external-secrets"
+  create_namespace = true
+  repository       = "https://charts.external-secrets.io"
+  chart            = "external-secrets"
+  version          = "2.8.0"
+  wait             = true
+  timeout          = 1200
+
+  values = [yamlencode({
+    installCRDs = true
+    serviceAccount = {
+      create = true
+      name   = "external-secrets"
+      annotations = {
+        "eks.amazonaws.com/role-arn" = data.terraform_remote_state.staging.outputs.external_secrets_role_arn
+      }
+    }
+    resources = {
+      requests = { cpu = "100m", memory = "128Mi" }
+      limits   = { memory = "256Mi" }
+    }
+    webhook = {
+      create = false
+    }
+    certController = {
+      create = false
+    }
+  })]
+}
+
 resource "helm_release" "gitops_root" {
   name       = "gitops-root"
   namespace  = "argocd"
   chart      = "${path.module}/../../gitops/root-chart"
   wait       = true
   timeout    = 600
-  depends_on = [helm_release.argocd]
+  depends_on = [helm_release.argocd, helm_release.external_secrets]
 
   values = [yamlencode({
     repository              = "https://github.com/ericnjogu/customer-service-agent.git"

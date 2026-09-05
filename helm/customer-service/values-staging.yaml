@@ -48,24 +48,24 @@ questionPlanner:
   provider: rules
 
 platform:
-  webSearchApiKeySecretName: ""
+  webSearchApiKeySecretName: api-keys
 
 providerProjects:
   provisioner: metadata
-  openaiAdminKeySecretName: ""
+  openaiAdminKeySecretName: api-keys
 
 email:
   provider: log
-  resendApiKeySecretName: ""
+  resendApiKeySecretName: api-keys
 
 llm:
-  existingSecret: ""
+  existingSecret: api-keys
 
 langsmith:
   LANGSMITH_TRACING: "false"
   LANGSMITH_TRACING_V2: "false"
   LANGCHAIN_TRACING_V2: "false"
-  existingSecret: ""
+  existingSecret: api-keys
 
 web:
   enabled: true

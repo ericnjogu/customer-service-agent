@@ -8,6 +8,11 @@ Regional resources are fixed to `eu-central-1`:
 3. `staging`: fresh PostgreSQL, Valkey, security groups, and workload IRSA.
 4. `cluster-bootstrap`: private Argo CD and the staging root Application.
 
+The cluster-bootstrap root also installs External Secrets Operator 2.8.0. Its controller
+uses IRSA to read only `ristoh-ai-chatbot/staging/api-keys` from Secrets Manager and
+maintains the `api-keys` Kubernetes Secret in `customer-service-staging`. Secret values
+remain outside Git and OpenTofu state.
+
 The platform root also creates `ristoh-ai-chatbot-kubernetes-operator`, a role with no
 AWS service permissions. Its EKS access entry maps it to namespace-scoped Kubernetes
 RBAC installed by the cluster-bootstrap root. The base IAM user can only refresh its

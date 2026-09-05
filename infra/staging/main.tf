@@ -18,6 +18,10 @@ check "expected_account" {
   }
 }
 
+data "aws_secretsmanager_secret" "api_keys" {
+  name = "${local.name}/${local.env_name}/api-keys"
+}
+
 data "terraform_remote_state" "platform" {
   backend = "s3"
   config = {
@@ -339,4 +343,46 @@ resource "aws_iam_role_policy" "workload" {
   name   = "StagingDataAccess"
   role   = aws_iam_role.workload.id
   policy = data.aws_iam_policy_document.workload.json
+}
+
+data "aws_iam_policy_document" "external_secrets_trust" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    principals {
+      type        = "Federated"
+      identifiers = [data.terraform_remote_state.platform.outputs.cluster_oidc_provider_arn]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "${replace(data.terraform_remote_state.platform.outputs.cluster_oidc_issuer, "https://", "")}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "${replace(data.terraform_remote_state.platform.outputs.cluster_oidc_issuer, "https://", "")}:sub"
+      values   = ["system:serviceaccount:external-secrets:external-secrets"]
+    }
+  }
+}
+
+resource "aws_iam_role" "external_secrets" {
+  name               = "${local.name}-${local.env_name}-external-secrets"
+  assume_role_policy = data.aws_iam_policy_document.external_secrets_trust.json
+}
+
+data "aws_iam_policy_document" "external_secrets" {
+  statement {
+    sid = "ReadStagingApiKeys"
+    actions = [
+      "secretsmanager:DescribeSecret",
+      "secretsmanager:GetSecretValue"
+    ]
+    resources = [data.aws_secretsmanager_secret.api_keys.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "external_secrets" {
+  name   = "ReadStagingApiKeys"
+  role   = aws_iam_role.external_secrets.id
+  policy = data.aws_iam_policy_document.external_secrets.json
 }

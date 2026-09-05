@@ -295,7 +295,7 @@ resource "aws_iam_role_policy" "fargate_logging" {
 }
 
 resource "aws_eks_fargate_profile" "this" {
-  for_each = toset(["kube-system", "argocd", "customer-service-staging"])
+  for_each = toset(["kube-system", "argocd", "external-secrets", "customer-service-staging"])
 
   cluster_name           = aws_eks_cluster.this.name
   fargate_profile_name   = replace(each.key, "customer-service-", "")

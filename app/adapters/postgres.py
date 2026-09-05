@@ -164,13 +164,20 @@ def model_to_json(value: object) -> object:
 
 
 class PostgresDatabase:
-    def __init__(self, database_url: str, embedding_dimensions: int = 64) -> None:
+    def __init__(
+        self,
+        database_url: str | None,
+        embedding_dimensions: int = 64,
+        *,
+        connect_kwargs: dict[str, object] | None = None,
+    ) -> None:
         self.database_url = database_url
         self.embedding_dimensions = embedding_dimensions
+        self.connect_kwargs = connect_kwargs or {}
         self.pool: asyncpg.Pool | None = None
 
     async def initialize(self) -> None:
-        self.pool = await asyncpg.create_pool(self.database_url)
+        self.pool = await asyncpg.create_pool(self.database_url, **self.connect_kwargs)
         async with self.pool.acquire() as connection:
             await connection.execute(schema(self.embedding_dimensions))
             await self._validate_embedding_dimensions(connection)

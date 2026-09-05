@@ -1,7 +1,12 @@
 .git
+.agents
+.uv-cache
 .venv
 __pycache__
 .pytest_cache
 tests
 helm
-
+infra
+gitops
+local-docs
+web

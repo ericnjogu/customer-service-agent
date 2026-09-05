@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.models import TenantConfig, TenantPlan
@@ -184,7 +185,89 @@ class RedisTenantConfigRepository:
             logger.warning("Could not write tenant config to Redis", exc_info=True)
 
 
-def create_redis_client(redis_url: str) -> Any:
+class ElastiCacheIAMCredentialProvider:
+    """Generate and briefly cache SigV4 credentials for ElastiCache IAM auth."""
+
+    def __init__(
+        self,
+        cache_name: str,
+        username: str,
+        region: str,
+        *,
+        session: Any | None = None,
+    ) -> None:
+        from botocore.model import ServiceId
+        from botocore.session import Session
+        from botocore.signers import RequestSigner
+
+        self.cache_name = cache_name.lower()
+        self.username = username
+        self.region = region
+        self._session = session or Session()
+        self._signer = RequestSigner(
+            ServiceId("elasticache"),
+            region,
+            "elasticache",
+            "v4",
+            self._session.get_credentials(),
+            self._session.get_component("event_emitter"),
+        )
+        self._token: str | None = None
+        self._expires_at = datetime.min.replace(tzinfo=timezone.utc)
+
+    def get_credentials(self) -> tuple[str, str]:
+        now = datetime.now(timezone.utc)
+        if self._token is None or now >= self._expires_at:
+            url = self._signer.generate_presigned_url(
+                {
+                    "method": "GET",
+                    "url": (
+                        f"https://{self.cache_name}/"
+                        f"?Action=connect&User={self.username}"
+                    ),
+                    "body": {},
+                    "headers": {},
+                    "context": {},
+                },
+                operation_name="connect",
+                expires_in=900,
+                region_name=self.region,
+            )
+            self._token = url.removeprefix("https://")
+            self._expires_at = now + timedelta(minutes=14)
+        return self.username, self._token
+
+    async def get_credentials_async(self) -> tuple[str, str]:
+        return self.get_credentials()
+
+
+def create_redis_client(
+    redis_url: str,
+    *,
+    iam_cache_name: str | None = None,
+    iam_username: str | None = None,
+    aws_region: str = "eu-central-1",
+) -> Any:
     from redis.asyncio import Redis
 
-    return Redis.from_url(redis_url, decode_responses=True)
+    credential_provider = None
+    if iam_cache_name or iam_username:
+        if not iam_cache_name or not iam_username:
+            raise ValueError(
+                "Both IAM cache name and username are required for ElastiCache IAM auth"
+            )
+        credential_provider = ElastiCacheIAMCredentialProvider(
+            iam_cache_name,
+            iam_username,
+            aws_region,
+        )
+
+    return Redis.from_url(
+        redis_url,
+        decode_responses=True,
+        credential_provider=credential_provider,
+        ssl_cert_reqs="required",
+        socket_connect_timeout=5,
+        socket_timeout=5,
+        health_check_interval=30,
+    )

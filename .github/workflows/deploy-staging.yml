@@ -1,0 +1,81 @@
+name: Build and deliver staging
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-central-1
+  AWS_ACCOUNT_ID: "371664303664"
+  ECR_REGISTRY: 371664303664.dkr.ecr.eu-central-1.amazonaws.com
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - uses: aws-actions/configure-aws-credentials@cabfdba3510de1431bac9dba27511d97497fc100 # v5
+        with:
+          role-to-assume: arn:aws:iam::371664303664:role/ristoh-ai-chatbot-github-ecr-push
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build immutable images for linux/amd64
+        run: |
+          for repository in customer-service customer-service-web; do
+            if aws ecr describe-images --repository-name "$repository" --image-ids imageTag="$GITHUB_SHA" >/dev/null 2>&1; then
+              echo "$repository:$GITHUB_SHA already exists; retaining the immutable image"
+              continue
+            fi
+            context="."
+            dockerfile="Dockerfile"
+            if [ "$repository" = customer-service-web ]; then
+              context="web"
+              dockerfile="web/Dockerfile"
+            fi
+            docker buildx build --platform linux/amd64 \
+              --file "$dockerfile" \
+              --tag "$ECR_REGISTRY/$repository:$GITHUB_SHA" \
+              --push "$context"
+          done
+      - name: Resolve ECR digests
+        id: digests
+        run: |
+          app_digest=$(aws ecr describe-images --repository-name customer-service --image-ids imageTag="$GITHUB_SHA" --query 'imageDetails[0].imageDigest' --output text)
+          web_digest=$(aws ecr describe-images --repository-name customer-service-web --image-ids imageTag="$GITHUB_SHA" --query 'imageDetails[0].imageDigest' --output text)
+          echo "app=$app_digest" >> "$GITHUB_OUTPUT"
+          echo "web=$web_digest" >> "$GITHUB_OUTPUT"
+          printf 'customer-service=%s\ncustomer-service-web=%s\n' "$app_digest" "$web_digest" | tee staging-image-digests.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: staging-image-digests-${{ github.sha }}
+          path: staging-image-digests.txt
+      - name: Rebuild generated deploy/staging branch
+        env:
+          APP_DIGEST: ${{ steps.digests.outputs.app }}
+          WEB_DIGEST: ${{ steps.digests.outputs.web }}
+        run: |
+          git fetch origin deploy/staging || true
+          previous=$(git rev-parse --verify refs/remotes/origin/deploy/staging 2>/dev/null || true)
+          git checkout -B deploy/staging "$GITHUB_SHA"
+          python3 scripts/update-staging-values.py --app-digest "$APP_DIGEST" --web-digest "$WEB_DIGEST"
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add helm/customer-service/values-staging.yaml
+          git commit -m "Deploy $GITHUB_SHA to staging"
+          if [ -n "$previous" ]; then
+            git push --force-with-lease="refs/heads/deploy/staging:$previous" origin HEAD:deploy/staging
+          else
+            git push --force-with-lease origin HEAD:deploy/staging
+          fi

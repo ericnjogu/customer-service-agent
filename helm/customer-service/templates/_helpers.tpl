@@ -11,3 +11,10 @@ app.kubernetes.io/name: {{ include "customer-service.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
+{{- define "customer-service.image" -}}
+{{- if .digest -}}
+{{ printf "%s@%s" .repository .digest }}
+{{- else -}}
+{{ printf "%s:%s" .repository .tag }}
+{{- end -}}
+{{- end }}

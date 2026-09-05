@@ -1,0 +1,6 @@
+bucket       = "ristoh-ai-chatbot-tofu-state-371664303664-eu-central-1"
+key          = "platform/terraform.tfstate"
+region       = "eu-central-1"
+encrypt      = true
+use_lockfile = true
+profile      = "new-project"

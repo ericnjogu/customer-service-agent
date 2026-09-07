@@ -1805,6 +1805,21 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
     UNIQUE(tenant_id, chunk_id)
 );
 
+DO $$
+BEGIN
+    IF (
+        SELECT format_type(attribute.atttypid, attribute.atttypmod)
+        FROM pg_attribute attribute
+        JOIN pg_class relation ON relation.oid = attribute.attrelid
+        WHERE relation.relname = 'knowledge_documents'
+          AND attribute.attname = 'embedding'
+          AND NOT attribute.attisdropped
+    ) <> 'vector({embedding_dimensions})' THEN
+        ALTER TABLE knowledge_documents
+        ALTER COLUMN embedding TYPE vector({embedding_dimensions});
+    END IF;
+END $$;
+
 ALTER TABLE conversations
 ADD COLUMN IF NOT EXISTS tenant_id text NOT NULL DEFAULT 'default';
 

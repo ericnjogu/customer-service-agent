@@ -50,6 +50,13 @@ def test_pgvector_schema_uses_chunk_id_uniqueness() -> None:
     assert "DROP COLUMN IF EXISTS namespace" in ddl
 
 
+def test_pgvector_schema_migrates_embedding_dimensions() -> None:
+    ddl = schema(1536)
+
+    assert "<> 'vector(1536)'" in ddl
+    assert "ALTER COLUMN embedding TYPE vector(1536)" in ddl
+
+
 def test_postgres_schema_scopes_conversations_and_events_by_tenant() -> None:
     ddl = schema(1536)
 

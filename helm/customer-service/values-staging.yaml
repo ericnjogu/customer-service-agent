@@ -38,20 +38,20 @@ resources:
     memory: 2Gi
 
 answer:
-  provider: extractive
+  provider: openai
 
 embedding:
   provider: local
   dimensions: 64
 
 questionPlanner:
-  provider: rules
+  provider: llm
 
 platform:
   webSearchApiKeySecretName: api-keys
 
 providerProjects:
-  provisioner: metadata
+  provisioner: api
   openaiAdminKeySecretName: api-keys
 
 email:

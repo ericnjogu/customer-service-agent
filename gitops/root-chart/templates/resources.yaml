@@ -186,6 +186,30 @@ spec:
         key: ristoh-ai-chatbot/staging/api-keys
         property: OPENAI_ADMIN_KEY
 ---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: app-config
+  namespace: customer-service-staging
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: SecretStore
+    name: aws-secrets-manager
+  target:
+    name: app-config
+    creationPolicy: Owner
+    deletionPolicy: Retain
+  data:
+    - secretKey: AGENT_EMAIL_FROM
+      remoteRef:
+        key: ristoh-ai-chatbot/staging/app_config
+        property: AGENT_EMAIL_FROM
+    - secretKey: AGENT_ONBOARDING_REVIEW_EMAIL
+      remoteRef:
+        key: ristoh-ai-chatbot/staging/app_config
+        property: AGENT_ONBOARDING_REVIEW_EMAIL
+---
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

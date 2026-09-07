@@ -22,6 +22,10 @@ data "aws_secretsmanager_secret" "api_keys" {
   name = "${local.name}/${local.env_name}/api-keys"
 }
 
+data "aws_secretsmanager_secret" "app_configs" {
+  name = "${local.name}/${local.env_name}/app-configs"
+}
+
 data "terraform_remote_state" "platform" {
   backend = "s3"
   config = {
@@ -385,4 +389,21 @@ resource "aws_iam_role_policy" "external_secrets" {
   name   = "ReadStagingApiKeys"
   role   = aws_iam_role.external_secrets.id
   policy = data.aws_iam_policy_document.external_secrets.json
+}
+
+data "aws_iam_policy_document" "external_secrets_app_config" {
+  statement {
+    sid = "ReadStagingAppConfig"
+    actions = [
+      "secretsmanager:DescribeSecret",
+      "secretsmanager:GetSecretValue"
+    ]
+    resources = [data.aws_secretsmanager_secret.app_configs.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "external_secrets_app_config" {
+  name   = "ReadStagingAppConfig"
+  role   = aws_iam_role.external_secrets.id
+  policy = data.aws_iam_policy_document.external_secrets_app_config.json
 }

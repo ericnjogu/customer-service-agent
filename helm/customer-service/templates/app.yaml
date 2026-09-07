@@ -189,6 +189,18 @@ spec:
                   name: {{ .Values.providerProjects.openaiAdminKeySecretName | quote }}
                   key: {{ .Values.providerProjects.openaiAdminKeySecretKey | quote }}
             {{- end }}
+            {{- if .Values.email.configSecretName }}
+            - name: AGENT_EMAIL_FROM
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.email.configSecretName | quote }}
+                  key: {{ .Values.email.fromSecretKey | quote }}
+            - name: AGENT_ONBOARDING_REVIEW_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.email.configSecretName | quote }}
+                  key: {{ .Values.email.onboardingReviewEmailSecretKey | quote }}
+            {{- else }}
             {{- if .Values.email.from }}
             - name: AGENT_EMAIL_FROM
               value: {{ .Values.email.from | quote }}
@@ -196,6 +208,7 @@ spec:
             {{- if .Values.email.onboardingReviewEmail }}
             - name: AGENT_ONBOARDING_REVIEW_EMAIL
               value: {{ .Values.email.onboardingReviewEmail | quote }}
+            {{- end }}
             {{- end }}
             {{- if .Values.email.resendApiKeySecretName }}
             - name: RESEND_API_KEY

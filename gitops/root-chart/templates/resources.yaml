@@ -189,7 +189,7 @@ spec:
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
-  name: app-config
+  name: app-configs
   namespace: customer-service-staging
 spec:
   refreshInterval: 1h
@@ -197,17 +197,17 @@ spec:
     kind: SecretStore
     name: aws-secrets-manager
   target:
-    name: app-config
+    name: app-configs
     creationPolicy: Owner
     deletionPolicy: Retain
   data:
     - secretKey: AGENT_EMAIL_FROM
       remoteRef:
-        key: ristoh-ai-chatbot/staging/app_configs
+        key: ristoh-ai-chatbot/staging/app-configs
         property: AGENT_EMAIL_FROM
     - secretKey: AGENT_ONBOARDING_REVIEW_EMAIL
       remoteRef:
-        key: ristoh-ai-chatbot/staging/app_configs
+        key: ristoh-ai-chatbot/staging/app-configs
         property: AGENT_ONBOARDING_REVIEW_EMAIL
 ---
 apiVersion: argoproj.io/v1alpha1

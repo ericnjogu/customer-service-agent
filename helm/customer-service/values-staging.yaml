@@ -37,9 +37,6 @@ resources:
     cpu: "1"
     memory: 2Gi
 
-email:
-  configSecretName: app-config
-
 web:
   enabled: true
   image:

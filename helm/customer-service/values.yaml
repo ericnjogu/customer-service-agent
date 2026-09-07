@@ -136,7 +136,7 @@ email:
   provider: resend
   from: ""
   onboardingReviewEmail: ""
-  configSecretName: ""
+  configSecretName: "app-configs"
   fromSecretKey: AGENT_EMAIL_FROM
   onboardingReviewEmailSecretKey: AGENT_ONBOARDING_REVIEW_EMAIL
   resendApiKeySecretName: "api-keys"

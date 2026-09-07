@@ -23,7 +23,7 @@ data "aws_secretsmanager_secret" "api_keys" {
 }
 
 data "aws_secretsmanager_secret" "app_configs" {
-  name = "${local.name}/${local.env_name}/app_configs"
+  name = "${local.name}/${local.env_name}/app-configs"
 }
 
 data "terraform_remote_state" "platform" {

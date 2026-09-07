@@ -15,8 +15,8 @@ bootstrap root.
 
 The cluster-bootstrap root also installs External Secrets Operator 2.8.0. Its controller
 uses IRSA to read only `ristoh-ai-chatbot/staging/api-keys` and
-`ristoh-ai-chatbot/staging/app_configs` from Secrets Manager. It maintains the `api-keys`
-and `app-config` Kubernetes Secrets in `customer-service-staging`; secret values remain
+`ristoh-ai-chatbot/staging/app-configs` from Secrets Manager. It maintains the `api-keys`
+and `app-configs` Kubernetes Secrets in `customer-service-staging`; secret values remain
 outside Git and OpenTofu state.
 
 The platform root also creates `ristoh-ai-chatbot-kubernetes-operator`, a role with no

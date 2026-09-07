@@ -203,11 +203,11 @@ spec:
   data:
     - secretKey: AGENT_EMAIL_FROM
       remoteRef:
-        key: ristoh-ai-chatbot/staging/app_config
+        key: ristoh-ai-chatbot/staging/app_configs
         property: AGENT_EMAIL_FROM
     - secretKey: AGENT_ONBOARDING_REVIEW_EMAIL
       remoteRef:
-        key: ristoh-ai-chatbot/staging/app_config
+        key: ristoh-ai-chatbot/staging/app_configs
         property: AGENT_ONBOARDING_REVIEW_EMAIL
 ---
 apiVersion: argoproj.io/v1alpha1

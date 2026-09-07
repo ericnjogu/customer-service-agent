@@ -22,8 +22,8 @@ data "aws_secretsmanager_secret" "api_keys" {
   name = "${local.name}/${local.env_name}/api-keys"
 }
 
-data "aws_secretsmanager_secret" "app_config" {
-  name = "${local.name}/${local.env_name}/app_config"
+data "aws_secretsmanager_secret" "app_configs" {
+  name = "${local.name}/${local.env_name}/app_configs"
 }
 
 data "terraform_remote_state" "platform" {
@@ -398,7 +398,7 @@ data "aws_iam_policy_document" "external_secrets_app_config" {
       "secretsmanager:DescribeSecret",
       "secretsmanager:GetSecretValue"
     ]
-    resources = [data.aws_secretsmanager_secret.app_config.arn]
+    resources = [data.aws_secretsmanager_secret.app_configs.arn]
   }
 }
 

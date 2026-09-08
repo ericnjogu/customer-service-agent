@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     telegram_secret_namespace: str | None = None
     telegram_bot_token_secret_key: str = "TELEGRAM_BOT_TOKEN"
     telegram_webhook_secret_token_secret_key: str = "TELEGRAM_WEBHOOK_SECRET_TOKEN"
-    telegram_webhook_public_base_url: str | None = None
+    webhook_public_base_url: str | None = None
     whatsapp_secret_namespace: str | None = None
     whatsapp_access_token_secret_key: str = "WHATSAPP_ACCESS_TOKEN"
     whatsapp_phone_number_id_secret_key: str = "WHATSAPP_PHONE_NUMBER_ID"

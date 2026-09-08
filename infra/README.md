@@ -16,7 +16,8 @@ bootstrap root.
 The cluster-bootstrap root also installs External Secrets Operator 2.8.0. Its controller
 uses IRSA to read only `ristoh-ai-chatbot/staging/api-keys` and
 `ristoh-ai-chatbot/staging/app-configs` from Secrets Manager. It maintains the `api-keys`
-and `app-configs` Kubernetes Secrets in `customer-service-staging`; secret values remain
+and `app-configs` Kubernetes Secrets in `customer-service-staging`. The latter contains
+the email settings and `AGENT_WEBHOOK_PUBLIC_BASE_URL`; secret values remain
 outside Git and OpenTofu state.
 
 The platform root also creates `ristoh-ai-chatbot-kubernetes-operator`, a role with no
@@ -76,3 +77,21 @@ External Secrets-managed `api-keys` Secret without checking values into Git.
 The ECR `import` blocks intentionally transfer only `customer-service` and
 `customer-service-web`. OpenTofu never adopts or destroys the old eksctl/CloudFormation
 platform.
+
+## Public staging endpoint
+
+The platform root requests an ACM certificate for `staging.css.ristoh.co.ke` and outputs
+the DNS validation CNAME. Because the `ristoh.co.ke` authoritative DNS service is external
+to AWS, create that record with the DNS provider and wait for the certificate to become
+`ISSUED`. The cluster-bootstrap root installs AWS Load Balancer Controller 3.5.0, and the
+staging Helm release creates an internet-facing HTTPS ALB for the web service. After the
+Ingress reports an ALB hostname, create this external DNS record:
+
+```text
+staging.css.ristoh.co.ke CNAME <ingress ALB hostname>
+```
+
+The browser URL is `https://staging.css.ristoh.co.ke`; nginx proxies `/api/*` to the
+private API service. Set `AGENT_WEBHOOK_PUBLIC_BASE_URL` in the
+`ristoh-ai-chatbot/staging/app-configs` AWS secret to
+`https://staging.css.ristoh.co.ke/api` so Telegram receives the public API route.

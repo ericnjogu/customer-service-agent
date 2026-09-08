@@ -126,9 +126,15 @@ spec:
               value: {{ .Values.telegram.botTokenSecretKey | quote }}
             - name: AGENT_TELEGRAM_WEBHOOK_SECRET_TOKEN_SECRET_KEY
               value: {{ .Values.telegram.webhookSecretTokenSecretKey | quote }}
-            {{- if .Values.telegram.webhookPublicBaseUrl }}
-            - name: AGENT_TELEGRAM_WEBHOOK_PUBLIC_BASE_URL
-              value: {{ .Values.telegram.webhookPublicBaseUrl | quote }}
+            {{- if .Values.webhook.publicBaseUrl }}
+            - name: AGENT_WEBHOOK_PUBLIC_BASE_URL
+              value: {{ .Values.webhook.publicBaseUrl | quote }}
+            {{- else if .Values.webhook.publicBaseUrlSecretName }}
+            - name: AGENT_WEBHOOK_PUBLIC_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.webhook.publicBaseUrlSecretName | quote }}
+                  key: {{ .Values.webhook.publicBaseUrlSecretKey | quote }}
             {{- end }}
             {{- if .Values.whatsapp.secretNamespace }}
             - name: AGENT_WHATSAPP_SECRET_NAMESPACE

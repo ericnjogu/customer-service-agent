@@ -209,6 +209,10 @@ spec:
       remoteRef:
         key: ristoh-ai-chatbot/staging/app-configs
         property: AGENT_ONBOARDING_REVIEW_EMAIL
+    - secretKey: AGENT_WEBHOOK_PUBLIC_BASE_URL
+      remoteRef:
+        key: ristoh-ai-chatbot/staging/app-configs
+        property: AGENT_WEBHOOK_PUBLIC_BASE_URL
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: Application

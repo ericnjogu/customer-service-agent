@@ -59,8 +59,7 @@ This project currently uses increment-based milestones instead of semantic versi
 - The onboarding `business_summary` editor now shows an explicit Markdown toolbar
   for undo/redo, headings, bold/italic/underline, lists, and links.
 - Onboarding jobs can register tenant Telegram bot webhooks automatically when
-  `AGENT_TELEGRAM_WEBHOOK_PUBLIC_BASE_URL` / `telegram.webhookPublicBaseUrl` is
-  configured.
+  `AGENT_WEBHOOK_PUBLIC_BASE_URL` / `webhook.publicBaseUrl` is configured.
 - Onboarding jobs create or update the tenant Telegram Kubernetes Secret using the
   derived `tenant-<tenant-slug>-telegram` name before registering the webhook.
 - Local Helm Postgres defaults now use database `risto_css` and user `ristoh_ai`.

@@ -106,6 +106,34 @@ resource "helm_release" "external_secrets" {
   })]
 }
 
+resource "helm_release" "aws_load_balancer_controller" {
+  name       = "aws-load-balancer-controller"
+  namespace  = "kube-system"
+  repository = "https://aws.github.io/eks-charts"
+  chart      = "aws-load-balancer-controller"
+  version    = "3.5.0"
+  wait       = true
+  timeout    = 1200
+
+  values = [yamlencode({
+    clusterName  = data.terraform_remote_state.platform.outputs.cluster_name
+    region       = var.aws_region
+    vpcId        = data.terraform_remote_state.platform.outputs.vpc_id
+    replicaCount = 1
+    serviceAccount = {
+      create = true
+      name   = "aws-load-balancer-controller"
+      annotations = {
+        "eks.amazonaws.com/role-arn" = data.terraform_remote_state.platform.outputs.load_balancer_controller_role_arn
+      }
+    }
+    resources = {
+      requests = { cpu = "100m", memory = "256Mi" }
+      limits   = { memory = "512Mi" }
+    }
+  })]
+}
+
 resource "helm_release" "gitops_root" {
   name       = "gitops-root"
   namespace  = "argocd"

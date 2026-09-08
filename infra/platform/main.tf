@@ -242,6 +242,61 @@ resource "aws_iam_openid_connect_provider" "eks" {
   thumbprint_list = [data.tls_certificate.eks.certificates[0].sha1_fingerprint]
 }
 
+data "aws_iam_policy_document" "load_balancer_controller_trust" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.eks.arn]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "${replace(aws_eks_cluster.this.identity[0].oidc[0].issuer, "https://", "")}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "${replace(aws_eks_cluster.this.identity[0].oidc[0].issuer, "https://", "")}:sub"
+      values   = ["system:serviceaccount:kube-system:aws-load-balancer-controller"]
+    }
+  }
+}
+
+resource "aws_iam_role" "load_balancer_controller" {
+  name               = "${local.name}-aws-load-balancer-controller"
+  description        = "IRSA role for the AWS Load Balancer Controller"
+  assume_role_policy = data.aws_iam_policy_document.load_balancer_controller_trust.json
+}
+
+data "http" "load_balancer_controller_iam_policy" {
+  url = "https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v3.5.0/docs/install/iam_policy.json"
+}
+
+resource "aws_iam_policy" "load_balancer_controller" {
+  name        = "${local.name}-aws-load-balancer-controller"
+  description = "Official AWS Load Balancer Controller v3.5.0 permissions"
+  policy      = data.http.load_balancer_controller_iam_policy.response_body
+}
+
+resource "aws_iam_role_policy_attachment" "load_balancer_controller" {
+  role       = aws_iam_role.load_balancer_controller.name
+  policy_arn = aws_iam_policy.load_balancer_controller.arn
+}
+
+resource "aws_acm_certificate" "staging" {
+  domain_name       = var.staging_hostname
+  validation_method = "DNS"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  tags = {
+    Name        = var.staging_hostname
+    Environment = "staging"
+  }
+}
+
 data "aws_iam_policy_document" "fargate_trust" {
   statement {
     actions = ["sts:AssumeRole"]

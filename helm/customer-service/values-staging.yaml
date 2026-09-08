@@ -37,6 +37,19 @@ resources:
     cpu: "1"
     memory: 2Gi
 
+ingress:
+  enabled: true
+  host: staging.css.ristoh.co.ke
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+    alb.ingress.kubernetes.io/healthcheck-path: /
+    alb.ingress.kubernetes.io/load-balancer-attributes: routing.http.drop_invalid_header_fields.enabled=true
+    alb.ingress.kubernetes.io/tags: Project=ristoh-ai-chatbot,Environment=staging,ManagedBy=AWSLoadBalancerController
+
 web:
   enabled: true
   image:
@@ -48,7 +61,7 @@ web:
     type: ClusterIP
     port: 8080
     annotations: {}
-  publicBaseUrl: http://localhost:5173
+  publicBaseUrl: https://staging.css.ristoh.co.ke
   apiBaseUrl: /api
   resources:
     requests:

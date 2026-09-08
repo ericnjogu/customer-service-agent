@@ -381,7 +381,7 @@ async def create_container(settings: Settings) -> Container:
         webhook_secret_token_key=settings.telegram_webhook_secret_token_secret_key,
     )
     telegram_webhook_registrar = TelegramBotWebhookRegistrar(
-        public_base_url=settings.telegram_webhook_public_base_url,
+        public_base_url=settings.webhook_public_base_url,
     )
     telegram_bot_info_resolver = TelegramBotApiInfoResolver()
     onboarding_jobs = OnboardingJobService(

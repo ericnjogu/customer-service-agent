@@ -9,3 +9,15 @@ output "data_subnet_ids" { value = values(aws_subnet.data)[*].id }
 output "cluster_security_group_id" { value = aws_eks_cluster.this.vpc_config[0].cluster_security_group_id }
 output "ecr_repository_urls" { value = { for name, repo in aws_ecr_repository.application : name => repo.repository_url } }
 output "kubernetes_operator_role_arn" { value = aws_iam_role.kubernetes_operator.arn }
+output "load_balancer_controller_role_arn" { value = aws_iam_role.load_balancer_controller.arn }
+output "staging_certificate_arn" { value = aws_acm_certificate.staging.arn }
+output "staging_certificate_dns_validation_records" {
+  description = "Create these CNAME records at the authoritative DNS provider for ACM validation."
+  value = [
+    for option in aws_acm_certificate.staging.domain_validation_options : {
+      name  = option.resource_record_name
+      type  = option.resource_record_type
+      value = option.resource_record_value
+    }
+  ]
+}

@@ -12,6 +12,12 @@ service:
   type: ClusterIP
   port: 8000
 
+ingress:
+  enabled: false
+  className: alb
+  host: ""
+  annotations: {}
+
 web:
   enabled: true
   image:
@@ -176,7 +182,11 @@ telegram:
   secretNamespace: ""
   botTokenSecretKey: TELEGRAM_BOT_TOKEN
   webhookSecretTokenSecretKey: TELEGRAM_WEBHOOK_SECRET_TOKEN
-  webhookPublicBaseUrl: ""
+
+webhook:
+  publicBaseUrl: ""
+  publicBaseUrlSecretName: "app-configs"
+  publicBaseUrlSecretKey: AGENT_WEBHOOK_PUBLIC_BASE_URL
 
 whatsapp:
   secretNamespace: ""

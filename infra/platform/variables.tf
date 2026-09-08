@@ -39,3 +39,14 @@ variable "kubernetes_operator_user_name" {
   description = "Name of the IAM user allowed to assume the Kubernetes operator role."
   default     = "tmp-admin"
 }
+
+variable "staging_hostname" {
+  type        = string
+  description = "Public HTTPS hostname for the staging web application."
+  default     = "staging.css.ristoh.co.ke"
+
+  validation {
+    condition     = var.staging_hostname == "staging.css.ristoh.co.ke"
+    error_message = "This platform currently permits only staging.css.ristoh.co.ke."
+  }
+}

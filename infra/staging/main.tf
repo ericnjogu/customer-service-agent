@@ -87,6 +87,15 @@ resource "aws_vpc_security_group_ingress_rule" "workload_kubelet" {
   description                  = "EKS control plane diagnostics to staging Fargate pods"
 }
 
+resource "aws_vpc_security_group_ingress_rule" "workload_api" {
+  security_group_id            = aws_security_group.workload.id
+  referenced_security_group_id = data.terraform_remote_state.platform.outputs.cluster_security_group_id
+  ip_protocol                  = "tcp"
+  from_port                    = 8000
+  to_port                      = 8000
+  description                  = "Staging web pod to API pod"
+}
+
 resource "aws_security_group" "database" {
   name        = "${local.name}-${local.env_name}-database"
   description = "PostgreSQL from staging application pods only"

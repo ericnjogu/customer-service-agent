@@ -37,6 +37,9 @@ resources:
     cpu: "1"
     memory: 2Gi
 
+logging:
+  level: DEBUG
+
 ingress:
   enabled: true
   host: staging.css.ristoh.co.ke

@@ -201,3 +201,45 @@ resource "aws_iam_role_policy" "github_ecr" {
   role   = aws_iam_role.github_ecr.id
   policy = data.aws_iam_policy_document.github_ecr.json
 }
+
+data "aws_iam_policy_document" "github_deploy_trust" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    effect  = "Allow"
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.github.arn]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:sub"
+      values   = ["repo:${var.github_oidc_repository}:ref:refs/heads/main"]
+    }
+  }
+}
+
+resource "aws_iam_role" "github_staging_deploy" {
+  name                 = "${local.project_name}-github-staging-deploy"
+  description          = "Assumed by the main GitHub workflow to deploy only to staging EKS"
+  assume_role_policy   = data.aws_iam_policy_document.github_deploy_trust.json
+  max_session_duration = 3600
+}
+
+data "aws_iam_policy_document" "github_staging_deploy" {
+  statement {
+    sid       = "DescribeDeploymentCluster"
+    actions   = ["eks:DescribeCluster"]
+    resources = ["arn:aws:eks:${var.aws_region}:${var.aws_account_id}:cluster/${local.project_name}"]
+  }
+}
+
+resource "aws_iam_role_policy" "github_staging_deploy" {
+  name   = "DescribeStagingEKSCluster"
+  role   = aws_iam_role.github_staging_deploy.id
+  policy = data.aws_iam_policy_document.github_staging_deploy.json
+}

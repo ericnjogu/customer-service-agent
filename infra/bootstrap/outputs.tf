@@ -9,3 +9,7 @@ output "github_plan_role_arn" {
 output "github_ecr_role_arn" {
   value = aws_iam_role.github_ecr.arn
 }
+
+output "github_staging_deploy_role_arn" {
+  value = aws_iam_role.github_staging_deploy.arn
+}

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: cluster-foundation
+description: Shared EKS resources required by staging outside the application release
+type: application
+version: 0.1.0

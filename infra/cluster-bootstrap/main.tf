@@ -20,60 +20,6 @@ data "terraform_remote_state" "staging" {
   }
 }
 
-resource "helm_release" "argocd" {
-  name             = "argocd"
-  namespace        = "argocd"
-  create_namespace = true
-  repository       = "oci://ghcr.io/argoproj/argo-helm"
-  chart            = "argo-cd"
-  version          = "10.8.0"
-  wait             = true
-  timeout          = 1200
-
-  values = [yamlencode({
-    global = {
-      domain = "argocd.internal"
-    }
-    configs = {
-      cm = {
-        "admin.enabled"                      = "false"
-        "application.resourceTrackingMethod" = "annotation"
-      }
-      params = {
-        "server.insecure" = true
-      }
-    }
-    server = {
-      service = { type = "ClusterIP" }
-      resources = {
-        requests = { cpu = "100m", memory = "128Mi" }
-        limits   = { memory = "256Mi" }
-      }
-    }
-    controller = {
-      resources = {
-        requests = { cpu = "250m", memory = "512Mi" }
-        limits   = { memory = "1Gi" }
-      }
-    }
-    repoServer = {
-      resources = {
-        requests = { cpu = "100m", memory = "256Mi" }
-        limits   = { memory = "512Mi" }
-      }
-    }
-    redis = {
-      resources = {
-        requests = { cpu = "100m", memory = "128Mi" }
-        limits   = { memory = "256Mi" }
-      }
-    }
-    dex            = { enabled = false }
-    notifications  = { enabled = false }
-    applicationSet = { enabled = false }
-  })]
-}
-
 resource "helm_release" "external_secrets" {
   name             = "external-secrets"
   namespace        = "external-secrets"
@@ -134,17 +80,24 @@ resource "helm_release" "aws_load_balancer_controller" {
   })]
 }
 
-resource "helm_release" "gitops_root" {
-  name       = "gitops-root"
-  namespace  = "argocd"
-  chart      = "${path.module}/../../gitops/root-chart"
-  wait       = true
-  timeout    = 600
-  depends_on = [helm_release.argocd, helm_release.external_secrets]
+removed {
+  from = helm_release.gitops_root
+
+  lifecycle {
+    destroy = false
+  }
+}
+
+resource "helm_release" "cluster_foundation" {
+  name           = "cluster-foundation"
+  namespace      = "kube-system"
+  chart          = "${path.module}/../../helm/cluster-foundation"
+  take_ownership = true
+  wait           = true
+  timeout        = 600
+  depends_on     = [helm_release.external_secrets, helm_release.aws_load_balancer_controller]
 
   values = [yamlencode({
-    repository              = "https://github.com/ericnjogu/customer-service-agent.git"
-    revision                = "deploy/staging"
     workloadSecurityGroupId = data.terraform_remote_state.staging.outputs.workload_security_group_id
     fargateLogGroup         = "/aws/eks/ristoh-ai-chatbot/fargate"
     region                  = var.aws_region

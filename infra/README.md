@@ -84,8 +84,10 @@ Merges to `main` build immutable `linux/amd64` images on GitHub-hosted runners a
 the full commit SHA to the two ECR repositories. The deployment job runs on the ephemeral
 CodeBuild runner `ristoh-ai-chatbot-staging-deploy` in the private workload subnets. It
 assumes `ristoh-ai-chatbot-github-staging-deploy`, connects to the private EKS endpoint,
-and runs Helm with the two resolved image digests. CodeBuild terminates the runner after
-the single job; there is no continuously running delivery controller.
+and runs Helm with the two resolved image digests. When no Helm release exists yet, the
+first run reads and adopts the exact digests already running in staging; subsequent runs
+deploy the newly built digests. CodeBuild terminates the runner after the single job;
+there is no continuously running delivery controller.
 
 The OpenTofu-created CodeConnections resource remains `PENDING` until a project
 administrator completes its GitHub App authorization once:

@@ -70,8 +70,8 @@ jobs:
     runs-on: codebuild-ristoh-ai-chatbot-staging-deploy-${{ github.run_id }}-${{ github.run_attempt }}
     env:
       HELM_DRIVER: configmap
-      APP_DIGEST: ${{ needs.build-and-publish.outputs.app-digest }}
-      WEB_DIGEST: ${{ needs.build-and-publish.outputs.web-digest }}
+      BUILT_APP_DIGEST: ${{ needs.build-and-publish.outputs.app-digest }}
+      BUILT_WEB_DIGEST: ${{ needs.build-and-publish.outputs.web-digest }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
@@ -86,13 +86,33 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
       - name: Configure private EKS access
         run: aws eks update-kubeconfig --region "$AWS_REGION" --name ristoh-ai-chatbot --alias ristoh-ai-chatbot-staging-deploy
+      - name: Select deployment digests
+        run: |
+          if helm status aws-csa --namespace customer-service-staging >/dev/null 2>&1; then
+            app_digest="$BUILT_APP_DIGEST"
+            web_digest="$BUILT_WEB_DIGEST"
+          else
+            app_image=$(kubectl get deployment aws-csa-customer-service-app \
+              --namespace customer-service-staging \
+              --output jsonpath='{.spec.template.spec.containers[0].image}')
+            web_image=$(kubectl get deployment aws-csa-customer-service-web \
+              --namespace customer-service-staging \
+              --output jsonpath='{.spec.template.spec.containers[0].image}')
+            app_digest="${app_image##*@}"
+            web_digest="${web_image##*@}"
+            echo "No Helm release found; adopting the currently running image digests"
+          fi
+          case "$app_digest" in sha256:*) ;; *) echo "Invalid application digest" >&2; exit 1 ;; esac
+          case "$web_digest" in sha256:*) ;; *) echo "Invalid web digest" >&2; exit 1 ;; esac
+          echo "DEPLOY_APP_DIGEST=$app_digest" >> "$GITHUB_ENV"
+          echo "DEPLOY_WEB_DIGEST=$web_digest" >> "$GITHUB_ENV"
       - name: Deploy immutable images with Helm
         run: |
           helm upgrade --install aws-csa helm/customer-service \
             --namespace customer-service-staging \
             --values helm/customer-service/values-staging.yaml \
-            --set-string image.digest="$APP_DIGEST" \
-            --set-string web.image.digest="$WEB_DIGEST" \
+            --set-string image.digest="$DEPLOY_APP_DIGEST" \
+            --set-string web.image.digest="$DEPLOY_WEB_DIGEST" \
             --take-ownership \
             --atomic \
             --wait \

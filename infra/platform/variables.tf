@@ -50,3 +50,9 @@ variable "staging_hostname" {
     error_message = "This platform currently permits only staging.css.ristoh.co.ke."
   }
 }
+
+variable "retain_argocd_during_migration" {
+  type        = bool
+  description = "Temporarily retain the argocd Fargate profile until CodeBuild deployment validation succeeds. Never persist this as true."
+  default     = false
+}

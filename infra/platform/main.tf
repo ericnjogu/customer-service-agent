@@ -232,6 +232,13 @@ resource "aws_eks_access_entry" "kubernetes_operator" {
   type              = "STANDARD"
 }
 
+resource "aws_eks_access_entry" "github_staging_deployer" {
+  cluster_name      = aws_eks_cluster.this.name
+  principal_arn     = "arn:aws:iam::${var.aws_account_id}:role/${local.name}-github-staging-deploy"
+  kubernetes_groups = ["${local.name}-staging-deployer"]
+  type              = "STANDARD"
+}
+
 data "tls_certificate" "eks" {
   url = aws_eks_cluster.this.identity[0].oidc[0].issuer
 }
@@ -332,6 +339,192 @@ resource "aws_cloudwatch_log_group" "fargate" {
   retention_in_days = 30
 }
 
+resource "aws_security_group" "codebuild_runner" {
+  name        = "${local.name}-codebuild-runner"
+  description = "Outbound-only access for ephemeral staging deployment runners"
+  vpc_id      = aws_vpc.this.id
+
+  egress {
+    description = "HTTPS to GitHub and AWS service endpoints through NAT"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "cluster_api_from_codebuild" {
+  security_group_id            = aws_eks_cluster.this.vpc_config[0].cluster_security_group_id
+  referenced_security_group_id = aws_security_group.codebuild_runner.id
+  ip_protocol                  = "tcp"
+  from_port                    = 443
+  to_port                      = 443
+  description                  = "Private EKS API access from ephemeral CodeBuild runners"
+}
+
+resource "aws_cloudwatch_log_group" "codebuild_runner" {
+  name              = "/aws/codebuild/${local.name}-staging-deploy"
+  retention_in_days = 30
+}
+
+resource "aws_codeconnections_connection" "github" {
+  name          = "${local.name}-github"
+  provider_type = "GitHub"
+}
+
+data "aws_iam_policy_document" "codebuild_runner_trust" {
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["codebuild.amazonaws.com"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [var.aws_account_id]
+    }
+    condition {
+      test     = "ArnEquals"
+      variable = "aws:SourceArn"
+      values   = ["arn:aws:codebuild:${var.aws_region}:${var.aws_account_id}:project/${local.name}-staging-deploy"]
+    }
+  }
+}
+
+resource "aws_iam_role" "codebuild_runner" {
+  name               = "${local.name}-codebuild-staging-deploy"
+  description        = "Service role for the ephemeral staging GitHub Actions runner"
+  assume_role_policy = data.aws_iam_policy_document.codebuild_runner_trust.json
+}
+
+data "aws_iam_policy_document" "codebuild_runner" {
+  statement {
+    sid = "ManageBuildNetworkInterfaces"
+    actions = [
+      "ec2:CreateNetworkInterface",
+      "ec2:DeleteNetworkInterface",
+      "ec2:DescribeDhcpOptions",
+      "ec2:DescribeNetworkInterfaces",
+      "ec2:DescribeSecurityGroups",
+      "ec2:DescribeSubnets",
+      "ec2:DescribeVpcs"
+    ]
+    resources = ["*"]
+  }
+  statement {
+    sid       = "AuthorizeBuildNetworkInterfaces"
+    actions   = ["ec2:CreateNetworkInterfacePermission"]
+    resources = ["arn:aws:ec2:${var.aws_region}:${var.aws_account_id}:network-interface/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:AuthorizedService"
+      values   = ["codebuild.amazonaws.com"]
+    }
+    condition {
+      test     = "ArnEquals"
+      variable = "ec2:Subnet"
+      values   = [for subnet in aws_subnet.workload : subnet.arn]
+    }
+  }
+  statement {
+    sid = "WriteRunnerLogs"
+    actions = [
+      "logs:CreateLogStream",
+      "logs:PutLogEvents"
+    ]
+    resources = ["${aws_cloudwatch_log_group.codebuild_runner.arn}:*"]
+  }
+  statement {
+    sid = "GetRepositoryConnectionToken"
+    actions = [
+      "codeconnections:GetConnection",
+      "codeconnections:GetConnectionToken"
+    ]
+    resources = [aws_codeconnections_connection.github.arn]
+  }
+  statement {
+    sid       = "UseOnlyApplicationRepository"
+    actions   = ["codeconnections:UseConnection"]
+    resources = [aws_codeconnections_connection.github.arn]
+    condition {
+      test     = "StringEquals"
+      variable = "codeconnections:FullRepositoryId"
+      values   = ["ericnjogu/customer-service-agent"]
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "codebuild_runner" {
+  name   = "RunPrivateGitHubDeploymentJobs"
+  role   = aws_iam_role.codebuild_runner.id
+  policy = data.aws_iam_policy_document.codebuild_runner.json
+}
+
+resource "aws_codebuild_project" "staging_deploy" {
+  name                   = "${local.name}-staging-deploy"
+  description            = "Ephemeral GitHub Actions runner for staging Helm deployments"
+  service_role           = aws_iam_role.codebuild_runner.arn
+  build_timeout          = 30
+  queued_timeout         = 30
+  concurrent_build_limit = 1
+
+  artifacts {
+    type = "NO_ARTIFACTS"
+  }
+
+  source {
+    type            = "GITHUB"
+    location        = "https://github.com/ericnjogu/customer-service-agent.git"
+    git_clone_depth = 1
+    buildspec       = ""
+    auth {
+      type     = "CODECONNECTIONS"
+      resource = aws_codeconnections_connection.github.arn
+    }
+  }
+
+  environment {
+    compute_type                = "BUILD_GENERAL1_SMALL"
+    image                       = "aws/codebuild/standard:7.0"
+    type                        = "LINUX_CONTAINER"
+    image_pull_credentials_type = "CODEBUILD"
+  }
+
+  vpc_config {
+    vpc_id             = aws_vpc.this.id
+    subnets            = values(aws_subnet.workload)[*].id
+    security_group_ids = [aws_security_group.codebuild_runner.id]
+  }
+
+  logs_config {
+    cloudwatch_logs {
+      status      = "ENABLED"
+      group_name  = aws_cloudwatch_log_group.codebuild_runner.name
+      stream_name = "runner"
+    }
+    s3_logs {
+      status = "DISABLED"
+    }
+  }
+}
+
+resource "aws_codebuild_webhook" "staging_deploy" {
+  project_name = aws_codebuild_project.staging_deploy.name
+  build_type   = "BUILD"
+
+  filter_group {
+    filter {
+      type    = "EVENT"
+      pattern = "WORKFLOW_JOB_QUEUED"
+    }
+    filter {
+      type    = "WORKFLOW_NAME"
+      pattern = "^Build and deliver staging$"
+    }
+  }
+}
+
 data "aws_iam_policy_document" "fargate_logging" {
   statement {
     actions = [
@@ -350,7 +543,10 @@ resource "aws_iam_role_policy" "fargate_logging" {
 }
 
 resource "aws_eks_fargate_profile" "this" {
-  for_each = toset(["kube-system", "argocd", "external-secrets", "customer-service-staging"])
+  for_each = toset(concat(
+    ["kube-system", "external-secrets", "customer-service-staging"],
+    var.retain_argocd_during_migration ? ["argocd"] : []
+  ))
 
   cluster_name           = aws_eks_cluster.this.name
   fargate_profile_name   = replace(each.key, "customer-service-", "")

@@ -8,7 +8,7 @@ metadata:
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-{{- if eq .Values.telegram.credentialProvider "kubernetes" }}
+{{- if and (eq .Values.telegram.credentialProvider "kubernetes") .Values.telegram.rbac.create }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

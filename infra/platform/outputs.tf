@@ -11,6 +11,13 @@ output "ecr_repository_urls" { value = { for name, repo in aws_ecr_repository.ap
 output "kubernetes_operator_role_arn" { value = aws_iam_role.kubernetes_operator.arn }
 output "load_balancer_controller_role_arn" { value = aws_iam_role.load_balancer_controller.arn }
 output "staging_certificate_arn" { value = aws_acm_certificate.staging.arn }
+output "codebuild_runner_project_name" { value = aws_codebuild_project.staging_deploy.name }
+output "codebuild_runner_security_group_id" { value = aws_security_group.codebuild_runner.id }
+output "github_connection_arn" {
+  description = "Authorize this PENDING GitHub App connection once in the AWS Console."
+  value       = aws_codeconnections_connection.github.arn
+}
+output "github_connection_status" { value = aws_codeconnections_connection.github.connection_status }
 output "staging_certificate_dns_validation_records" {
   description = "Create these CNAME records at the authoritative DNS provider for ACM validation."
   value = [

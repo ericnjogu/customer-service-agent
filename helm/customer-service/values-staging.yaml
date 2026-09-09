@@ -29,6 +29,10 @@ redis:
     username: ristoh-ai-chatbot-staging-app
     region: eu-central-1
 
+telegram:
+  rbac:
+    create: false
+
 resources:
   requests:
     cpu: 500m

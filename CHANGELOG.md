@@ -9,8 +9,17 @@ This project currently uses increment-based milestones instead of semantic versi
 
 ### Added
 
+- Ephemeral CodeBuild-hosted GitHub Actions runner for private, digest-pinned staging
+  deployments without exposing the EKS API to hosted runner addresses.
+- Namespace-scoped staging deployment identity and cluster-foundation Helm chart for
+  shared logging, External Secrets, workload networking, and application Secret RBAC.
 - Startup logging for seed knowledge loading, mounted KB file discovery, and pgvector
   document upserts, with KB file/upsert traces visible at `INFO`.
+
+### Removed
+
+- Self-managed Argo CD, the generated `deploy/staging` delivery branch workflow, and the
+  dedicated `argocd` Fargate profile.
 - `AGENT_LOG_LEVEL` / `logging.level` configuration for controlling application logs.
 - `AGENT_LOG_FORMAT` / `logging.format` configuration using Python logging `{}` style.
 - Logging filter that suppresses noisy Uvicorn access logs for `/healthz` probes.

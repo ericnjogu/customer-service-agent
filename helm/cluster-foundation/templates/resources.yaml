@@ -47,7 +47,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: aws-csa-operator
-  namespace: argocd
+  namespace: customer-service-staging
 rules:
   - apiGroups: [""]
     resources: ["pods", "services", "endpoints", "events"]
@@ -64,19 +64,12 @@ rules:
   - apiGroups: ["apps"]
     resources: ["deployments", "replicasets", "statefulsets"]
     verbs: ["get", "list", "watch"]
-  - apiGroups: ["argoproj.io"]
-    resources: ["applications"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["argoproj.io"]
-    resources: ["applications"]
-    resourceNames: ["aws-csa-staging"]
-    verbs: ["patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: aws-csa-operator
-  namespace: argocd
+  namespace: customer-service-staging
 subjects:
   - kind: Group
     name: ristoh-ai-chatbot-operator
@@ -89,38 +82,59 @@ roleRef:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: aws-csa-operator
+  name: aws-csa-staging-deployer
   namespace: customer-service-staging
 rules:
   - apiGroups: [""]
-    resources: ["pods", "services", "endpoints", "events"]
+    resources: ["pods"]
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
-    resources: ["pods/log"]
-    verbs: ["get"]
-  - apiGroups: [""]
-    resources: ["pods/portforward"]
-    verbs: ["create"]
-  - apiGroups: ["discovery.k8s.io"]
-    resources: ["endpointslices"]
-    verbs: ["get", "list", "watch"]
+    resources: ["configmaps", "services", "serviceaccounts"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["apps"]
-    resources: ["deployments", "replicasets", "statefulsets"]
-    verbs: ["get", "list", "watch"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: aws-csa-operator
+  name: aws-csa-staging-deployer
   namespace: customer-service-staging
 subjects:
   - kind: Group
-    name: ristoh-ai-chatbot-operator
+    name: ristoh-ai-chatbot-staging-deployer
     apiGroup: rbac.authorization.k8s.io
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: aws-csa-operator
+  name: aws-csa-staging-deployer
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aws-csa-customer-service-secret-writer
+  namespace: customer-service-staging
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aws-csa-customer-service-secret-writer
+  namespace: customer-service-staging
+subjects:
+  - kind: ServiceAccount
+    name: aws-csa-customer-service-app
+    namespace: customer-service-staging
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aws-csa-customer-service-secret-writer
 ---
 apiVersion: vpcresources.k8s.aws/v1beta1
 kind: SecurityGroupPolicy
@@ -213,33 +227,3 @@ spec:
       remoteRef:
         key: ristoh-ai-chatbot/staging/app-configs
         property: AGENT_WEBHOOK_PUBLIC_BASE_URL
----
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: aws-csa-staging
-  namespace: argocd
-  finalizers:
-    - resources-finalizer.argocd.argoproj.io
-spec:
-  project: default
-  source:
-    repoURL: {{ .Values.repository }}
-    targetRevision: {{ .Values.revision }}
-    path: helm/customer-service
-    helm:
-      releaseName: aws-csa
-      valueFiles:
-        - values.yaml
-        - values-staging.yaml
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: customer-service-staging
-  syncPolicy:
-    automated:
-      enabled: true
-      prune: true
-      selfHeal: true
-    syncOptions:
-      - CreateNamespace=true
-      - ServerSideApply=true

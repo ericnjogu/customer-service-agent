@@ -6,14 +6,15 @@ Regional resources are fixed to `eu-central-1`:
 1. `bootstrap`: S3 state storage and repository-scoped GitHub OIDC roles.
 2. `platform`: VPC, EKS/Fargate, add-ons, logging, and the two imported ECR repositories.
 3. `staging`: fresh PostgreSQL, Valkey, security groups, and workload IRSA.
-4. `cluster-bootstrap`: private Argo CD and the staging root Application.
+4. `cluster-bootstrap`: External Secrets Operator, AWS Load Balancer Controller, and
+   shared Kubernetes resources that are not owned by the application release.
 
 The GitHub OIDC trust uses the immutable owner and repository IDs emitted in this
 repository's token subject. If the repository is transferred or recreated, update
 `github_oidc_repository` from the subject observed in CloudTrail before applying the
 bootstrap root.
 
-The cluster-bootstrap root also installs External Secrets Operator 2.8.0. Its controller
+The cluster-bootstrap root installs External Secrets Operator 2.8.0. Its controller
 uses IRSA to read only `ristoh-ai-chatbot/staging/api-keys` and
 `ristoh-ai-chatbot/staging/app-configs` from Secrets Manager. It maintains the `api-keys`
 and `app-configs` Kubernetes Secrets in `customer-service-staging`. The latter contains
@@ -39,9 +40,8 @@ kubectl config set-context ristoh-ai-chatbot-operator --namespace customer-servi
 ```
 
 The operator can inspect pods, workloads, services, endpoints and events; read pod logs;
-and port-forward pods in `argocd` and `customer-service-staging`. It can patch only the
-`aws-csa-staging` Argo CD Application. It cannot read Secrets, exec into pods, administer
-RBAC or namespaces, or create/delete workloads.
+and port-forward pods in `customer-service-staging`. It cannot read Secrets, exec into
+pods, administer RBAC or namespaces, or create/delete workloads.
 
 Create an untracked `backend.hcl` in each root from its example. Create
 `infra/platform/operator.auto.tfvars` containing the operator's current restricted public
@@ -77,6 +77,77 @@ External Secrets-managed `api-keys` Secret without checking values into Git.
 The ECR `import` blocks intentionally transfer only `customer-service` and
 `customer-service-web`. OpenTofu never adopts or destroys the old eksctl/CloudFormation
 platform.
+
+## Staging delivery
+
+Merges to `main` build immutable `linux/amd64` images on GitHub-hosted runners and push
+the full commit SHA to the two ECR repositories. The deployment job runs on the ephemeral
+CodeBuild runner `ristoh-ai-chatbot-staging-deploy` in the private workload subnets. It
+assumes `ristoh-ai-chatbot-github-staging-deploy`, connects to the private EKS endpoint,
+and runs Helm with the two resolved image digests. When no Helm release exists yet, the
+first run reads and adopts the exact digests already running in staging; subsequent runs
+deploy the newly built digests. CodeBuild terminates the runner after the single job;
+there is no continuously running delivery controller.
+
+The OpenTofu-created CodeConnections resource remains `PENDING` until a project
+administrator completes its GitHub App authorization once:
+
+1. Apply `bootstrap` to create the deployment role. Initialize `platform`, then create
+   only the pending connection and copy its ARN:
+
+   ```bash
+   AWS_PROFILE=root-infra-bootstrap tofu -chdir=infra/platform apply \
+     -target=aws_codeconnections_connection.github
+   ```
+2. In AWS Console, select `eu-central-1`, then open Developer Tools → Settings →
+   Connections. Select the pending connection and choose **Update pending connection**
+   to authorize the AWS Connector for GitHub.
+3. In GitHub, verify the AWS Connector for GitHub is installed—not merely listed under
+   authorized applications—and grant it access only to
+   `ericnjogu/customer-service-agent`. If the connection is already `AVAILABLE` but
+   CodeBuild cannot create its webhook, install it directly from
+   <https://github.com/apps/aws-connector-for-github/installations/new>.
+4. Confirm the connection status is `AVAILABLE`, then run a reviewed `platform` plan and
+   apply with `-var=retain_argocd_during_migration=true`. This creates the runner and
+   webhook without deleting the active Argo Fargate profile.
+
+The deployment role is mapped only to the `ristoh-ai-chatbot-staging-deployer` Kubernetes
+group. Helm uses the ConfigMap storage driver so CI has no permission to read Kubernetes
+Secrets. Application RBAC for tenant Telegram Secret access is owned by the locally
+applied cluster-foundation chart instead of the CI-managed application chart.
+
+Manual rollback uses the administrator context and the same Helm driver:
+
+```bash
+HELM_DRIVER=configmap helm --kube-context ristoh-ai-chatbot-admin rollback aws-csa \
+  --namespace customer-service-staging
+```
+
+## Argo CD retirement
+
+Do not remove Argo until the CodeConnections status is `AVAILABLE`, the CodeBuild webhook
+exists, and one deployment job has successfully adopted the current `aws-csa` resources.
+The application deployment uses `--take-ownership`, `--atomic`, and `--wait` so the first
+successful run establishes Helm ownership without changing the deployment mechanism
+mid-rollout.
+
+After that validation:
+
+1. Remove the finalizer from `argocd/aws-csa-staging`, then delete that Application. This
+   preserves the staging resources.
+2. Apply `cluster-bootstrap`. Its `removed` block forgets the old `gitops-root` release
+   without uninstalling shared objects, the new `cluster-foundation` release adopts those
+   objects, and the Argo Helm release is uninstalled.
+3. Delete the empty `argocd` namespace and remaining `argoproj.io` CRDs with the admin
+   context.
+4. Apply `platform` normally, without the migration variable, to delete only the
+   `argocd` Fargate profile.
+5. Verify staging pods, External Secrets, the load balancer controller, public web URL,
+   and `/api/healthz` before considering the migration complete.
+
+If the CodeBuild deployment fails, leave Argo installed and correct the replacement path
+before performing any retirement step. OpenTofu applies remain local; GitHub Actions can
+deploy the application but cannot apply infrastructure.
 
 ## Public staging endpoint
 

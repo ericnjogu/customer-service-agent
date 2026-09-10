@@ -55,20 +55,20 @@ jobs:
         run: |
           helm lint helm/customer-service \
             --values helm/customer-service/values-staging.yaml \
-            --set-file prompts.system=app/prompt_templates/system.txt \
-            --set-file prompts.questionPlanning=app/prompt_templates/question-planning.txt \
-            --set-file prompts.websiteAnalysis=app/prompt_templates/website-analysis.txt \
-            --set-file prompts.websiteResearch=app/prompt_templates/website-research.txt
+            --set-file prompts.system=app/prompt_templates/system.md \
+            --set-file prompts.questionPlanning=app/prompt_templates/question-planning.md \
+            --set-file prompts.websiteAnalysis=app/prompt_templates/website-analysis.md \
+            --set-file prompts.websiteResearch=app/prompt_templates/website-research.md
       - run: helm lint helm/cluster-foundation --set workloadSecurityGroupId=sg-0123456789abcdef0
       - name: Render digest-pinned staging release
         run: |
           helm template aws-csa helm/customer-service \
             --namespace customer-service-staging \
             --values helm/customer-service/values-staging.yaml \
-            --set-file prompts.system=app/prompt_templates/system.txt \
-            --set-file prompts.questionPlanning=app/prompt_templates/question-planning.txt \
-            --set-file prompts.websiteAnalysis=app/prompt_templates/website-analysis.txt \
-            --set-file prompts.websiteResearch=app/prompt_templates/website-research.txt \
+            --set-file prompts.system=app/prompt_templates/system.md \
+            --set-file prompts.questionPlanning=app/prompt_templates/question-planning.md \
+            --set-file prompts.websiteAnalysis=app/prompt_templates/website-analysis.md \
+            --set-file prompts.websiteResearch=app/prompt_templates/website-research.md \
             > /tmp/aws-csa.yaml
           grep -q '371664303664.dkr.ecr.eu-central-1.amazonaws.com/customer-service@sha256:' /tmp/aws-csa.yaml
           grep -q '371664303664.dkr.ecr.eu-central-1.amazonaws.com/customer-service-web@sha256:' /tmp/aws-csa.yaml

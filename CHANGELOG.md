@@ -16,6 +16,10 @@ This project currently uses increment-based milestones instead of semantic versi
 - Startup logging for seed knowledge loading, mounted KB file discovery, and pgvector
   document upserts, with KB file/upsert traces visible at `INFO`.
 
+### Changed
+
+- CoreDNS and Metrics Server run a single staging replica each to reduce Fargate cost.
+
 ### Removed
 
 - Self-managed Argo CD, the generated `deploy/staging` delivery branch workflow, and the

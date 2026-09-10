@@ -1,0 +1,17 @@
+{{- if .Values.prompts.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "customer-service.fullname" . }}-prompts
+  labels:
+    {{- include "customer-service.labels" . | nindent 4 }}
+data:
+  system.txt: |-
+    {{- required "prompts.system is required when prompts.enabled=true" .Values.prompts.system | nindent 4 }}
+  question-planning.txt: |-
+    {{- required "prompts.questionPlanning is required when prompts.enabled=true" .Values.prompts.questionPlanning | nindent 4 }}
+  website-analysis.txt: |-
+    {{- required "prompts.websiteAnalysis is required when prompts.enabled=true" .Values.prompts.websiteAnalysis | nindent 4 }}
+  website-research.txt: |-
+    {{- required "prompts.websiteResearch is required when prompts.enabled=true" .Values.prompts.websiteResearch | nindent 4 }}
+{{- end }}

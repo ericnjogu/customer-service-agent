@@ -9,6 +9,10 @@ This project currently uses increment-based milestones instead of semantic versi
 
 ### Added
 
+- File-backed LLM prompt templates rendered into a staging ConfigMap by Helm, with
+  automatic pod rollout when prompt content changes.
+- Opt-in live answer-prompt evaluations for greeting, contact-detail, and unavailable
+  human-handover behavior using the production LiteLLM integration.
 - Ephemeral CodeBuild-hosted GitHub Actions runner for private, digest-pinned staging
   deployments without exposing the EKS API to hosted runner addresses.
 - Namespace-scoped staging deployment identity and cluster-foundation Helm chart for

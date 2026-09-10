@@ -19,6 +19,7 @@ from app.adapters.llm import (
     langsmith_client,
     langsmith_runnable_config,
     langsmith_tracing_enabled,
+    load_prompt,
     normalize_website_analysis_payload,
     tavily_project_id,
     tenant_trace_metadata,
@@ -36,6 +37,25 @@ from app.models import (
     TenantConfig,
     WebsiteAnalysisResult,
 )
+
+
+def test_load_prompt_uses_configured_file(monkeypatch, tmp_path) -> None:
+    prompt_file = tmp_path / "custom-prompt.txt"
+    prompt_file.write_text("  Custom prompt instructions.\n", encoding="utf-8")
+    monkeypatch.setenv("AGENT_TEST_PROMPT_PATH", str(prompt_file))
+
+    assert load_prompt("system.txt", "AGENT_TEST_PROMPT_PATH") == (
+        "Custom prompt instructions."
+    )
+
+
+def test_load_prompt_rejects_empty_configured_file(monkeypatch, tmp_path) -> None:
+    prompt_file = tmp_path / "empty-prompt.txt"
+    prompt_file.write_text("\n", encoding="utf-8")
+    monkeypatch.setenv("AGENT_TEST_PROMPT_PATH", str(prompt_file))
+
+    with pytest.raises(ValueError, match="Prompt file is empty"):
+        load_prompt("system.txt", "AGENT_TEST_PROMPT_PATH")
 
 
 async def test_runtime_web_search_defaults_to_noop_without_platform_api_key(
@@ -662,7 +682,9 @@ async def test_llm_answer_generator_instructs_model_to_use_customer_name() -> No
 
     system_prompt = chat_model.last_messages[0].content
     prompt = chat_model.last_messages[1].content
-    assert "If customer_name is provided" in system_prompt
+    assert "should_greet_customer is true" in system_prompt
+    assert "use customer_name" in system_prompt
+    assert "If should_greet_customer is false, do not greet" in system_prompt
     assert "Do not invent a customer name" in system_prompt
     assert "customer_name: Ada" in prompt
 

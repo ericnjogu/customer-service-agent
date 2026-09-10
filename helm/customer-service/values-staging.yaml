@@ -33,6 +33,9 @@ telegram:
   rbac:
     create: false
 
+prompts:
+  enabled: true
+
 resources:
   requests:
     cpu: 500m

@@ -51,16 +51,31 @@ jobs:
       - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
         with:
           version: v3.18.6
-      - run: helm lint helm/customer-service -f helm/customer-service/values-staging.yaml
+      - name: Lint staging chart
+        run: |
+          helm lint helm/customer-service \
+            --values helm/customer-service/values-staging.yaml \
+            --set-file prompts.system=app/prompt_templates/system.txt \
+            --set-file prompts.questionPlanning=app/prompt_templates/question-planning.txt \
+            --set-file prompts.websiteAnalysis=app/prompt_templates/website-analysis.txt \
+            --set-file prompts.websiteResearch=app/prompt_templates/website-research.txt
       - run: helm lint helm/cluster-foundation --set workloadSecurityGroupId=sg-0123456789abcdef0
       - name: Render digest-pinned staging release
         run: |
           helm template aws-csa helm/customer-service \
             --namespace customer-service-staging \
-            -f helm/customer-service/values-staging.yaml > /tmp/aws-csa.yaml
+            --values helm/customer-service/values-staging.yaml \
+            --set-file prompts.system=app/prompt_templates/system.txt \
+            --set-file prompts.questionPlanning=app/prompt_templates/question-planning.txt \
+            --set-file prompts.websiteAnalysis=app/prompt_templates/website-analysis.txt \
+            --set-file prompts.websiteResearch=app/prompt_templates/website-research.txt \
+            > /tmp/aws-csa.yaml
           grep -q '371664303664.dkr.ecr.eu-central-1.amazonaws.com/customer-service@sha256:' /tmp/aws-csa.yaml
           grep -q '371664303664.dkr.ecr.eu-central-1.amazonaws.com/customer-service-web@sha256:' /tmp/aws-csa.yaml
           grep -q 'arn:aws:iam::371664303664:role/ristoh-ai-chatbot-staging-workload' /tmp/aws-csa.yaml
+          grep -q 'name: aws-csa-customer-service-prompts' /tmp/aws-csa.yaml
+          grep -q 'AGENT_SYSTEM_PROMPT_PATH' /tmp/aws-csa.yaml
+          grep -q 'checksum/prompts:' /tmp/aws-csa.yaml
           ! grep -q 'kind: Role' /tmp/aws-csa.yaml
       - name: Render cluster foundation
         run: |

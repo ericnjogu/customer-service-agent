@@ -208,6 +208,14 @@ logging:
   level: INFO
   format: "{asctime} - {levelname}: {name}: {message}"
 
+prompts:
+  enabled: false
+  mountPath: /etc/aws-csa/prompts
+  system: ""
+  questionPlanning: ""
+  websiteAnalysis: ""
+  websiteResearch: ""
+
 langsmith:
   LANGSMITH_TRACING: "true"
   LANGSMITH_TRACING_V2: "true"

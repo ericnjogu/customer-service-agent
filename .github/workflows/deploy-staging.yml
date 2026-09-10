@@ -111,6 +111,10 @@ jobs:
           helm upgrade --install aws-csa helm/customer-service \
             --namespace customer-service-staging \
             --values helm/customer-service/values-staging.yaml \
+            --set-file prompts.system=app/prompt_templates/system.txt \
+            --set-file prompts.questionPlanning=app/prompt_templates/question-planning.txt \
+            --set-file prompts.websiteAnalysis=app/prompt_templates/website-analysis.txt \
+            --set-file prompts.websiteResearch=app/prompt_templates/website-research.txt \
             --set-string image.digest="$DEPLOY_APP_DIGEST" \
             --set-string web.image.digest="$DEPLOY_WEB_DIGEST" \
             --take-ownership \

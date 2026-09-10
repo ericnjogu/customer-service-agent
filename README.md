@@ -1022,12 +1022,46 @@ Application configuration uses the `AGENT_` prefix. LangSmith uses its native
 | `AGENT_WHATSAPP_GRAPH_API_VERSION` | `v20.0` | Default Meta Graph API version used when the tenant Secret does not provide one |
 | `AGENT_LOG_LEVEL` | `INFO` | Application log level, for example `DEBUG` |
 | `AGENT_LOG_FORMAT` | `{asctime} - {levelname}:{name}:{message}` | Python logging format using `{}` style |
+| `AGENT_SYSTEM_PROMPT_PATH` | packaged `system.txt` | Optional path overriding the answer-generation system prompt |
+| `AGENT_QUESTION_PLANNING_PROMPT_PATH` | packaged `question-planning.txt` | Optional path overriding the question-planning prompt |
+| `AGENT_WEBSITE_ANALYSIS_PROMPT_PATH` | packaged `website-analysis.txt` | Optional path overriding the website-analysis prompt |
+| `AGENT_WEBSITE_RESEARCH_PROMPT_PATH` | packaged `website-research.txt` | Optional path overriding the website-research query prompt |
 | `LANGSMITH_TRACING` | `true` | Enable LangSmith tracing |
 | `LANGSMITH_TRACING_V2` | `true` | Enable LangSmith tracing v2 |
 | `LANGCHAIN_TRACING_V2` | `true` | Legacy LangChain tracing v2 env var kept for SDK compatibility |
 | `LANGSMITH_ENDPOINT` | `https://eu.api.smith.langchain.com` | LangSmith endpoint |
 | `LANGSMITH_PROJECT` | `customer-service-local` | Fallback LangSmith trace project used when tenant config does not provide `langsmith_project` |
 | `LANGSMITH_WORKSPACE_ID` | unset | LangSmith workspace id; required for org-scoped API keys or keys linked to multiple workspaces |
+
+The canonical prompts live in `app/prompt_templates/`. Staging enables the chart's
+`prompts` ConfigMap and supplies those files with Helm's `--set-file` support:
+
+```bash
+helm upgrade --install aws-csa helm/customer-service \
+  --set-file prompts.system=app/prompt_templates/system.txt \
+  --set-file prompts.questionPlanning=app/prompt_templates/question-planning.txt \
+  --set-file prompts.websiteAnalysis=app/prompt_templates/website-analysis.txt \
+  --set-file prompts.websiteResearch=app/prompt_templates/website-research.txt
+```
+
+The ConfigMap is mounted read-only at `/etc/aws-csa/prompts`. Its checksum is part of the
+Pod template, so changing any prompt produces a normal rolling deployment. When
+`prompts.enabled=false`, the application reads the same templates packaged in its image.
+`scripts/deploy-local.sh` enables the ConfigMap automatically and accepts
+`SYSTEM_PROMPT_PATH`, `QUESTION_PLANNING_PROMPT_PATH`, `WEBSITE_ANALYSIS_PROMPT_PATH`, and
+`WEBSITE_RESEARCH_PROMPT_PATH` overrides when a local deployment should use different
+files.
+
+The answer prompt has an opt-in live evaluation covering greeting decisions, contact-detail
+leakage, and unavailable human handover. It uses the production LiteLLM client and is
+billable; ordinary test runs skip it:
+
+```bash
+AGENT_RUN_LIVE_OPENAI_TESTS=true \
+OPENAI_API_KEY="$OPENAI_API_KEY" \
+AGENT_LLM_MODEL="<model>" \
+uv run pytest tests/test_llm_answer_live.py -q -s --log-cli-level=INFO
+```
 
 The Helm chart also accepts these n8n values:
 

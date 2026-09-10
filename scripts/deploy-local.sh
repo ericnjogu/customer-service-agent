@@ -54,6 +54,21 @@ AGENT_PROVIDER_PROJECT_PROVISIONER="${AGENT_PROVIDER_PROJECT_PROVISIONER:-api}"
 AGENT_OPENAI_ADMIN_KEY_SECRET_NAME="${AGENT_OPENAI_ADMIN_KEY_SECRET_NAME:-api-keys}"
 AGENT_OPENAI_ADMIN_KEY_SECRET_KEY="${AGENT_OPENAI_ADMIN_KEY_SECRET_KEY:-OPENAI_ADMIN_KEY}"
 AGENT_WEBHOOK_PUBLIC_BASE_URL="${AGENT_WEBHOOK_PUBLIC_BASE_URL:-}"
+SYSTEM_PROMPT_PATH="${SYSTEM_PROMPT_PATH:-${REPO_ROOT}/app/prompt_templates/system.txt}"
+QUESTION_PLANNING_PROMPT_PATH="${QUESTION_PLANNING_PROMPT_PATH:-${REPO_ROOT}/app/prompt_templates/question-planning.txt}"
+WEBSITE_ANALYSIS_PROMPT_PATH="${WEBSITE_ANALYSIS_PROMPT_PATH:-${REPO_ROOT}/app/prompt_templates/website-analysis.txt}"
+WEBSITE_RESEARCH_PROMPT_PATH="${WEBSITE_RESEARCH_PROMPT_PATH:-${REPO_ROOT}/app/prompt_templates/website-research.txt}"
+
+for prompt_path in \
+  "${SYSTEM_PROMPT_PATH}" \
+  "${QUESTION_PLANNING_PROMPT_PATH}" \
+  "${WEBSITE_ANALYSIS_PROMPT_PATH}" \
+  "${WEBSITE_RESEARCH_PROMPT_PATH}"; do
+  if [[ ! -r "${prompt_path}" ]]; then
+    echo "Prompt file is not readable: ${prompt_path}" >&2
+    exit 1
+  fi
+done
 
 if [[ "${AGENT_EMAIL_PROVIDER}" == "resend" && -z "${AGENT_EMAIL_FROM}" ]]; then
   echo "AGENT_EMAIL_FROM is required when AGENT_EMAIL_PROVIDER=resend." >&2
@@ -125,6 +140,11 @@ helm_args=(
   --set "providerProjects.provisioner=${AGENT_PROVIDER_PROJECT_PROVISIONER}"
   --set "n8n.enabled=${N8N_ENABLED}"
   --set "logging.level=${LOG_LEVEL}"
+  --set "prompts.enabled=true"
+  --set-file "prompts.system=${SYSTEM_PROMPT_PATH}"
+  --set-file "prompts.questionPlanning=${QUESTION_PLANNING_PROMPT_PATH}"
+  --set-file "prompts.websiteAnalysis=${WEBSITE_ANALYSIS_PROMPT_PATH}"
+  --set-file "prompts.websiteResearch=${WEBSITE_RESEARCH_PROMPT_PATH}"
 )
 
 if [[ -n "${AGENT_PLATFORM_WEB_SEARCH_API_KEY_SECRET_NAME}" ]]; then

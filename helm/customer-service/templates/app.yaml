@@ -247,13 +247,13 @@ spec:
               value: {{ .Values.logging.format | quote }}
             {{- if .Values.prompts.enabled }}
             - name: AGENT_SYSTEM_PROMPT_PATH
-              value: {{ printf "%s/system.txt" .Values.prompts.mountPath | quote }}
+              value: {{ printf "%s/system.md" .Values.prompts.mountPath | quote }}
             - name: AGENT_QUESTION_PLANNING_PROMPT_PATH
-              value: {{ printf "%s/question-planning.txt" .Values.prompts.mountPath | quote }}
+              value: {{ printf "%s/question-planning.md" .Values.prompts.mountPath | quote }}
             - name: AGENT_WEBSITE_ANALYSIS_PROMPT_PATH
-              value: {{ printf "%s/website-analysis.txt" .Values.prompts.mountPath | quote }}
+              value: {{ printf "%s/website-analysis.md" .Values.prompts.mountPath | quote }}
             - name: AGENT_WEBSITE_RESEARCH_PROMPT_PATH
-              value: {{ printf "%s/website-research.txt" .Values.prompts.mountPath | quote }}
+              value: {{ printf "%s/website-research.md" .Values.prompts.mountPath | quote }}
             {{- end }}
             - name: LANGSMITH_TRACING
               value: {{ .Values.langsmith.LANGSMITH_TRACING | quote }}

@@ -6,12 +6,12 @@ metadata:
   labels:
     {{- include "customer-service.labels" . | nindent 4 }}
 data:
-  system.txt: |-
+  system.md: |-
     {{- required "prompts.system is required when prompts.enabled=true" .Values.prompts.system | nindent 4 }}
-  question-planning.txt: |-
+  question-planning.md: |-
     {{- required "prompts.questionPlanning is required when prompts.enabled=true" .Values.prompts.questionPlanning | nindent 4 }}
-  website-analysis.txt: |-
+  website-analysis.md: |-
     {{- required "prompts.websiteAnalysis is required when prompts.enabled=true" .Values.prompts.websiteAnalysis | nindent 4 }}
-  website-research.txt: |-
+  website-research.md: |-
     {{- required "prompts.websiteResearch is required when prompts.enabled=true" .Values.prompts.websiteResearch | nindent 4 }}
 {{- end }}

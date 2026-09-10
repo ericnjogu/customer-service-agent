@@ -63,13 +63,13 @@ def load_prompt(filename: str, environment_variable: str) -> str:
     return prompt
 
 
-SYSTEM_PROMPT = load_prompt("system.txt", "AGENT_SYSTEM_PROMPT_PATH")
+SYSTEM_PROMPT = load_prompt("system.md", "AGENT_SYSTEM_PROMPT_PATH")
 QUESTION_PLANNING_PROMPT = load_prompt(
-    "question-planning.txt",
+    "question-planning.md",
     "AGENT_QUESTION_PLANNING_PROMPT_PATH",
 )
 WEBSITE_ANALYSIS_PROMPT = load_prompt(
-    "website-analysis.txt",
+    "website-analysis.md",
     "AGENT_WEBSITE_ANALYSIS_PROMPT_PATH",
 )
 
@@ -80,7 +80,7 @@ WEBSITE_ANALYSIS_RESPONSE_FORMAT = {
 }
 
 WEBSITE_RESEARCH_PROMPT = load_prompt(
-    "website-research.txt",
+    "website-research.md",
     "AGENT_WEBSITE_RESEARCH_PROMPT_PATH",
 )
 

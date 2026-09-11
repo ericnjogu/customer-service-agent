@@ -18,6 +18,8 @@ pytestmark = pytest.mark.skipif(
     reason="set AGENT_RUN_LIVE_OPENAI_TESTS=true to run live OpenAI integration tests",
 )
 
+FACEBOOK_LINK = "https://www.facebook.com/harborpinebakery"
+INSTAGRAM_LINK = "https://www.instagram.com/harborpinebakery"
 CONTACT_EMAIL = "hello@harborpine.example"
 CONTACT_PHONE = "+254 700 123 456"
 CONVERSATION_ID = "00000000-0000-0000-0000-000000000042"
@@ -43,6 +45,7 @@ UNAVAILABLE_PHRASES = (
     "unavailable",
     "cannot connect",
     "can't connect",
+    "aren't available",
     "unable to connect",
     "do not offer",
     "don't offer",
@@ -98,7 +101,8 @@ def tenant_config(*, handover_available: bool = False) -> TenantConfig:
         "harbor-pine",
         business_summary=(
             "Harbor & Pine is a neighborhood bakery in Nairobi. "
-            f"Contact details are {CONTACT_EMAIL} and {CONTACT_PHONE}. {handover}"
+            f"Contact details are {CONTACT_EMAIL} and {CONTACT_PHONE}. {handover} "
+            f"Facebook link: {FACEBOOK_LINK}. Instagram link: {INSTAGRAM_LINK}."
         ),
     )
 
@@ -173,12 +177,12 @@ LIVE_CASES = (
             greeting_reason="active conversation; avoid repeated greeting",
         ),
         tenant_config=tenant_config(),
-        forbidden_literals=(CONTACT_EMAIL, CONTACT_PHONE),
+        forbidden_literals=(CONTACT_EMAIL, CONTACT_PHONE, FACEBOOK_LINK, INSTAGRAM_LINK),
         forbidden_phrases=("contact us", "get in touch", "reach us"),
     ),
     LiveAnswerCase(
         name="does_not_repeat_contact_information_from_history",
-        query="What time do you close today?",
+        query="What is the nature of your business?",
         documents=[document("On weekdays, the bakery closes at 6:00 PM.", "hours.md")],
         conversation_history=[
             stored_message(
@@ -295,7 +299,7 @@ async def test_live_llm_answer_prompt_behavior(case: LiveAnswerCase) -> None:
         tenant_config=case.tenant_config,
     )
     answer = result.answer.strip()
-    normalized_answer = answer.casefold()
+    normalized_answer = answer.casefold().replace("’", "'").replace("‘", "'")
     logger.info(
         "Live answer prompt result case=%s model=%s answer_found=%s grounded=%s "
         "confidence=%.3f answer=%s",

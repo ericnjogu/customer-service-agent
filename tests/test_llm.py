@@ -44,7 +44,7 @@ def test_load_prompt_uses_configured_file(monkeypatch, tmp_path) -> None:
     prompt_file.write_text("  Custom prompt instructions.\n", encoding="utf-8")
     monkeypatch.setenv("AGENT_TEST_PROMPT_PATH", str(prompt_file))
 
-    assert load_prompt("system.txt", "AGENT_TEST_PROMPT_PATH") == (
+    assert load_prompt("system.md", "AGENT_TEST_PROMPT_PATH") == (
         "Custom prompt instructions."
     )
 
@@ -55,7 +55,7 @@ def test_load_prompt_rejects_empty_configured_file(monkeypatch, tmp_path) -> Non
     monkeypatch.setenv("AGENT_TEST_PROMPT_PATH", str(prompt_file))
 
     with pytest.raises(ValueError, match="Prompt file is empty"):
-        load_prompt("system.txt", "AGENT_TEST_PROMPT_PATH")
+        load_prompt("system.md", "AGENT_TEST_PROMPT_PATH")
 
 
 async def test_runtime_web_search_defaults_to_noop_without_platform_api_key(

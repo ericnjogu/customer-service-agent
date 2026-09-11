@@ -1022,10 +1022,10 @@ Application configuration uses the `AGENT_` prefix. LangSmith uses its native
 | `AGENT_WHATSAPP_GRAPH_API_VERSION` | `v20.0` | Default Meta Graph API version used when the tenant Secret does not provide one |
 | `AGENT_LOG_LEVEL` | `INFO` | Application log level, for example `DEBUG` |
 | `AGENT_LOG_FORMAT` | `{asctime} - {levelname}:{name}:{message}` | Python logging format using `{}` style |
-| `AGENT_SYSTEM_PROMPT_PATH` | packaged `system.txt` | Optional path overriding the answer-generation system prompt |
-| `AGENT_QUESTION_PLANNING_PROMPT_PATH` | packaged `question-planning.txt` | Optional path overriding the question-planning prompt |
-| `AGENT_WEBSITE_ANALYSIS_PROMPT_PATH` | packaged `website-analysis.txt` | Optional path overriding the website-analysis prompt |
-| `AGENT_WEBSITE_RESEARCH_PROMPT_PATH` | packaged `website-research.txt` | Optional path overriding the website-research query prompt |
+| `AGENT_SYSTEM_PROMPT_PATH` | packaged `system.md` | Optional path overriding the answer-generation system prompt |
+| `AGENT_QUESTION_PLANNING_PROMPT_PATH` | packaged `question-planning.md` | Optional path overriding the question-planning prompt |
+| `AGENT_WEBSITE_ANALYSIS_PROMPT_PATH` | packaged `website-analysis.md` | Optional path overriding the website-analysis prompt |
+| `AGENT_WEBSITE_RESEARCH_PROMPT_PATH` | packaged `website-research.md` | Optional path overriding the website-research query prompt |
 | `LANGSMITH_TRACING` | `true` | Enable LangSmith tracing |
 | `LANGSMITH_TRACING_V2` | `true` | Enable LangSmith tracing v2 |
 | `LANGCHAIN_TRACING_V2` | `true` | Legacy LangChain tracing v2 env var kept for SDK compatibility |
@@ -1038,10 +1038,10 @@ The canonical prompts live in `app/prompt_templates/`. Staging enables the chart
 
 ```bash
 helm upgrade --install aws-csa helm/customer-service \
-  --set-file prompts.system=app/prompt_templates/system.txt \
-  --set-file prompts.questionPlanning=app/prompt_templates/question-planning.txt \
-  --set-file prompts.websiteAnalysis=app/prompt_templates/website-analysis.txt \
-  --set-file prompts.websiteResearch=app/prompt_templates/website-research.txt
+  --set-file prompts.system=app/prompt_templates/system.md \
+  --set-file prompts.questionPlanning=app/prompt_templates/question-planning.md \
+  --set-file prompts.websiteAnalysis=app/prompt_templates/website-analysis.md \
+  --set-file prompts.websiteResearch=app/prompt_templates/website-research.md
 ```
 
 The ConfigMap is mounted read-only at `/etc/aws-csa/prompts`. Its checksum is part of the

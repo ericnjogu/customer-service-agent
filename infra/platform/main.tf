@@ -595,7 +595,14 @@ resource "aws_eks_addon" "this" {
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "PRESERVE"
   service_account_role_arn    = each.key == "vpc-cni" ? aws_iam_role.vpc_cni.arn : null
-  configuration_values        = each.key == "coredns" ? jsonencode({ computeType = "Fargate" }) : null
+  configuration_values = (
+    each.key == "coredns" ? jsonencode({
+      computeType  = "Fargate"
+      replicaCount = 1
+      }) : each.key == "metrics-server" ? jsonencode({
+      replicas = 1
+    }) : null
+  )
 
   depends_on = [aws_eks_fargate_profile.this, aws_iam_role_policy_attachment.vpc_cni]
 }

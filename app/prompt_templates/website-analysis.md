@@ -13,8 +13,7 @@ Return JSON only with:
   - business_phone: string
   - business_email: string
   - google_place_url: string or null
-- business_summary: markdown string containing a concise business summary and
-  FAQ-style facts discovered from the website information
+- business_summary: markdown string containing a concise business summary from the website information
 - contact_info: array of contact-point objects with:
   - kind: string
   - label: string

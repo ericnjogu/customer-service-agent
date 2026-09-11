@@ -76,6 +76,9 @@ jobs:
           grep -q 'name: aws-csa-customer-service-prompts' /tmp/aws-csa.yaml
           grep -q 'AGENT_SYSTEM_PROMPT_PATH' /tmp/aws-csa.yaml
           grep -q 'checksum/prompts:' /tmp/aws-csa.yaml
+          grep -q 'location = /healthz' /tmp/aws-csa.yaml
+          grep -q 'access_log off;' /tmp/aws-csa.yaml
+          grep -q 'alb.ingress.kubernetes.io/healthcheck-path: /healthz' /tmp/aws-csa.yaml
           ! grep -q 'kind: Role' /tmp/aws-csa.yaml
       - name: Render cluster foundation
         run: |

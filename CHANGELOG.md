@@ -22,6 +22,8 @@ This project currently uses increment-based milestones instead of semantic versi
 
 ### Changed
 
+- Web Kubernetes and ALB health checks use a dedicated nginx `/healthz` endpoint with
+  access logging disabled, avoiding repetitive probe records in CloudWatch.
 - EKS staging workloads now run on one On-Demand `c6a.large` managed EC2 node with pod
   security-group trunking and AWS for Fluent Bit container logging.
 - CoreDNS and Metrics Server run a single staging replica each to reduce Fargate cost.

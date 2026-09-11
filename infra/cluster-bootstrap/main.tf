@@ -80,6 +80,39 @@ resource "helm_release" "aws_load_balancer_controller" {
   })]
 }
 
+resource "helm_release" "aws_for_fluent_bit" {
+  name       = "aws-for-fluent-bit"
+  namespace  = "kube-system"
+  repository = "https://aws.github.io/eks-charts"
+  chart      = "aws-for-fluent-bit"
+  version    = "0.2.0"
+  wait       = true
+  timeout    = 1200
+
+  values = [yamlencode({
+    serviceAccount = {
+      create = true
+      name   = "aws-for-fluent-bit"
+      annotations = {
+        "eks.amazonaws.com/role-arn" = data.terraform_remote_state.platform.outputs.fluent_bit_role_arn
+      }
+    }
+    cloudWatchLogs = {
+      enabled           = true
+      region            = var.aws_region
+      logGroupName      = data.terraform_remote_state.platform.outputs.container_log_group_name
+      logStreamPrefix   = "ec2-"
+      autoCreateGroup   = false
+      autoRetryRequests = true
+    }
+    resources = {
+      requests = { cpu = "50m", memory = "50Mi" }
+      limits   = { memory = "250Mi" }
+    }
+    priorityClassName = "system-node-critical"
+  })]
+}
+
 removed {
   from = helm_release.gitops_root
 
@@ -99,7 +132,6 @@ resource "helm_release" "cluster_foundation" {
 
   values = [yamlencode({
     workloadSecurityGroupId = data.terraform_remote_state.staging.outputs.workload_security_group_id
-    fargateLogGroup         = "/aws/eks/ristoh-ai-chatbot/fargate"
     region                  = var.aws_region
   })]
 }

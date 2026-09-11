@@ -22,10 +22,13 @@ This project currently uses increment-based milestones instead of semantic versi
 
 ### Changed
 
+- EKS staging workloads now run on one On-Demand `c6a.large` managed EC2 node with pod
+  security-group trunking and AWS for Fluent Bit container logging.
 - CoreDNS and Metrics Server run a single staging replica each to reduce Fargate cost.
 
 ### Removed
 
+- EKS Fargate profiles, the Fargate pod-execution role, and Fargate logging configuration.
 - Self-managed Argo CD, the generated `deploy/staging` delivery branch workflow, and the
   dedicated `argocd` Fargate profile.
 - `AGENT_LOG_LEVEL` / `logging.level` configuration for controlling application logs.

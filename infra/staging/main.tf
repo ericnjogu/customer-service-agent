@@ -84,7 +84,7 @@ resource "aws_vpc_security_group_ingress_rule" "workload_kubelet" {
   ip_protocol                  = "tcp"
   from_port                    = 10250
   to_port                      = 10250
-  description                  = "EKS control plane diagnostics to staging Fargate pods"
+  description                  = "EKS control plane diagnostics to staging workload pods"
 }
 
 resource "aws_vpc_security_group_ingress_rule" "workload_api" {

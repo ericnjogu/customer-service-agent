@@ -10,6 +10,9 @@ output "cluster_security_group_id" { value = aws_eks_cluster.this.vpc_config[0].
 output "ecr_repository_urls" { value = { for name, repo in aws_ecr_repository.application : name => repo.repository_url } }
 output "kubernetes_operator_role_arn" { value = aws_iam_role.kubernetes_operator.arn }
 output "load_balancer_controller_role_arn" { value = aws_iam_role.load_balancer_controller.arn }
+output "node_group_name" { value = aws_eks_node_group.general.node_group_name }
+output "fluent_bit_role_arn" { value = aws_iam_role.fluent_bit.arn }
+output "container_log_group_name" { value = aws_cloudwatch_log_group.containers.name }
 output "staging_certificate_arn" { value = aws_acm_certificate.staging.arn }
 output "codebuild_runner_project_name" { value = aws_codebuild_project.staging_deploy.name }
 output "codebuild_runner_security_group_id" { value = aws_security_group.codebuild_runner.id }

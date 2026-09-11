@@ -4,10 +4,12 @@ OpenTofu 1.12.x owns the replacement platform. State is split into four roots an
 Regional resources are fixed to `eu-central-1`:
 
 1. `bootstrap`: S3 state storage and repository-scoped GitHub OIDC roles.
-2. `platform`: VPC, EKS/Fargate, add-ons, logging, and the two imported ECR repositories.
+2. `platform`: VPC, EKS managed EC2 capacity, add-ons, logging, and the two imported ECR
+   repositories.
 3. `staging`: fresh PostgreSQL, Valkey, security groups, and workload IRSA.
-4. `cluster-bootstrap`: External Secrets Operator, AWS Load Balancer Controller, and
-   shared Kubernetes resources that are not owned by the application release.
+4. `cluster-bootstrap`: External Secrets Operator, AWS Load Balancer Controller, AWS for
+   Fluent Bit, and shared Kubernetes resources that are not owned by the application
+   release.
 
 The GitHub OIDC trust uses the immutable owner and repository IDs emitted in this
 repository's token subject. If the repository is transferred or recreated, update
@@ -78,6 +80,26 @@ The ECR `import` blocks intentionally transfer only `customer-service` and
 `customer-service-web`. OpenTofu never adopts or destroys the old eksctl/CloudFormation
 platform.
 
+## EKS compute and logging
+
+The cluster uses one On-Demand `c6a.large` managed node running Amazon Linux 2023. The
+node group starts and stays at one node, with a configured maximum of two for a later
+manual scaling change. A 30 GiB encrypted gp3 root volume and IMDSv2 are enforced by the
+launch template. Create-before-destroy node-group replacement avoids removing healthy
+capacity before its replacement is ready.
+
+The VPC CNI enables Security Groups for Pods. The `c6a.large` supplies trunk and branch
+ENI capacity so the application pod keeps its dedicated staging workload security group;
+RDS and Valkey do not trust the node-wide security group. AWS for Fluent Bit runs as a
+DaemonSet and sends EC2 container logs to `/aws/eks/ristoh-ai-chatbot/containers`, which
+has seven-day retention. The former Fargate log group remains temporarily for its
+30-day historical-log retention, but no Fargate profiles or pod-execution role remain.
+
+CoreDNS and Metrics Server each run one replica for this single-node staging environment.
+This is intentionally not highly available: node replacement or failure can interrupt
+staging until EKS restores capacity. Increase the node-group desired/minimum size before
+using this topology for production.
+
 ## Staging delivery
 
 Merges to `main` build immutable `linux/amd64` images on GitHub-hosted runners and push
@@ -107,9 +129,8 @@ administrator completes its GitHub App authorization once:
    `ericnjogu/customer-service-agent`. If the connection is already `AVAILABLE` but
    CodeBuild cannot create its webhook, install it directly from
    <https://github.com/apps/aws-connector-for-github/installations/new>.
-4. Confirm the connection status is `AVAILABLE`, then run a reviewed `platform` plan and
-   apply with `-var=retain_argocd_during_migration=true`. This creates the runner and
-   webhook without deleting the active Argo Fargate profile.
+4. Confirm the connection status is `AVAILABLE`, then run and apply a reviewed `platform`
+   plan. This creates the runner and webhook.
 
 The deployment role is mapped only to the `ristoh-ai-chatbot-staging-deployer` Kubernetes
 group. Helm uses the ConfigMap storage driver so CI has no permission to read Kubernetes
@@ -125,29 +146,9 @@ HELM_DRIVER=configmap helm --kube-context ristoh-ai-chatbot-admin rollback aws-c
 
 ## Argo CD retirement
 
-Do not remove Argo until the CodeConnections status is `AVAILABLE`, the CodeBuild webhook
-exists, and one deployment job has successfully adopted the current `aws-csa` resources.
-The application deployment uses `--take-ownership`, `--atomic`, and `--wait` so the first
-successful run establishes Helm ownership without changing the deployment mechanism
-mid-rollout.
-
-After that validation:
-
-1. Remove the finalizer from `argocd/aws-csa-staging`, then delete that Application. This
-   preserves the staging resources.
-2. Apply `cluster-bootstrap`. Its `removed` block forgets the old `gitops-root` release
-   without uninstalling shared objects, the new `cluster-foundation` release adopts those
-   objects, and the Argo Helm release is uninstalled.
-3. Delete the empty `argocd` namespace and remaining `argoproj.io` CRDs with the admin
-   context.
-4. Apply `platform` normally, without the migration variable, to delete only the
-   `argocd` Fargate profile.
-5. Verify staging pods, External Secrets, the load balancer controller, public web URL,
-   and `/api/healthz` before considering the migration complete.
-
-If the CodeBuild deployment fails, leave Argo installed and correct the replacement path
-before performing any retirement step. OpenTofu applies remain local; GitHub Actions can
-deploy the application but cannot apply infrastructure.
+Argo CD has been retired. CodeBuild owns staging deployment execution, and no Argo
+namespace, CRDs, controller, or Fargate profile should be recreated. OpenTofu applies
+remain local; GitHub Actions can deploy the application but cannot apply infrastructure.
 
 ## Public staging endpoint
 

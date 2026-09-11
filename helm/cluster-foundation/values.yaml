@@ -1,3 +1,2 @@
 workloadSecurityGroupId: ""
-fargateLogGroup: /aws/eks/ristoh-ai-chatbot/fargate
 region: eu-central-1

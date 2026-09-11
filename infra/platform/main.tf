@@ -304,39 +304,158 @@ resource "aws_acm_certificate" "staging" {
   }
 }
 
-data "aws_iam_policy_document" "fargate_trust" {
+resource "aws_cloudwatch_log_group" "fargate" {
+  name              = "/aws/eks/${local.name}/fargate"
+  retention_in_days = 30
+}
+
+data "aws_iam_policy_document" "node_trust" {
   statement {
     actions = ["sts:AssumeRole"]
     principals {
       type        = "Service"
-      identifiers = ["eks-fargate-pods.amazonaws.com"]
-    }
-    condition {
-      test     = "ArnLike"
-      variable = "aws:SourceArn"
-      values   = ["arn:aws:eks:${var.aws_region}:${var.aws_account_id}:fargateprofile/${local.name}/*"]
-    }
-    condition {
-      test     = "StringEquals"
-      variable = "aws:SourceAccount"
-      values   = [var.aws_account_id]
+      identifiers = ["ec2.amazonaws.com"]
     }
   }
 }
 
-resource "aws_iam_role" "fargate" {
-  name               = "${local.name}-fargate-pod-execution"
-  assume_role_policy = data.aws_iam_policy_document.fargate_trust.json
+resource "aws_iam_role" "node" {
+  name               = "${local.name}-node"
+  description        = "EC2 managed node role for the EKS cluster"
+  assume_role_policy = data.aws_iam_policy_document.node_trust.json
 }
 
-resource "aws_iam_role_policy_attachment" "fargate" {
-  role       = aws_iam_role.fargate.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSFargatePodExecutionRolePolicy"
+resource "aws_iam_role_policy_attachment" "node_worker" {
+  role       = aws_iam_role.node.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
 }
 
-resource "aws_cloudwatch_log_group" "fargate" {
-  name              = "/aws/eks/${local.name}/fargate"
-  retention_in_days = 30
+resource "aws_iam_role_policy_attachment" "node_ecr" {
+  role       = aws_iam_role.node.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly"
+}
+
+resource "aws_launch_template" "node" {
+  name_prefix            = "${local.name}-node-"
+  update_default_version = true
+
+  block_device_mappings {
+    device_name = "/dev/xvda"
+    ebs {
+      delete_on_termination = true
+      encrypted             = true
+      volume_size           = 30
+      volume_type           = "gp3"
+    }
+  }
+
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_put_response_hop_limit = 1
+    http_tokens                 = "required"
+  }
+
+  tag_specifications {
+    resource_type = "instance"
+    tags = merge(local.tags, {
+      Name = "${local.name}-node"
+    })
+  }
+
+  tag_specifications {
+    resource_type = "volume"
+    tags          = local.tags
+  }
+}
+
+resource "aws_eks_node_group" "general" {
+  cluster_name           = aws_eks_cluster.this.name
+  node_group_name_prefix = "${local.name}-general-"
+  node_role_arn          = aws_iam_role.node.arn
+  subnet_ids             = values(aws_subnet.workload)[*].id
+  ami_type               = "AL2023_x86_64_STANDARD"
+  capacity_type          = "ON_DEMAND"
+  instance_types         = ["c6a.large"]
+
+  launch_template {
+    id      = aws_launch_template.node.id
+    version = aws_launch_template.node.latest_version
+  }
+
+  scaling_config {
+    desired_size = 1
+    min_size     = 1
+    max_size     = 2
+  }
+
+  update_config {
+    max_unavailable = 1
+  }
+
+  node_repair_config {
+    enabled = true
+  }
+
+  labels = {
+    workload = "general"
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.node_worker,
+    aws_iam_role_policy_attachment.node_ecr
+  ]
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_cloudwatch_log_group" "containers" {
+  name              = "/aws/eks/${local.name}/containers"
+  retention_in_days = 7
+}
+
+data "aws_iam_policy_document" "fluent_bit_trust" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.eks.arn]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "${replace(aws_eks_cluster.this.identity[0].oidc[0].issuer, "https://", "")}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "${replace(aws_eks_cluster.this.identity[0].oidc[0].issuer, "https://", "")}:sub"
+      values   = ["system:serviceaccount:kube-system:aws-for-fluent-bit"]
+    }
+  }
+}
+
+resource "aws_iam_role" "fluent_bit" {
+  name               = "${local.name}-fluent-bit"
+  description        = "IRSA role for EC2-hosted container log delivery"
+  assume_role_policy = data.aws_iam_policy_document.fluent_bit_trust.json
+}
+
+data "aws_iam_policy_document" "fluent_bit" {
+  statement {
+    actions = [
+      "logs:CreateLogStream",
+      "logs:DescribeLogStreams",
+      "logs:PutLogEvents"
+    ]
+    resources = ["${aws_cloudwatch_log_group.containers.arn}:*"]
+  }
+}
+
+resource "aws_iam_role_policy" "fluent_bit" {
+  name   = "WriteContainerLogs"
+  role   = aws_iam_role.fluent_bit.id
+  policy = data.aws_iam_policy_document.fluent_bit.json
 }
 
 resource "aws_security_group" "codebuild_runner" {
@@ -525,37 +644,6 @@ resource "aws_codebuild_webhook" "staging_deploy" {
   }
 }
 
-data "aws_iam_policy_document" "fargate_logging" {
-  statement {
-    actions = [
-      "logs:CreateLogStream",
-      "logs:DescribeLogStreams",
-      "logs:PutLogEvents"
-    ]
-    resources = ["${aws_cloudwatch_log_group.fargate.arn}:*"]
-  }
-}
-
-resource "aws_iam_role_policy" "fargate_logging" {
-  name   = "FargateCloudWatchLogs"
-  role   = aws_iam_role.fargate.id
-  policy = data.aws_iam_policy_document.fargate_logging.json
-}
-
-resource "aws_eks_fargate_profile" "this" {
-  for_each = toset(concat(
-    ["kube-system", "external-secrets", "customer-service-staging"],
-    var.retain_argocd_during_migration ? ["argocd"] : []
-  ))
-
-  cluster_name           = aws_eks_cluster.this.name
-  fargate_profile_name   = replace(each.key, "customer-service-", "")
-  pod_execution_role_arn = aws_iam_role.fargate.arn
-  subnet_ids             = values(aws_subnet.workload)[*].id
-  selector { namespace = each.key }
-  depends_on = [aws_iam_role_policy_attachment.fargate, aws_iam_role_policy.fargate_logging]
-}
-
 data "aws_iam_policy_document" "vpc_cni_trust" {
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
@@ -597,14 +685,21 @@ resource "aws_eks_addon" "this" {
   service_account_role_arn    = each.key == "vpc-cni" ? aws_iam_role.vpc_cni.arn : null
   configuration_values = (
     each.key == "coredns" ? jsonencode({
-      computeType  = "Fargate"
       replicaCount = 1
       }) : each.key == "metrics-server" ? jsonencode({
       replicas = 1
+      }) : each.key == "vpc-cni" ? jsonencode({
+      env = {
+        ENABLE_POD_ENI                    = "true"
+        POD_SECURITY_GROUP_ENFORCING_MODE = "standard"
+      }
     }) : null
   )
 
-  depends_on = [aws_eks_fargate_profile.this, aws_iam_role_policy_attachment.vpc_cni]
+  depends_on = [
+    aws_eks_node_group.general,
+    aws_iam_role_policy_attachment.vpc_cni
+  ]
 }
 
 resource "aws_ecr_repository" "application" {

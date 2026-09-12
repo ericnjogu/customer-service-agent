@@ -31,6 +31,16 @@ from app.observability import (
 
 logger = logging.getLogger(__name__)
 ERROR_ID_HEADER = "X-Error-Id"
+SDK_LOGGERS_WITH_SENSITIVE_DEBUG_OUTPUT = (
+    "boto3",
+    "botocore",
+    "httpcore",
+    "httpx",
+    "litellm",
+    "openai",
+    "s3transfer",
+    "urllib3",
+)
 
 
 class HealthzAccessLogFilter(logging.Filter):
@@ -57,6 +67,12 @@ def configure_logging(log_level: str, log_format: str) -> None:
 
     uvicorn_access_logger = logging.getLogger("uvicorn.access")
     uvicorn_access_logger.addFilter(HealthzAccessLogFilter())
+
+    # SDK debug records can contain request headers, signed requests, tokens, prompts,
+    # and response bodies. Keep application debugging enabled without exporting those
+    # records to the shared container log pipeline.
+    for logger_name in SDK_LOGGERS_WITH_SENSITIVE_DEBUG_OUTPUT:
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
 
 
 def parse_cors_origins(value: str) -> list[str]:

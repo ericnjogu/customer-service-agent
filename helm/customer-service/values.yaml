@@ -206,7 +206,14 @@ llm:
 
 logging:
   level: INFO
-  format: "{asctime} - {levelname}: {name}: {message}"
+  format: "{asctime} - {levelname}:{name}:trace_id={trace_id} span_id={span_id}:{message}"
+
+telemetry:
+  enabled: false
+  endpoint: http://otel-collector.amazon-cloudwatch:4318
+  serviceName: customer-service-agent
+  environment: local
+  traceSampleRatio: "1.0"
 
 prompts:
   enabled: false

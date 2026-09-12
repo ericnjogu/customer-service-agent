@@ -9,6 +9,7 @@ from app.models import (
     TenantCreateRequest,
     TenantRecord,
 )
+from app.observability import set_tenant_trace_attributes
 from app.tenancy import tenant_slug
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
@@ -33,6 +34,7 @@ async def create_tenant(
         slug=slug,
         selected_plan=tenant_request.selected_plan,
     )
+    set_tenant_trace_attributes(tenant.tenant_id, tenant.slug)
     return tenant
 
 
@@ -44,6 +46,7 @@ async def get_tenant_by_slug(
     tenant = await request.app.state.container.tenants.get_by_slug(slug)
     if tenant is None:
         raise HTTPException(status_code=404, detail="Tenant not found")
+    set_tenant_trace_attributes(tenant.tenant_id, tenant.slug)
     return tenant
 
 
@@ -55,6 +58,7 @@ async def get_tenant(
     tenant = await request.app.state.container.tenants.get(tenant_id)
     if tenant is None:
         raise HTTPException(status_code=404, detail="Tenant not found")
+    set_tenant_trace_attributes(tenant.tenant_id, tenant.slug)
     return tenant
 
 
@@ -63,6 +67,7 @@ async def get_tenant_config(
     request: Request,
     tenant_id: Annotated[str, Path(min_length=1, pattern=r".*\S.*")],
 ) -> TenantConfig:
+    set_tenant_trace_attributes(tenant_id)
     tenant_config = await request.app.state.container.tenant_configs.get_existing(
         tenant_id
     )
@@ -77,6 +82,7 @@ async def update_tenant_config(
     update: TenantConfigUpdate,
     tenant_id: Annotated[str, Path(min_length=1, pattern=r".*\S.*")],
 ) -> TenantConfig:
+    set_tenant_trace_attributes(tenant_id)
     return await request.app.state.container.tenant_configs.upsert(
         tenant_id,
         selected_plan=update.selected_plan,

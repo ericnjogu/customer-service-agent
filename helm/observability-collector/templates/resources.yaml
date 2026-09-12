@@ -1,0 +1,257 @@
+{{- if and .Values.exporters.aws.enabled (not .Values.serviceAccount.roleArn) }}
+{{- fail "serviceAccount.roleArn is required when AWS exporters are enabled" }}
+{{- end }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: otel-collector
+  annotations:
+    {{- if .Values.serviceAccount.roleArn }}
+    eks.amazonaws.com/role-arn: {{ .Values.serviceAccount.roleArn | quote }}
+    {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "nodes/stats", "nodes/pods", "namespaces", "pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["daemonsets", "deployments", "replicasets", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["cronjobs", "jobs"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Name }}
+subjects:
+  - kind: ServiceAccount
+    name: otel-collector
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+spec:
+  selector:
+    app.kubernetes.io/name: otel-collector
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+    - name: otlp-http
+      port: 4318
+      targetPort: otlp-http
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector
+data:
+  config.yaml: |
+    extensions:
+      file_storage:
+        directory: /var/lib/otelcol
+        create_directory: true
+      health_check:
+        endpoint: 0.0.0.0:13133
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+      filelog:
+        include: [/var/log/pods/*/*/*.log]
+        exclude: [/var/log/pods/{{ .Release.Namespace }}_otel-collector-*/*/*.log]
+        include_file_path: true
+        start_at: end
+        storage: file_storage
+        operators:
+          - type: container
+            id: container-parser
+      kubeletstats:
+        auth_type: serviceAccount
+        collection_interval: {{ .Values.collectionInterval }}
+        endpoint: https://${env:K8S_NODE_NAME}:10250
+        insecure_skip_verify: true
+        metric_groups: [node, pod, container]
+    processors:
+      memory_limiter:
+        check_interval: 5s
+        limit_mib: 320
+        spike_limit_mib: 80
+      filter/selected_metrics:
+        metrics:
+          include:
+            match_type: strict
+            metric_names:
+              - container.cpu.usage
+              - container.memory.usage
+              - container.memory.working_set
+              - k8s.node.cpu.usage
+              - k8s.node.memory.usage
+              - k8s.node.memory.working_set
+              - k8s.pod.cpu.usage
+              - k8s.pod.memory.usage
+              - k8s.pod.memory.working_set
+      k8sattributes:
+        auth_type: serviceAccount
+        passthrough: false
+        extract:
+          metadata:
+            - k8s.namespace.name
+            - k8s.deployment.name
+            - k8s.statefulset.name
+            - k8s.daemonset.name
+            - k8s.job.name
+            - k8s.cronjob.name
+            - k8s.node.name
+            - k8s.pod.name
+            - k8s.container.name
+      resource/common:
+        attributes:
+          - key: ClusterName
+            action: upsert
+            value: {{ .Values.clusterName | quote }}
+          - key: Environment
+            action: upsert
+            value: {{ .Values.environment | quote }}
+          - key: container.id
+            action: delete
+          - key: k8s.pod.uid
+            action: delete
+      batch: {}
+    exporters:
+      debug:
+        verbosity: basic
+      {{- if .Values.exporters.aws.enabled }}
+      awscloudwatchlogs:
+        region: {{ .Values.region }}
+        log_group_name: {{ .Values.exporters.aws.containerLogGroup }}
+        log_stream_name: otel-${env:K8S_NODE_NAME}
+      awsemf:
+        region: {{ .Values.region }}
+        namespace: {{ .Values.exporters.aws.metricsNamespace }}
+        log_group_name: {{ .Values.exporters.aws.metricsLogGroup }}
+        log_stream_name: otel-${env:K8S_NODE_NAME}
+        dimension_rollup_option: NoDimensionRollup
+        resource_to_telemetry_conversion:
+          enabled: true
+        metric_declarations:
+          - dimensions:
+              - [ClusterName, Environment, k8s.namespace.name, k8s.pod.name, k8s.container.name]
+            metric_name_selectors: [^container\.(cpu\.usage|memory\.(usage|working_set))$]
+          - dimensions:
+              - [ClusterName, Environment, k8s.namespace.name, k8s.pod.name]
+            metric_name_selectors: [^k8s\.pod\.(cpu\.usage|memory\.(usage|working_set))$]
+          - dimensions:
+              - [ClusterName, Environment, k8s.node.name]
+            metric_name_selectors: [^k8s\.node\.(cpu\.usage|memory\.(usage|working_set))$]
+      awsxray:
+        region: {{ .Values.region }}
+      {{- end }}
+    service:
+      extensions: [file_storage, health_check]
+      pipelines:
+        logs:
+          receivers: [filelog, otlp]
+          processors: [memory_limiter, k8sattributes, resource/common, batch]
+          exporters: [{{ if .Values.exporters.aws.enabled }}awscloudwatchlogs{{ else }}debug{{ end }}]
+        metrics:
+          receivers: [kubeletstats, otlp]
+          processors: [memory_limiter, filter/selected_metrics, k8sattributes, resource/common, batch]
+          exporters: [{{ if .Values.exporters.aws.enabled }}awsemf{{ else }}debug{{ end }}]
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, k8sattributes, resource/common, batch]
+          exporters: [{{ if .Values.exporters.aws.enabled }}awsxray{{ else }}debug{{ end }}]
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: otel-collector
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: otel-collector
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: otel-collector
+        app.kubernetes.io/instance: {{ .Release.Name }}
+      annotations:
+        checksum/config: {{ toJson .Values | sha256sum }}
+    spec:
+      serviceAccountName: otel-collector
+      priorityClassName: system-node-critical
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+        - name: collector
+          image: {{- if .Values.image.digest }} {{ printf "%s@%s" .Values.image.repository .Values.image.digest | quote }}{{- else }} {{ printf "%s:%s" .Values.image.repository .Values.image.tag | quote }}{{- end }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["--config=/etc/otelcol-contrib/config.yaml"]
+          env:
+            - name: K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          ports:
+            - name: otlp-grpc
+              containerPort: 4317
+            - name: otlp-http
+              containerPort: 4318
+            - name: health
+              containerPort: 13133
+          readinessProbe:
+            httpGet:
+              path: /
+              port: health
+          livenessProbe:
+            httpGet:
+              path: /
+              port: health
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otelcol-contrib
+              readOnly: true
+            - name: pod-logs
+              mountPath: /var/log/pods
+              readOnly: true
+            - name: state
+              mountPath: /var/lib/otelcol
+            - name: tmp
+              mountPath: /tmp
+      terminationGracePeriodSeconds: 30
+      volumes:
+        - name: config
+          configMap:
+            name: otel-collector
+        - name: pod-logs
+          hostPath:
+            path: /var/log/pods
+            type: Directory
+        - name: state
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

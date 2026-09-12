@@ -14,6 +14,9 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 RELEASE_NAME="${RELEASE_NAME:-cs-local}"
 NAMESPACE="${NAMESPACE:-customer-service}"
 CHART_PATH="${CHART_PATH:-${REPO_ROOT}/helm/customer-service}"
+OTEL_CHART_PATH="${OTEL_CHART_PATH:-${REPO_ROOT}/helm/observability-collector}"
+OTEL_RELEASE_NAME="${OTEL_RELEASE_NAME:-observability-collector}"
+OTEL_ENABLED="${OTEL_ENABLED:-true}"
 IMAGE_REPOSITORY="${IMAGE_REPOSITORY:-customer-service}"
 IMAGE_TAG="${IMAGE_TAG:-local}"
 DOCKERFILE_PATH="${DOCKERFILE_PATH:-${REPO_ROOT}/Dockerfile}"
@@ -108,6 +111,15 @@ nerdctl --namespace k8s.io build \
 echo "Ensuring namespace exists: ${NAMESPACE}"
 kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 
+if [[ "${OTEL_ENABLED}" == "true" ]]; then
+  echo "Installing local OpenTelemetry collector: ${OTEL_RELEASE_NAME}"
+  helm upgrade --install "${OTEL_RELEASE_NAME}" "${OTEL_CHART_PATH}" \
+    --namespace "${NAMESPACE}" \
+    --set "clusterName=${KUBE_CONTEXT}" \
+    --set "environment=local" \
+    --wait
+fi
+
 if [[ "${N8N_ENABLED}" == "true" && "${N8N_OWNER_MANAGED_BY_ENV}" == "true" ]]; then
   if [[ -z "${N8N_OWNER_EMAIL}" || -z "${N8N_OWNER_FIRST_NAME}" || -z "${N8N_OWNER_LAST_NAME}" ]]; then
     echo "N8N_OWNER_EMAIL, N8N_OWNER_FIRST_NAME, and N8N_OWNER_LAST_NAME are required when N8N_OWNER_MANAGED_BY_ENV=true." >&2
@@ -140,6 +152,9 @@ helm_args=(
   --set "providerProjects.provisioner=${AGENT_PROVIDER_PROJECT_PROVISIONER}"
   --set "n8n.enabled=${N8N_ENABLED}"
   --set "logging.level=${LOG_LEVEL}"
+  --set "telemetry.enabled=${OTEL_ENABLED}"
+  --set "telemetry.endpoint=http://otel-collector.${NAMESPACE}:4318"
+  --set "telemetry.environment=local"
   --set "prompts.enabled=true"
   --set-file "prompts.system=${SYSTEM_PROMPT_PATH}"
   --set-file "prompts.questionPlanning=${QUESTION_PLANNING_PROMPT_PATH}"

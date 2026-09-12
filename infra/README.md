@@ -7,9 +7,9 @@ Regional resources are fixed to `eu-central-1`:
 2. `platform`: VPC, EKS managed EC2 capacity, add-ons, logging, and the two imported ECR
    repositories.
 3. `staging`: fresh PostgreSQL, Valkey, security groups, and workload IRSA.
-4. `cluster-bootstrap`: External Secrets Operator, AWS Load Balancer Controller, AWS for
-   Fluent Bit, and shared Kubernetes resources that are not owned by the application
-   release.
+4. `cluster-bootstrap`: External Secrets Operator, AWS Load Balancer Controller, the
+   OpenTelemetry collector, and shared Kubernetes resources that are not owned by the
+   application release.
 
 The GitHub OIDC trust uses the immutable owner and repository IDs emitted in this
 repository's token subject. If the repository is transferred or recreated, update
@@ -90,7 +90,7 @@ capacity before its replacement is ready.
 
 The VPC CNI enables Security Groups for Pods. The `c6a.large` supplies trunk and branch
 ENI capacity so the application pod keeps its dedicated staging workload security group;
-RDS and Valkey do not trust the node-wide security group. AWS for Fluent Bit runs as a
+RDS and Valkey do not trust the node-wide security group. The OpenTelemetry Collector runs as a
 DaemonSet and sends EC2 container logs to `/aws/eks/ristoh-ai-chatbot/containers`, which
 has seven-day retention. The former Fargate log group remains temporarily for its
 30-day historical-log retention, but no Fargate profiles or pod-execution role remain.
@@ -99,6 +99,37 @@ CoreDNS and Metrics Server each run one replica for this single-node staging env
 This is intentionally not highly available: node replacement or failure can interrupt
 staging until EKS restores capacity. Increase the node-group desired/minimum size before
 using this topology for production.
+
+## Unified OpenTelemetry collection
+
+The cluster-bootstrap root installs the pinned local `observability-collector` chart in
+`amazon-cloudwatch`. One collector runs on every Linux EC2 node. Its `filelog` receiver
+tails Kubernetes container stdout/stderr, `kubeletstats` collects at 60-second intervals,
+and OTLP receives application traces. Staging exports these signals to the existing
+container log group, the `RistohAiChatbot/EKS` metric namespace through EMF, and X-Ray.
+
+The metrics pipeline allow-lists container, pod, and node CPU usage plus memory usage and
+working set. Filesystem, disk, network, process, and other Kubernetes metrics are dropped
+before export. Metric declarations constrain dimensions and remove container IDs and pod
+UIDs. The `ristoh-ai-chatbot-staging` dashboard focuses on attributed container CPU and
+memory. The automatic `AWS/EC2` CPU metric remains available as the node-wide overview.
+
+Application traces use standard OpenTelemetry instrumentation. Root spans carry
+`app.tenant.id` and `app.tenant.slug` wherever already known, and those attributes are
+paired with X-Ray-safe `tenant_id` and `tenant_slug` searchable annotations. Prompts,
+messages, contact details, and secrets are not attached. Trace and span IDs are injected
+into application logs for correlation.
+LangSmith remains responsible for LLM-specific traces and evaluations; Metrics Server
+continues to power `kubectl top`.
+
+Locally, `scripts/deploy-local.sh` installs the same chart into Rancher Desktop with AWS
+exporters disabled. Logs, selected metrics, and traces use the collector's debug exporter,
+so no local telemetry is sent to AWS. The application sends OTLP to the in-cluster
+collector Service. A local OTLP-compatible backend such as Jaeger or Tempo can replace
+the debug exporter later without changing application instrumentation.
+
+The collector replaced AWS for Fluent Bit after its CloudWatch log delivery and file
+checkpoints were verified during a brief duplicate-log validation window.
 
 ## Staging delivery
 

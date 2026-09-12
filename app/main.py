@@ -22,6 +22,12 @@ from app.models import (
     IncomingMessage,
     ServiceReply,
 )
+from app.observability import (
+    configure_tracing,
+    install_log_trace_context,
+    set_tenant_trace_attributes,
+    shutdown_tracing,
+)
 
 logger = logging.getLogger(__name__)
 ERROR_ID_HEADER = "X-Error-Id"
@@ -42,6 +48,7 @@ class HealthzAccessLogFilter(logging.Filter):
 
 
 def configure_logging(log_level: str, log_format: str) -> None:
+    install_log_trace_context()
     logging.basicConfig(
         level=log_level,
         format=log_format,
@@ -81,10 +88,12 @@ async def lifespan(app: FastAPI):
     app.state.container = await create_container(settings)
     yield
     await app.state.container.close()
+    shutdown_tracing(app.state.tracer_provider)
 
 
 app = FastAPI(title="Customer Service Agent", version="0.1.0", lifespan=lifespan)
 settings = get_settings()
+app.state.tracer_provider = configure_tracing(app, settings)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=parse_cors_origins(settings.cors_allow_origins),
@@ -156,9 +165,11 @@ async def receive_customer_message(
     x_agent_tenant_id: str | None = Header(default=None),
 ) -> ServiceReply:
     settings = get_settings()
+    message = with_tenant(message, x_agent_tenant_id, settings.default_tenant_id)
+    set_tenant_trace_attributes(message.tenant_id)
     return await invoke_service_graph(
         request.app.state.container.graph,
-        with_tenant(message, x_agent_tenant_id, settings.default_tenant_id),
+        message,
         request.app.state.container.tenant_configs,
     )
 
@@ -170,9 +181,11 @@ async def synthetic_webhook(
     x_agent_tenant_id: str | None = Header(default=None),
 ) -> ServiceReply:
     settings = get_settings()
+    message = with_tenant(message, x_agent_tenant_id, settings.default_tenant_id)
+    set_tenant_trace_attributes(message.tenant_id)
     return await invoke_service_graph(
         request.app.state.container.graph,
-        with_tenant(message, x_agent_tenant_id, settings.default_tenant_id),
+        message,
         request.app.state.container.tenant_configs,
     )
 
@@ -187,6 +200,7 @@ async def telegram_webhook(
 ) -> dict:
     settings = get_settings()
     resolved_tenant_id = tenant_id or x_agent_tenant_id or settings.default_tenant_id
+    set_tenant_trace_attributes(resolved_tenant_id)
     telegram_credentials = await request.app.state.container.telegram_credentials.resolve(
         resolved_tenant_id
     )
@@ -228,6 +242,7 @@ async def verify_whatsapp_webhook(
 ) -> Response:
     settings = get_settings()
     resolved_tenant_id = tenant_id or x_agent_tenant_id or settings.default_tenant_id
+    set_tenant_trace_attributes(resolved_tenant_id)
     whatsapp_credentials = await request.app.state.container.whatsapp_credentials.resolve(
         resolved_tenant_id
     )
@@ -258,6 +273,7 @@ async def whatsapp_webhook(
     whatsapp_sender = request.app.state.container.whatsapp_sender
     for message in messages:
         message = with_tenant(message, tenant_id or x_agent_tenant_id, settings.default_tenant_id)
+        set_tenant_trace_attributes(message.tenant_id)
         reply = await invoke_service_graph(
             request.app.state.container.graph,
             message,

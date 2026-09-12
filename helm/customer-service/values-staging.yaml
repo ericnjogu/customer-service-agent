@@ -47,6 +47,13 @@ resources:
 logging:
   level: DEBUG
 
+telemetry:
+  enabled: true
+  endpoint: http://otel-collector.amazon-cloudwatch:4318
+  serviceName: customer-service-agent
+  environment: staging
+  traceSampleRatio: "1.0"
+
 ingress:
   enabled: true
   host: staging.css.ristoh.co.ke

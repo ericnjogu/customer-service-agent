@@ -86,6 +86,8 @@ jobs:
           grep -q 'location = /healthz' /tmp/aws-csa.yaml
           grep -q 'access_log off;' /tmp/aws-csa.yaml
           grep -q 'alb.ingress.kubernetes.io/healthcheck-path: /healthz' /tmp/aws-csa.yaml
+          test "$(grep -c 'maxSurge: 0' /tmp/aws-csa.yaml)" -eq 2
+          test "$(grep -c 'maxUnavailable: 1' /tmp/aws-csa.yaml)" -eq 2
           ! grep -q 'kind: Role' /tmp/aws-csa.yaml
       - name: Render cluster foundation
         run: |

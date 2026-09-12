@@ -24,6 +24,8 @@ This project currently uses increment-based milestones instead of semantic versi
 
 ### Changed
 
+- Staging application and web rollouts no longer request surge pods that cannot fit on
+  the single EKS node; replacements proceed with one temporarily unavailable replica.
 - Web Kubernetes and ALB health checks use a dedicated nginx `/healthz` endpoint with
   access logging disabled, avoiding repetitive probe records in CloudWatch.
 - EKS staging workloads now run on one On-Demand `c6a.large` managed EC2 node with pod

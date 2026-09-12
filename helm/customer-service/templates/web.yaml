@@ -62,6 +62,8 @@ metadata:
     {{- include "customer-service.labels" . | nindent 4 }}
 spec:
   replicas: 1
+  strategy:
+    {{- toYaml .Values.web.deploymentStrategy | nindent 4 }}
   selector:
     matchLabels:
       app.kubernetes.io/component: web

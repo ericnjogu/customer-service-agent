@@ -60,6 +60,11 @@ jobs:
             --set-file prompts.websiteAnalysis=app/prompt_templates/website-analysis.md \
             --set-file prompts.websiteResearch=app/prompt_templates/website-research.md
       - run: helm lint helm/cluster-foundation --set workloadSecurityGroupId=sg-0123456789abcdef0
+      - name: Lint observability collector
+        run: |
+          helm lint helm/observability-collector \
+            --set exporters.aws.enabled=true \
+            --set serviceAccount.roleArn=arn:aws:iam::371664303664:role/ristoh-ai-chatbot-otel-collector
       - name: Render digest-pinned staging release
         run: |
           helm template aws-csa helm/customer-service \
@@ -75,6 +80,8 @@ jobs:
           grep -q 'arn:aws:iam::371664303664:role/ristoh-ai-chatbot-staging-workload' /tmp/aws-csa.yaml
           grep -q 'name: aws-csa-customer-service-prompts' /tmp/aws-csa.yaml
           grep -q 'AGENT_SYSTEM_PROMPT_PATH' /tmp/aws-csa.yaml
+          grep -q 'AGENT_TELEMETRY_ENABLED' /tmp/aws-csa.yaml
+          grep -q 'http://otel-collector.amazon-cloudwatch:4318' /tmp/aws-csa.yaml
           grep -q 'checksum/prompts:' /tmp/aws-csa.yaml
           grep -q 'location = /healthz' /tmp/aws-csa.yaml
           grep -q 'access_log off;' /tmp/aws-csa.yaml
@@ -89,6 +96,23 @@ jobs:
           grep -q 'name: aws-csa-customer-service-secret-writer' /tmp/cluster-foundation.yaml
           grep -q 'kind: ExternalSecret' /tmp/cluster-foundation.yaml
           ! grep -q 'argoproj.io' /tmp/cluster-foundation.yaml
+      - name: Render filtered observability collector
+        run: |
+          helm template observability-collector helm/observability-collector \
+            --namespace amazon-cloudwatch \
+            --set exporters.aws.enabled=true \
+            --set exporters.aws.containerLogGroup=/aws/eks/ristoh-ai-chatbot/containers \
+            --set exporters.aws.metricsLogGroup=/aws/eks/ristoh-ai-chatbot/metrics \
+            --set serviceAccount.roleArn=arn:aws:iam::371664303664:role/ristoh-ai-chatbot-otel-collector \
+            > /tmp/observability-collector.yaml
+          test "$(grep -c '^kind: DaemonSet$' /tmp/observability-collector.yaml)" -eq 1
+          grep -q 'kubeletstats:' /tmp/observability-collector.yaml
+          grep -q 'filelog:' /tmp/observability-collector.yaml
+          grep -q 'container.memory.working_set' /tmp/observability-collector.yaml
+          grep -q 'container.cpu.usage' /tmp/observability-collector.yaml
+          grep -q 'awscloudwatchlogs:' /tmp/observability-collector.yaml
+          grep -q 'awsxray:' /tmp/observability-collector.yaml
+          ! grep -q 'container.filesystem.usage' /tmp/observability-collector.yaml
 
   tofu-static:
     runs-on: ubuntu-latest

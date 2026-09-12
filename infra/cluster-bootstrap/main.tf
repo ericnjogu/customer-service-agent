@@ -80,36 +80,31 @@ resource "helm_release" "aws_load_balancer_controller" {
   })]
 }
 
-resource "helm_release" "aws_for_fluent_bit" {
-  name       = "aws-for-fluent-bit"
-  namespace  = "kube-system"
-  repository = "https://aws.github.io/eks-charts"
-  chart      = "aws-for-fluent-bit"
-  version    = "0.2.0"
-  wait       = true
-  timeout    = 1200
+resource "helm_release" "observability_collector" {
+  name             = "observability-collector"
+  namespace        = "amazon-cloudwatch"
+  create_namespace = true
+  chart            = "${path.module}/../../helm/observability-collector"
+  wait             = true
+  timeout          = 600
 
   values = [yamlencode({
     serviceAccount = {
-      create = true
-      name   = "aws-for-fluent-bit"
-      annotations = {
-        "eks.amazonaws.com/role-arn" = data.terraform_remote_state.platform.outputs.fluent_bit_role_arn
+      roleArn = data.terraform_remote_state.platform.outputs.otel_collector_role_arn
+    }
+    clusterName        = data.terraform_remote_state.platform.outputs.cluster_name
+    environment        = "staging"
+    region             = var.aws_region
+    collectionInterval = "60s"
+    configRevision     = filesha256("${path.module}/../../helm/observability-collector/templates/resources.yaml")
+    exporters = {
+      aws = {
+        enabled           = true
+        containerLogGroup = data.terraform_remote_state.platform.outputs.container_log_group_name
+        metricsLogGroup   = data.terraform_remote_state.platform.outputs.container_metrics_log_group_name
+        metricsNamespace  = "RistohAiChatbot/EKS"
       }
     }
-    cloudWatchLogs = {
-      enabled           = true
-      region            = var.aws_region
-      logGroupName      = data.terraform_remote_state.platform.outputs.container_log_group_name
-      logStreamPrefix   = "ec2-"
-      autoCreateGroup   = false
-      autoRetryRequests = true
-    }
-    resources = {
-      requests = { cpu = "50m", memory = "50Mi" }
-      limits   = { memory = "250Mi" }
-    }
-    priorityClassName = "system-node-critical"
   })]
 }
 

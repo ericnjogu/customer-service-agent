@@ -245,6 +245,16 @@ spec:
               value: {{ .Values.logging.level | quote }}
             - name: AGENT_LOG_FORMAT
               value: {{ .Values.logging.format | quote }}
+            - name: AGENT_TELEMETRY_ENABLED
+              value: {{ .Values.telemetry.enabled | quote }}
+            - name: AGENT_OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.telemetry.endpoint | quote }}
+            - name: AGENT_OTEL_SERVICE_NAME
+              value: {{ .Values.telemetry.serviceName | quote }}
+            - name: AGENT_DEPLOYMENT_ENVIRONMENT
+              value: {{ .Values.telemetry.environment | quote }}
+            - name: AGENT_OTEL_TRACE_SAMPLE_RATIO
+              value: {{ .Values.telemetry.traceSampleRatio | quote }}
             {{- if .Values.prompts.enabled }}
             - name: AGENT_SYSTEM_PROMPT_PATH
               value: {{ printf "%s/system.md" .Values.prompts.mountPath | quote }}

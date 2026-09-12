@@ -9,6 +9,8 @@ from app.models import (
     OnboardingJobRecord,
     OnboardingJobRetryRequest,
 )
+from app.observability import set_tenant_trace_attributes
+from app.tenancy import tenant_slug
 
 router = APIRouter(prefix="/admin/onboarding/jobs", tags=["onboarding"])
 
@@ -23,6 +25,10 @@ async def create_onboarding_job(
     background_tasks: BackgroundTasks,
     onboarding_request: OnboardingJobCreate,
 ) -> OnboardingJobAccepted:
+    set_tenant_trace_attributes(
+        None,
+        tenant_slug(onboarding_request.business_profile.business_name),
+    )
     service = request.app.state.container.onboarding_jobs
     job = await service.start_job(onboarding_request)
     background_tasks.add_task(service.process_job, job.job_id, onboarding_request)
@@ -37,6 +43,7 @@ async def get_onboarding_job(
     job = await request.app.state.container.onboarding_jobs.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Onboarding job not found")
+    set_tenant_trace_attributes(job.tenant_id, job.tenant_slug)
     return job
 
 

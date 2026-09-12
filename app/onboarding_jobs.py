@@ -4,6 +4,7 @@ from uuid import UUID
 
 import httpx
 from langchain_core.documents import Document
+from opentelemetry import trace
 
 from app.adapters.telegram import (
     TelegramBotInfoResolver,
@@ -20,6 +21,7 @@ from app.models import (
     WebsiteResearchSource,
 )
 from app.notifications import EmailSender
+from app.observability import set_tenant_trace_attributes
 from app.ports import (
     OnboardingRepository,
     ProviderProjectProvisioner,
@@ -31,6 +33,7 @@ from app.provider_projects import MetadataOnlyProviderProjectProvisioner
 from app.tenancy import tenant_slug
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 class OnboardingJobService:
@@ -110,7 +113,12 @@ class OnboardingJobService:
         retried_job = await self.onboarding.mark_job_accepted(job_id)
         return retried_job, retry_request
 
+    @tracer.start_as_current_span("onboarding.process")
     async def process_job(self, job_id: UUID, request: OnboardingJobCreate) -> None:
+        set_tenant_trace_attributes(
+            None,
+            tenant_slug(request.business_profile.business_name),
+        )
         logger.info(
             "Starting onboarding job processing job_id=%s idempotency_key=%s "
             "business_name=%s provisioner=%s",
@@ -168,6 +176,7 @@ class OnboardingJobService:
                 slug=slug,
                 selected_plan=request.selected_plan,
             )
+            set_tenant_trace_attributes(tenant.tenant_id, tenant.slug)
             tenant_config = await self.tenant_configs.upsert(
                 tenant.tenant_id,
                 selected_plan=request.selected_plan,

@@ -82,7 +82,14 @@ class Settings(BaseSettings):
     resend_api_key: str | None = Field(default=None, validation_alias="RESEND_API_KEY")
     cors_allow_origins: str = "*"
     log_level: str = "INFO"
-    log_format: str = "{asctime} - {levelname}:{name}:{message}"
+    log_format: str = (
+        "{asctime} - {levelname}:{name}:trace_id={trace_id} span_id={span_id}:{message}"
+    )
+    telemetry_enabled: bool = False
+    otel_exporter_otlp_endpoint: str = "http://localhost:4318"
+    otel_service_name: str = "customer-service-agent"
+    deployment_environment: str = "local"
+    otel_trace_sample_ratio: float = Field(default=1.0, ge=0.0, le=1.0)
 
     @model_validator(mode="after")
     def validate_kb_chunk_settings(self) -> "Settings":

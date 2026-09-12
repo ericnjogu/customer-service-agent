@@ -415,7 +415,12 @@ resource "aws_cloudwatch_log_group" "containers" {
   retention_in_days = 7
 }
 
-data "aws_iam_policy_document" "fluent_bit_trust" {
+resource "aws_cloudwatch_log_group" "container_metrics" {
+  name              = "/aws/eks/${local.name}/metrics"
+  retention_in_days = 7
+}
+
+data "aws_iam_policy_document" "otel_collector_trust" {
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
     principals {
@@ -430,32 +435,105 @@ data "aws_iam_policy_document" "fluent_bit_trust" {
     condition {
       test     = "StringEquals"
       variable = "${replace(aws_eks_cluster.this.identity[0].oidc[0].issuer, "https://", "")}:sub"
-      values   = ["system:serviceaccount:kube-system:aws-for-fluent-bit"]
+      values   = ["system:serviceaccount:amazon-cloudwatch:otel-collector"]
     }
   }
 }
 
-resource "aws_iam_role" "fluent_bit" {
-  name               = "${local.name}-fluent-bit"
-  description        = "IRSA role for EC2-hosted container log delivery"
-  assume_role_policy = data.aws_iam_policy_document.fluent_bit_trust.json
+resource "aws_iam_role" "otel_collector" {
+  name               = "${local.name}-otel-collector"
+  description        = "IRSA role for exporting filtered EKS telemetry to CloudWatch and X-Ray"
+  assume_role_policy = data.aws_iam_policy_document.otel_collector_trust.json
 }
 
-data "aws_iam_policy_document" "fluent_bit" {
+data "aws_iam_policy_document" "otel_collector" {
   statement {
+    sid = "WriteTelemetryLogStreams"
     actions = [
       "logs:CreateLogStream",
       "logs:DescribeLogStreams",
       "logs:PutLogEvents"
     ]
-    resources = ["${aws_cloudwatch_log_group.containers.arn}:*"]
+    resources = [
+      "${aws_cloudwatch_log_group.containers.arn}:*",
+      "${aws_cloudwatch_log_group.container_metrics.arn}:*"
+    ]
+  }
+
+  statement {
+    sid       = "DescribeTelemetryLogGroups"
+    actions   = ["logs:DescribeLogGroups"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid = "WriteTraces"
+    actions = [
+      "xray:PutTelemetryRecords",
+      "xray:PutTraceSegments"
+    ]
+    resources = ["*"]
   }
 }
 
-resource "aws_iam_role_policy" "fluent_bit" {
-  name   = "WriteContainerLogs"
-  role   = aws_iam_role.fluent_bit.id
-  policy = data.aws_iam_policy_document.fluent_bit.json
+resource "aws_iam_role_policy" "otel_collector" {
+  name   = "ExportSelectedTelemetry"
+  role   = aws_iam_role.otel_collector.id
+  policy = data.aws_iam_policy_document.otel_collector.json
+}
+
+resource "aws_cloudwatch_dashboard" "staging" {
+  dashboard_name = "${local.name}-staging"
+  dashboard_body = jsonencode({
+    widgets = [
+      {
+        type   = "metric"
+        x      = 0
+        y      = 0
+        width  = 24
+        height = 6
+        properties = {
+          title  = "EKS container memory working set"
+          view   = "timeSeries"
+          region = var.aws_region
+          period = 60
+          stat   = "Average"
+          metrics = [
+            [
+              {
+                expression = "SEARCH('{RistohAiChatbot/EKS,ClusterName,Environment} MetricName=\"container.memory.working_set\" ClusterName=\"${local.name}\" Environment=\"staging\"', 'Average', 60)"
+                id         = "container_memory"
+                label      = "Container memory"
+              }
+            ]
+          ]
+        }
+      },
+      {
+        type   = "metric"
+        x      = 0
+        y      = 6
+        width  = 24
+        height = 6
+        properties = {
+          title  = "EKS container CPU usage"
+          view   = "timeSeries"
+          region = var.aws_region
+          period = 60
+          stat   = "Average"
+          metrics = [
+            [
+              {
+                expression = "SEARCH('{RistohAiChatbot/EKS,ClusterName,Environment} MetricName=\"container.cpu.usage\" ClusterName=\"${local.name}\" Environment=\"staging\"', 'Average', 60)"
+                id         = "container_cpu"
+                label      = "Container CPU"
+              }
+            ]
+          ]
+        }
+      }
+    ]
+  })
 }
 
 resource "aws_security_group" "codebuild_runner" {

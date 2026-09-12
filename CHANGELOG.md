@@ -24,6 +24,9 @@ This project currently uses increment-based milestones instead of semantic versi
 
 ### Changed
 
+- Application `DEBUG` logging now constrains AWS and HTTP client SDK loggers to
+  `WARNING`, preventing request-signing details, tokens, prompts, and bodies from being
+  exported to CloudWatch.
 - Staging application and web rollouts no longer request surge pods that cannot fit on
   the single EKS node; replacements proceed with one temporarily unavailable replica.
 - Web Kubernetes and ALB health checks use a dedicated nginx `/healthz` endpoint with

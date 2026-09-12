@@ -1,6 +1,10 @@
 import logging
 
-from app.main import HealthzAccessLogFilter, configure_logging
+from app.main import (
+    SDK_LOGGERS_WITH_SENSITIVE_DEBUG_OUTPUT,
+    HealthzAccessLogFilter,
+    configure_logging,
+)
 
 
 def make_access_record(message: str) -> logging.LogRecord:
@@ -92,3 +96,18 @@ def test_configure_logging_does_not_force_existing_logger_levels() -> None:
         assert app_logger.level == logging.WARNING
     finally:
         app_logger.setLevel(original_level)
+
+
+def test_configure_logging_suppresses_sensitive_sdk_debug_output() -> None:
+    original_levels = {
+        logger_name: logging.getLogger(logger_name).level
+        for logger_name in SDK_LOGGERS_WITH_SENSITIVE_DEBUG_OUTPUT
+    }
+    try:
+        configure_logging("DEBUG", "{levelname}:{message}")
+
+        for logger_name in SDK_LOGGERS_WITH_SENSITIVE_DEBUG_OUTPUT:
+            assert logging.getLogger(logger_name).level == logging.WARNING
+    finally:
+        for logger_name, level in original_levels.items():
+            logging.getLogger(logger_name).setLevel(level)

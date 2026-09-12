@@ -121,6 +121,13 @@ jobs:
             --atomic \
             --wait \
             --timeout 15m
+      - name: Report failed rollout state
+        if: failure()
+        run: |
+          helm history aws-csa --namespace customer-service-staging || true
+          kubectl get deployments,replicasets,pods \
+            --namespace customer-service-staging \
+            --output wide || true
       - name: Verify staging rollout
         run: |
           kubectl rollout status deployment/aws-csa-customer-service-app --namespace customer-service-staging --timeout=10m

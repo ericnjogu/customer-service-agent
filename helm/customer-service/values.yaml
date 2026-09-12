@@ -6,6 +6,12 @@ image:
 
 replicaCount: 1
 
+deploymentStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 25%
+    maxUnavailable: 25%
+
 podLabels: {}
 
 service:
@@ -20,6 +26,11 @@ ingress:
 
 web:
   enabled: true
+  deploymentStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
   image:
     repository: customer-service-web
     tag: local

@@ -7,6 +7,14 @@ image:
 podLabels:
   aws-csa/data-access: "true"
 
+# A single node cannot fit the old and replacement application pods together.
+# Replace each replica in place until staging gains additional node capacity.
+deploymentStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 0
+    maxUnavailable: 1
+
 serviceAccount:
   annotations:
     eks.amazonaws.com/role-arn: arn:aws:iam::371664303664:role/ristoh-ai-chatbot-staging-workload
@@ -69,6 +77,11 @@ ingress:
 
 web:
   enabled: true
+  deploymentStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   image:
     repository: 371664303664.dkr.ecr.eu-central-1.amazonaws.com/customer-service-web
     tag: ignored-when-digest-is-set

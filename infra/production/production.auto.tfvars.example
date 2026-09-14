@@ -1,0 +1,6 @@
+cloudflare_zone_id       = "replace-with-zone-id"
+cloudflare_account_id    = "replace-with-account-id"
+origin_ipv4_addresses    = ["192.0.2.11", "192.0.2.12", "192.0.2.13"]
+notification_email      = "operations@example.com"
+# Supply cloudflare_api_token through TF_VAR_cloudflare_api_token, never this file.
+# Supply github_token through TF_VAR_github_token, never this file.

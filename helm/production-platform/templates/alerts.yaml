@@ -1,0 +1,46 @@
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMRule
+metadata:
+  name: production-recovery-readiness
+  namespace: monitoring
+spec:
+  groups:
+    - name: production-backups
+      rules:
+        - alert: ProductionPostgresBackupFailed
+          expr: kube_job_status_failed{namespace="{{ .Values.namespace }}",job_name=~"postgres-(base-backup|force-wal-switch).*"} > 0
+          for: 5m
+          labels: { severity: critical }
+          annotations: { summary: "A production PostgreSQL backup job failed" }
+        - alert: ProductionPostgresBaseBackupStale
+          expr: postgres_base_backup_age_seconds > 93600
+          for: 15m
+          labels: { severity: critical }
+          annotations: { summary: "No successful PostgreSQL base backup in 26 hours" }
+        - alert: ProductionPostgresWalArchiveStale
+          expr: postgres_wal_archive_age_seconds > 900
+          for: 5m
+          labels: { severity: critical }
+          annotations: { summary: "Production PostgreSQL WAL archive is more than 15 minutes old" }
+        - alert: ProductionBackupMetricsMissing
+          expr: absent(postgres_wal_archive_age_seconds) == 1
+          for: 15m
+          labels: { severity: critical }
+          annotations: { summary: "Production backup monitoring is unavailable" }
+    - name: production-capacity
+      rules:
+        - alert: ProductionNodeDiskLow
+          expr: 100 * node_filesystem_avail_bytes{mountpoint="/",fstype!="rootfs"} / node_filesystem_size_bytes{mountpoint="/",fstype!="rootfs"} < 20
+          for: 15m
+          labels: { severity: warning }
+          annotations: { summary: "Production node root filesystem has less than 20% free" }
+        - alert: ProductionCertificateExpiresSoon
+          expr: certmanager_certificate_expiration_timestamp_seconds{namespace="{{ .Values.namespace }}"} - time() < 1209600
+          for: 15m
+          labels: { severity: warning }
+          annotations: { summary: "Production certificate expires in less than 14 days" }
+        - alert: ProductionStorageBoxNearlyFull
+          expr: 100 * storage_box_available_bytes / storage_box_size_bytes < 20
+          for: 15m
+          labels: { severity: warning }
+          annotations: { summary: "Hetzner Storage Box has less than 20% free capacity" }

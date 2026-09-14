@@ -1,0 +1,35 @@
+namespace: customer-service-production
+
+imagePullSecrets:
+  - name: ghcr-pull
+
+postgres:
+  instances: 3
+  image: ghcr.io/cloudnative-pg/postgresql:17.11-202609101439-standard-trixie@sha256:d12317e4365edf4c6237ae6ff5e18d7568a580a5fa8285fae6c385ac5e51d0bf
+  database: risto_css
+  owner: ristoh_ai
+  storage: 40Gi
+  storageClass: local-path
+  resources:
+    requests: { cpu: 250m, memory: 768Mi }
+    limits: { cpu: "2", memory: 2Gi }
+
+redis:
+  image: redis:7.4.5-alpine
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+
+backup:
+  enabled: true
+  image:
+    repository: ghcr.io/ericnjogu/customer-service-agent-postgres-backup
+    digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  storageBoxHost: u000000.your-storagebox.de
+  storageBoxUser: u000000
+  secretName: backup-credentials
+  walIntervalSeconds: 300
+  walBufferStorage: 5Gi
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { cpu: 500m, memory: 512Mi }

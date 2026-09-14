@@ -1,0 +1,59 @@
+---
+- name: Assert supported host configuration
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution == "Ubuntu"
+      - ansible_distribution_version is version('24.04', '>=')
+      - operator_cidr | length > 0
+      - wireguard_address is match('^10\\.50\\.0\\.[0-9]{1,3}$')
+    fail_msg: Ubuntu 24.04+, an operator CIDR and a WireGuard address are required.
+
+- name: Install host packages
+  ansible.builtin.apt:
+    name:
+      - borgbackup
+      - ca-certificates
+      - curl
+      - jq
+      - unattended-upgrades
+      - wireguard
+    state: present
+    update_cache: true
+
+- name: Enable automatic security updates
+  ansible.builtin.service:
+    name: unattended-upgrades
+    enabled: true
+    state: started
+
+- name: Configure UFW defaults
+  ansible.builtin.command: "ufw default {{ item.policy }} {{ item.direction }}"
+  changed_when: false
+  loop:
+    - { direction: incoming, policy: deny }
+    - { direction: outgoing, policy: allow }
+
+- name: Permit public ingress
+  ansible.builtin.command: "ufw allow {{ item }}/tcp"
+  changed_when: false
+  loop: ["80", "443"]
+
+- name: Permit operator SSH
+  ansible.builtin.command: "ufw allow from {{ operator_cidr }} to any port 22 proto tcp"
+  changed_when: false
+
+- name: Permit WireGuard between cluster public addresses
+  ansible.builtin.command: >-
+    ufw allow from {{ hostvars[item].ansible_host }}/32 to any
+    port {{ wireguard_port }} proto udp
+  changed_when: false
+  loop: "{{ groups['k3s_servers'] }}"
+  when: item != inventory_hostname
+
+- name: Trust cluster traffic only on WireGuard
+  ansible.builtin.command: ufw allow in on wg0
+  changed_when: false
+
+- name: Enable firewall
+  ansible.builtin.command: ufw --force enable
+  changed_when: false

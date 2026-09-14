@@ -6,6 +6,8 @@ image:
 
 replicaCount: 1
 
+imagePullSecrets: []
+
 deploymentStrategy:
   type: RollingUpdate
   rollingUpdate:
@@ -23,9 +25,11 @@ ingress:
   className: alb
   host: ""
   annotations: {}
+  tls: []
 
 web:
   enabled: true
+  replicaCount: 1
   deploymentStrategy:
     type: RollingUpdate
     rollingUpdate:
@@ -228,6 +232,7 @@ telemetry:
 
 prompts:
   enabled: false
+  useBundledFiles: false
   mountPath: /etc/aws-csa/prompts
   system: ""
   questionPlanning: ""

@@ -1,0 +1,49 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: production-postgres
+  namespace: {{ .Values.namespace }}
+spec:
+  instances: {{ .Values.postgres.instances }}
+  imageName: {{ .Values.postgres.image | quote }}
+  enableSuperuserAccess: true
+  primaryUpdateStrategy: unsupervised
+  failoverDelay: 0
+  switchoverDelay: 3600
+  bootstrap:
+    initdb:
+      database: {{ .Values.postgres.database | quote }}
+      owner: {{ .Values.postgres.owner | quote }}
+      postInitApplicationSQL:
+        - CREATE EXTENSION IF NOT EXISTS vector
+  postgresql:
+    parameters:
+      max_connections: "100"
+      shared_buffers: 256MB
+      wal_compression: "on"
+      wal_keep_size: 1GB
+  storage:
+    size: {{ .Values.postgres.storage }}
+    storageClass: {{ .Values.postgres.storageClass }}
+  resources:
+    {{- toYaml .Values.postgres.resources | nindent 4 }}
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+    podAntiAffinityType: required
+  monitoring:
+    enablePodMonitor: true
+  managed:
+    services:
+      disabledDefaultServices: []
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: production-postgres
+  namespace: {{ .Values.namespace }}
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      cnpg.io/cluster: production-postgres

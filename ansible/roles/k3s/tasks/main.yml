@@ -1,0 +1,67 @@
+---
+- name: Download pinned k3s installer
+  ansible.builtin.get_url:
+    url: https://raw.githubusercontent.com/k3s-io/k3s/{{ k3s_version | urlencode }}/install.sh
+    dest: /usr/local/sbin/install-k3s.sh
+    mode: "0755"
+
+- name: Install first embedded-etcd server
+  ansible.builtin.command:
+    argv:
+      - /usr/local/sbin/install-k3s.sh
+  environment:
+    INSTALL_K3S_VERSION: "{{ k3s_version }}"
+    K3S_TOKEN: "{{ k3s_token }}"
+    INSTALL_K3S_EXEC: >-
+      server --cluster-init --node-ip={{ wireguard_address }}
+      --advertise-address={{ wireguard_address }} --flannel-iface=wg0
+      --secrets-encryption
+      --tls-san={{ wireguard_address }}
+  args:
+    creates: /etc/systemd/system/k3s.service
+  when: inventory_hostname == groups['k3s_servers'][0]
+  no_log: true
+
+- name: Wait for first server API
+  ansible.builtin.wait_for:
+    host: "{{ hostvars[groups['k3s_servers'][0]].wireguard_address }}"
+    port: 6443
+    timeout: 180
+  when: inventory_hostname != groups['k3s_servers'][0]
+
+- name: Join additional embedded-etcd servers
+  ansible.builtin.command:
+    argv:
+      - /usr/local/sbin/install-k3s.sh
+  environment:
+    INSTALL_K3S_VERSION: "{{ k3s_version }}"
+    K3S_TOKEN: "{{ k3s_token }}"
+    K3S_URL: "https://{{ hostvars[groups['k3s_servers'][0]].wireguard_address }}:6443"
+    INSTALL_K3S_EXEC: >-
+      server --node-ip={{ wireguard_address }}
+      --advertise-address={{ wireguard_address }} --flannel-iface=wg0
+      --secrets-encryption
+      --tls-san={{ wireguard_address }}
+  args:
+    creates: /etc/systemd/system/k3s.service
+  when: inventory_hostname != groups['k3s_servers'][0]
+  no_log: true
+
+- name: Create k3s configuration drop-in directory
+  ansible.builtin.file:
+    path: /etc/rancher/k3s/config.yaml.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Configure scheduled local etcd snapshots
+  ansible.builtin.copy:
+    dest: /etc/rancher/k3s/config.yaml.d/20-snapshots.yaml
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      etcd-snapshot-schedule-cron: "0 */6 * * *"
+      etcd-snapshot-retention: 14
+  notify: Restart k3s

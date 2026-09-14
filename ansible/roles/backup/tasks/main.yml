@@ -1,0 +1,36 @@
+---
+- name: Create backup SSH directory
+  ansible.builtin.file:
+    path: /root/.ssh
+    state: directory
+    mode: "0700"
+
+- name: Install Storage Box SSH key
+  ansible.builtin.copy:
+    content: "{{ storage_box_ssh_private_key }}"
+    dest: /root/.ssh/storage-box
+    mode: "0600"
+  no_log: true
+
+- name: Pin verified Storage Box host key
+  ansible.builtin.known_hosts:
+    path: /root/.ssh/known_hosts
+    name: "[{{ storage_box_host }}]:23"
+    key: "{{ storage_box_known_host }}"
+    state: present
+
+- name: Install cluster-state backup script
+  ansible.builtin.template:
+    src: backup-cluster-state.sh.j2
+    dest: /usr/local/sbin/backup-cluster-state
+    mode: "0700"
+  no_log: true
+
+- name: Schedule cluster-state backups on first server
+  ansible.builtin.cron:
+    name: Back up k3s state to Hetzner Storage Box
+    minute: "17"
+    hour: "*/6"
+    user: root
+    job: /usr/local/sbin/backup-cluster-state
+  when: inventory_hostname == groups['k3s_servers'][0]

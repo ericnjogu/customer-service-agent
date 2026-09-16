@@ -15,7 +15,7 @@ and encrypt the `secretTemplates` structure:
 
 ```bash
 sops encrypt --age "$SOPS_AGE_RECIPIENTS" \
-  --encrypted-suffix Templates --mac-only-encrypted \
+  --encrypted-suffix Templates \
   /private/tmp/production-secrets.yaml \
   > gitops/production/secrets/production-secrets.enc.yaml
 ```

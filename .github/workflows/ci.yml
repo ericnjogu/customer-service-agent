@@ -52,7 +52,7 @@ jobs:
             --set-file prompts.websiteAnalysis=app/prompt_templates/website-analysis.md \
             --set-file prompts.websiteResearch=app/prompt_templates/website-research.md
           helm template production-platform helm/production-platform > /tmp/platform.yaml
-          helm template aws-csa helm/customer-service -n customer-service-production \
+          helm template one-css helm/customer-service -n customer-service-production \
             -f helm/customer-service/values-production.yaml \
             --set prompts.useBundledFiles=false \
             --set-file prompts.system=app/prompt_templates/system.md \

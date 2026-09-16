@@ -1040,7 +1040,7 @@ The canonical prompts live in `app/prompt_templates/`. Staging enables the chart
 `prompts` ConfigMap and supplies those files with Helm's `--set-file` support:
 
 ```bash
-helm upgrade --install aws-csa helm/customer-service \
+helm upgrade --install one-css helm/customer-service \
   --set-file prompts.system=app/prompt_templates/system.md \
   --set-file prompts.questionPlanning=app/prompt_templates/question-planning.md \
   --set-file prompts.websiteAnalysis=app/prompt_templates/website-analysis.md \

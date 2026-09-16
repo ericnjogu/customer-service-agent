@@ -12,7 +12,7 @@ spec:
       targetRevision: deploy/production
       path: helm/customer-service
       helm:
-        releaseName: aws-csa
+        releaseName: one-css
         valueFiles: [values-production.yaml]
   destination: { server: https://kubernetes.default.svc, namespace: customer-service-production }
   syncPolicy:

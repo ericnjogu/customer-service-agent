@@ -39,6 +39,8 @@ spec:
             exec: { command: ["redis-cli", "ping"] }
           securityContext:
             allowPrivilegeEscalation: false
-            capabilities: { drop: ["ALL"] }
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "SETGID", "SETUID"]
           resources:
             {{- toYaml .Values.redis.resources | nindent 12 }}

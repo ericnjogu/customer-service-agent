@@ -1,0 +1,37 @@
+all:
+  vars:
+    ansible_user: administrator
+    ansible_python_interpreter: /usr/bin/python3
+    cluster_name: ristoh-production
+    k3s_version: v1.35.8+k3s1
+    k3s_token: "SET_WITH_ANSIBLE_VAULT"
+    operator_cidr: 192.0.2.10/32
+    wireguard_port: 51820
+    wireguard_network: 10.50.0.0/24
+    wireguard_private_key: "SET_PER_HOST_WITH_ANSIBLE_VAULT"
+    fil_one_endpoint: https://eu-west-1.s3.filonecontent.com
+    fil_one_bucket: ristoh-css-postgres
+    fil_one_access_key_id: "SET_WITH_ANSIBLE_VAULT"
+    fil_one_secret_access_key: "SET_WITH_ANSIBLE_VAULT"
+    restic_password: "SET_WITH_ANSIBLE_VAULT"
+  children:
+    k3s_servers:
+      hosts:
+        production-1:
+          ansible_host: 192.0.2.11
+          wireguard_address: 10.50.0.11
+          wireguard_peers:
+            - { public_key: "NODE_2_PUBLIC_KEY", endpoint: "192.0.2.12:51820", allowed_ip: "10.50.0.12/32" }
+            - { public_key: "NODE_3_PUBLIC_KEY", endpoint: "192.0.2.13:51820", allowed_ip: "10.50.0.13/32" }
+        production-2:
+          ansible_host: 192.0.2.12
+          wireguard_address: 10.50.0.12
+          wireguard_peers:
+            - { public_key: "NODE_1_PUBLIC_KEY", endpoint: "192.0.2.11:51820", allowed_ip: "10.50.0.11/32" }
+            - { public_key: "NODE_3_PUBLIC_KEY", endpoint: "192.0.2.13:51820", allowed_ip: "10.50.0.13/32" }
+        production-3:
+          ansible_host: 192.0.2.13
+          wireguard_address: 10.50.0.13
+          wireguard_peers:
+            - { public_key: "NODE_1_PUBLIC_KEY", endpoint: "192.0.2.11:51820", allowed_ip: "10.50.0.11/32" }
+            - { public_key: "NODE_2_PUBLIC_KEY", endpoint: "192.0.2.12:51820", allowed_ip: "10.50.0.12/32" }

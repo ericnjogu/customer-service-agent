@@ -1,14 +1,7 @@
-{{- if and .Values.exporters.aws.enabled (not .Values.serviceAccount.roleArn) }}
-{{- fail "serviceAccount.roleArn is required when AWS exporters are enabled" }}
-{{- end }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: otel-collector
-  annotations:
-    {{- if .Values.serviceAccount.roleArn }}
-    eks.amazonaws.com/role-arn: {{ .Values.serviceAccount.roleArn | quote }}
-    {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -137,31 +130,11 @@ data:
     exporters:
       debug:
         verbosity: basic
-      {{- if .Values.exporters.aws.enabled }}
-      awscloudwatchlogs:
-        region: {{ .Values.region }}
-        log_group_name: {{ .Values.exporters.aws.containerLogGroup }}
-        log_stream_name: otel-${env:K8S_NODE_NAME}
-      awsemf:
-        region: {{ .Values.region }}
-        namespace: {{ .Values.exporters.aws.metricsNamespace }}
-        log_group_name: {{ .Values.exporters.aws.metricsLogGroup }}
-        log_stream_name: otel-${env:K8S_NODE_NAME}
-        dimension_rollup_option: NoDimensionRollup
-        resource_to_telemetry_conversion:
-          enabled: true
-        metric_declarations:
-          - dimensions:
-              - [ClusterName, Environment, k8s.namespace.name, k8s.pod.name, k8s.container.name]
-            metric_name_selectors: [^container\.(cpu\.usage|memory\.(usage|working_set))$]
-          - dimensions:
-              - [ClusterName, Environment, k8s.namespace.name, k8s.pod.name]
-            metric_name_selectors: [^k8s\.pod\.(cpu\.usage|memory\.(usage|working_set))$]
-          - dimensions:
-              - [ClusterName, Environment, k8s.node.name]
-            metric_name_selectors: [^k8s\.node\.(cpu\.usage|memory\.(usage|working_set))$]
-      awsxray:
-        region: {{ .Values.region }}
+      {{- if .Values.exporters.otlp.enabled }}
+      otlphttp/metrics:
+        endpoint: {{ required "exporters.otlp.metricsEndpoint is required" .Values.exporters.otlp.metricsEndpoint | quote }}
+      otlphttp/logs:
+        endpoint: {{ required "exporters.otlp.logsEndpoint is required" .Values.exporters.otlp.logsEndpoint | quote }}
       {{- end }}
     service:
       extensions: [file_storage, health_check]
@@ -169,15 +142,15 @@ data:
         logs:
           receivers: [filelog, otlp]
           processors: [memory_limiter, k8sattributes, resource/common, batch]
-          exporters: [{{ if .Values.exporters.aws.enabled }}awscloudwatchlogs{{ else }}debug{{ end }}]
+          exporters: [{{ if .Values.exporters.otlp.enabled }}otlphttp/logs{{ else }}debug{{ end }}]
         metrics:
           receivers: [kubeletstats, otlp]
           processors: [memory_limiter, filter/selected_metrics, k8sattributes, resource/common, batch]
-          exporters: [{{ if .Values.exporters.aws.enabled }}awsemf{{ else }}debug{{ end }}]
+          exporters: [{{ if .Values.exporters.otlp.enabled }}otlphttp/metrics{{ else }}debug{{ end }}]
         traces:
           receivers: [otlp]
           processors: [memory_limiter, k8sattributes, resource/common, batch]
-          exporters: [{{ if .Values.exporters.aws.enabled }}awsxray{{ else }}debug{{ end }}]
+          exporters: [debug]
 ---
 apiVersion: apps/v1
 kind: DaemonSet

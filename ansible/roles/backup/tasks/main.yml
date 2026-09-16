@@ -1,0 +1,30 @@
+---
+- name: Create root backup configuration directory
+  ansible.builtin.file:
+    path: /root/.config
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install fil.one backup environment
+  ansible.builtin.template:
+    src: fil-one.env.j2
+    dest: /root/.config/fil-one-backup.env
+    mode: "0600"
+  no_log: true
+
+- name: Install cluster-state backup script
+  ansible.builtin.template:
+    src: backup-cluster-state.sh.j2
+    dest: /usr/local/sbin/backup-cluster-state
+    mode: "0700"
+
+- name: Schedule encrypted cluster-state backups on first server
+  ansible.builtin.cron:
+    name: Back up k3s state to fil.one
+    minute: "17"
+    hour: "*/6"
+    user: root
+    job: /usr/local/sbin/backup-cluster-state
+  when: inventory_hostname == groups['k3s_servers'][0]

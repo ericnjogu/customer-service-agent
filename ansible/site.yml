@@ -1,0 +1,10 @@
+---
+- name: Prepare production k3s servers
+  hosts: k3s_servers
+  become: true
+  serial: 1
+  roles:
+    - { role: common, tags: [common] }
+    - { role: wireguard, tags: [wireguard] }
+    - { role: k3s, tags: [k3s] }
+    - { role: backup, tags: [backup] }

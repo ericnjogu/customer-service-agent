@@ -9,16 +9,14 @@ serviceAccount:
 
 environment: local
 clusterName: rancher-desktop
-region: eu-central-1
 collectionInterval: 60s
 configRevision: ""
 
 exporters:
-  aws:
+  otlp:
     enabled: false
-    containerLogGroup: ""
-    metricsLogGroup: ""
-    metricsNamespace: RistohAiChatbot/EKS
+    metricsEndpoint: ""
+    logsEndpoint: ""
 
 resources:
   requests:

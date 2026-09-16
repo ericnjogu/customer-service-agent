@@ -1,5 +1,8 @@
 .venv/
 .uv-cache/
+.uv-tools/
+.uv-bin/
+.ansible-collections/
 node_modules/
 __pycache__/
 .pytest_cache/
@@ -20,3 +23,8 @@ private-deploy-local.sh
 !*.auto.tfvars.example
 infra/**/backend.hcl
 infra/**/generated.auto.tfvars.json
+ansible/inventory/production.yml
+ansible/vault-password*
+private/
+*.agekey
+gitops/production/secrets/production-secrets.yaml

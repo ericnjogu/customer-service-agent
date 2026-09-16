@@ -6,7 +6,10 @@ generation, and configurable retrieval/answer boundaries. Helm deploys the servi
 PostgreSQL and pgvector. No external LLM key is needed for the default local path: a
 deterministic extractive generator and local hash embeddings make the workflow inspectable
 and reproducible.
-f
+
+Production runs on a three-server k3s cluster and is delivered through Argo CD. See
+[infra/README.md](infra/README.md) for provisioning, GitOps, secrets and recovery steps.
+
 ## What works
 
 - Customer message ingestion through `POST /messages/customer`.
@@ -1037,7 +1040,7 @@ The canonical prompts live in `app/prompt_templates/`. Staging enables the chart
 `prompts` ConfigMap and supplies those files with Helm's `--set-file` support:
 
 ```bash
-helm upgrade --install aws-csa helm/customer-service \
+helm upgrade --install one-css helm/customer-service \
   --set-file prompts.system=app/prompt_templates/system.md \
   --set-file prompts.questionPlanning=app/prompt_templates/question-planning.md \
   --set-file prompts.websiteAnalysis=app/prompt_templates/website-analysis.md \

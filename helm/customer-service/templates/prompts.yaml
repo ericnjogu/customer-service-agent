@@ -7,11 +7,27 @@ metadata:
     {{- include "customer-service.labels" . | nindent 4 }}
 data:
   system.md: |-
+    {{- if .Values.prompts.useBundledFiles }}
+    {{- required "files/prompts/system.md is required" (.Files.Get "files/prompts/system.md") | nindent 4 }}
+    {{- else }}
     {{- required "prompts.system is required when prompts.enabled=true" .Values.prompts.system | nindent 4 }}
+    {{- end }}
   question-planning.md: |-
+    {{- if .Values.prompts.useBundledFiles }}
+    {{- required "files/prompts/question-planning.md is required" (.Files.Get "files/prompts/question-planning.md") | nindent 4 }}
+    {{- else }}
     {{- required "prompts.questionPlanning is required when prompts.enabled=true" .Values.prompts.questionPlanning | nindent 4 }}
+    {{- end }}
   website-analysis.md: |-
+    {{- if .Values.prompts.useBundledFiles }}
+    {{- required "files/prompts/website-analysis.md is required" (.Files.Get "files/prompts/website-analysis.md") | nindent 4 }}
+    {{- else }}
     {{- required "prompts.websiteAnalysis is required when prompts.enabled=true" .Values.prompts.websiteAnalysis | nindent 4 }}
+    {{- end }}
   website-research.md: |-
+    {{- if .Values.prompts.useBundledFiles }}
+    {{- required "files/prompts/website-research.md is required" (.Files.Get "files/prompts/website-research.md") | nindent 4 }}
+    {{- else }}
     {{- required "prompts.websiteResearch is required when prompts.enabled=true" .Values.prompts.websiteResearch | nindent 4 }}
+    {{- end }}
 {{- end }}

@@ -61,7 +61,7 @@ metadata:
   labels:
     {{- include "customer-service.labels" . | nindent 4 }}
 spec:
-  replicas: 1
+  replicas: {{ .Values.web.replicaCount }}
   strategy:
     {{- toYaml .Values.web.deploymentStrategy | nindent 4 }}
   selector:
@@ -74,6 +74,20 @@ spec:
         app.kubernetes.io/component: web
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if gt (int .Values.web.replicaCount) 1 }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/component: web
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      {{- end }}
       containers:
         - name: web
           image: {{ include "customer-service.image" .Values.web.image | quote }}

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+set -a
+source /root/.config/fil-one-backup.env
+set +a
+
+restic snapshots >/dev/null 2>&1 || restic init
+restic backup \
+  /var/lib/rancher/k3s/server/db/snapshots \
+  /var/lib/rancher/k3s/server/cred \
+  /etc/rancher/k3s
+restic forget --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune

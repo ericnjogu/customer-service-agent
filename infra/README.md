@@ -1,200 +1,105 @@
-# OpenTofu infrastructure
+# Production infrastructure
 
-OpenTofu 1.12.x owns the replacement platform. State is split into four roots and all
-Regional resources are fixed to `eu-central-1`:
+The production platform consists of three one.com Cloud Server M instances and a
+private fil.one S3-compatible bucket. OpenTofu manages Cloudflare DNS/load balancing. Ansible
+configures the hosts, WireGuard and k3s. Argo CD manages Kubernetes workloads.
 
-1. `bootstrap`: S3 state storage and repository-scoped GitHub OIDC roles.
-2. `platform`: VPC, EKS managed EC2 capacity, add-ons, logging, and the two imported ECR
-   repositories.
-3. `staging`: fresh PostgreSQL, Valkey, security groups, and workload IRSA.
-4. `cluster-bootstrap`: External Secrets Operator, AWS Load Balancer Controller, the
-   OpenTelemetry collector, and shared Kubernetes resources that are not owned by the
-   application release.
+## Inputs that must remain outside Git
 
-The GitHub OIDC trust uses the immutable owner and repository IDs emitted in this
-repository's token subject. If the repository is transferred or recreated, update
-`github_oidc_repository` from the subject observed in CloudTrail before applying the
-bootstrap root.
+- Three public server addresses and verified SSH host keys.
+- Per-node WireGuard private keys and the shared k3s token.
+- The operator CIDR.
+- Cloudflare API token, zone ID and notification address, plus a fine-grained GitHub
+  token allowed to manage Actions variables for this repository.
+- fil.one access key, secret key, and a Restic repository password.
+- Production age private key and application secret values.
 
-The cluster-bootstrap root installs External Secrets Operator 2.8.0. Its controller
-uses IRSA to read only `ristoh-ai-chatbot/staging/api-keys` and
-`ristoh-ai-chatbot/staging/app-configs` from Secrets Manager. It maintains the `api-keys`
-and `app-configs` Kubernetes Secrets in `customer-service-staging`. The latter contains
-the email settings and `AGENT_WEBHOOK_PUBLIC_BASE_URL`; secret values remain
-outside Git and OpenTofu state.
-
-The platform root also creates `ristoh-ai-chatbot-kubernetes-operator`, a role with no
-AWS service permissions. Its EKS access entry maps it to namespace-scoped Kubernetes
-RBAC installed by the cluster-bootstrap root. The base IAM user can only refresh its
-local AWS login and assume this role. Use the role for routine `kubectl` access; the
-cluster creator's administrator access is reserved for local infrastructure bootstrap.
-
-After both roots have been applied, create the operator context and make it current:
+Copy `ansible/inventory/production.example.yml` to the ignored
+`ansible/inventory/production.yml` and encrypt its secret variables with
+`ansible-vault`. Copy `infra/production/production.auto.tfvars.example` to an
+untracked `.auto.tfvars` file and export the Cloudflare token:
 
 ```bash
-AWS_PROFILE=kubernetes-operator-base aws eks update-kubeconfig \
-  --region eu-central-1 \
-  --name ristoh-ai-chatbot \
-  --alias ristoh-ai-chatbot-operator \
-  --user-alias ristoh-ai-chatbot-operator \
-  --role-arn arn:aws:iam::371664303664:role/ristoh-ai-chatbot-kubernetes-operator
-kubectl config set-context ristoh-ai-chatbot-operator --namespace customer-service-staging
+export TF_VAR_cloudflare_api_token='...'
+export TF_VAR_github_token='...'
+tofu -chdir=infra/production init -backend-config=backend.hcl
+tofu -chdir=infra/production plan -out=production.tfplan
+tofu -chdir=infra/production apply production.tfplan
 ```
 
-The operator can inspect pods, workloads, services, endpoints and events; read pod logs;
-and port-forward pods in `customer-service-staging`. It cannot read Secrets, exec into
-pods, administer RBAC or namespaces, or create/delete workloads.
+The example backend deliberately uses an ignored local state path. Store an
+encrypted copy of state with the recovery material; it contains origin addresses
+and Cloudflare identifiers but no token.
 
-Create an untracked `backend.hcl` in each root from its example. Create
-`infra/platform/operator.auto.tfvars` containing the operator's current restricted public
-CIDR. Never commit that file.
+## Bootstrap order
 
-Bootstrap the state bucket once with local state, then migrate that root. On a brand-new
-project, temporarily comment out the `backend "s3" {}` block in
-`infra/bootstrap/versions.tf` for the initial `init` and `apply`; restore it before the
-migration command. (`-backend=false` alone does not override a declared backend for an
-apply.)
-
-```bash
-AWS_PROFILE=new-project tofu -chdir=infra/bootstrap init
-AWS_PROFILE=new-project tofu -chdir=infra/bootstrap apply
-cp infra/bootstrap/backend.hcl.example infra/bootstrap/backend.hcl
-AWS_PROFILE=new-project tofu -chdir=infra/bootstrap init -migrate-state -backend-config=backend.hcl
-```
-
-For each remaining root, copy the backend example, initialize, save and inspect a plan,
-then apply locally in order. OpenTofu applies are intentionally absent from GitHub Actions.
-
-```bash
-AWS_PROFILE=new-project tofu -chdir=infra/platform init -backend-config=backend.hcl
-AWS_PROFILE=new-project tofu -chdir=infra/platform plan -out=platform.tfplan
-AWS_PROFILE=new-project tofu -chdir=infra/platform apply platform.tfplan
-```
-
-Repeat for `staging` and `cluster-bootstrap`. Before cluster bootstrap, update
-`values-staging.yaml` from the staging outputs. The checked-in staging profile deliberately
-uses local/extractive providers, but its optional remote integrations reference the
-External Secrets-managed `api-keys` Secret without checking values into Git.
-
-The ECR `import` blocks intentionally transfer only `customer-service` and
-`customer-service-web`. OpenTofu never adopts or destroys the old eksctl/CloudFormation
-platform.
-
-## EKS compute and logging
-
-The cluster uses one On-Demand `c6a.large` managed node running Amazon Linux 2023. The
-node group starts and stays at one node, with a configured maximum of two for a later
-manual scaling change. A 30 GiB encrypted gp3 root volume and IMDSv2 are enforced by the
-launch template. Create-before-destroy node-group replacement avoids removing healthy
-capacity before its replacement is ready.
-
-The VPC CNI enables Security Groups for Pods. The `c6a.large` supplies trunk and branch
-ENI capacity so the application pod keeps its dedicated staging workload security group;
-RDS and Valkey do not trust the node-wide security group. The OpenTelemetry Collector runs as a
-DaemonSet and sends EC2 container logs to `/aws/eks/ristoh-ai-chatbot/containers`, which
-has seven-day retention. The former Fargate log group remains temporarily for its
-30-day historical-log retention, but no Fargate profiles or pod-execution role remain.
-
-CoreDNS and Metrics Server each run one replica for this single-node staging environment.
-This is intentionally not highly available: node replacement or failure can interrupt
-staging until EKS restores capacity. Increase the node-group desired/minimum size before
-using this topology for production.
-
-## Unified OpenTelemetry collection
-
-The cluster-bootstrap root installs the pinned local `observability-collector` chart in
-`amazon-cloudwatch`. One collector runs on every Linux EC2 node. Its `filelog` receiver
-tails Kubernetes container stdout/stderr, `kubeletstats` collects at 60-second intervals,
-and OTLP receives application traces. Staging exports these signals to the existing
-container log group, the `RistohAiChatbot/EKS` metric namespace through EMF, and X-Ray.
-
-The metrics pipeline allow-lists container, pod, and node CPU usage plus memory usage and
-working set. Filesystem, disk, network, process, and other Kubernetes metrics are dropped
-before export. Metric declarations constrain dimensions and remove container IDs and pod
-UIDs. The `ristoh-ai-chatbot-staging` dashboard focuses on attributed container CPU and
-memory. The automatic `AWS/EC2` CPU metric remains available as the node-wide overview.
-
-Application traces use standard OpenTelemetry instrumentation. Root spans carry
-`app.tenant.id` and `app.tenant.slug` wherever already known, and those attributes are
-paired with X-Ray-safe `tenant_id` and `tenant_slug` searchable annotations. Prompts,
-messages, contact details, and secrets are not attached. Trace and span IDs are injected
-into application logs for correlation.
-LangSmith remains responsible for LLM-specific traces and evaluations; Metrics Server
-continues to power `kubectl top`.
-
-Locally, `scripts/deploy-local.sh` installs the same chart into Rancher Desktop with AWS
-exporters disabled. Logs, selected metrics, and traces use the collector's debug exporter,
-so no local telemetry is sent to AWS. The application sends OTLP to the in-cluster
-collector Service. A local OTLP-compatible backend such as Jaeger or Tempo can replace
-the debug exporter later without changing application instrumentation.
-
-The collector replaced AWS for Fluent Bit after its CloudWatch log delivery and file
-checkpoints were verified during a brief duplicate-log validation window.
-
-## Staging delivery
-
-Merges to `main` build immutable `linux/amd64` images on GitHub-hosted runners and push
-the full commit SHA to the two ECR repositories. The deployment job runs on the ephemeral
-CodeBuild runner `ristoh-ai-chatbot-staging-deploy` in the private workload subnets. It
-assumes `ristoh-ai-chatbot-github-staging-deploy`, connects to the private EKS endpoint,
-and runs Helm with the two resolved image digests. When no Helm release exists yet, the
-first run reads and adopts the exact digests already running in staging; subsequent runs
-deploy the newly built digests. CodeBuild terminates the runner after the single job;
-there is no continuously running delivery controller.
-
-The OpenTofu-created CodeConnections resource remains `PENDING` until a project
-administrator completes its GitHub App authorization once:
-
-1. Apply `bootstrap` to create the deployment role. Initialize `platform`, then create
-   only the pending connection and copy its ARN:
+1. Verify the provisioned Ubuntu 26.04 hosts and add their SSH host fingerprints locally.
+2. Generate unique WireGuard and age keys; store recovery copies independently.
+3. Install the pinned Ansible version used by CI.
+4. Run `ansible-playbook ansible/site.yml --ask-vault-pass` twice; the second run
+   must report no unexpected changes.
+5. Copy `/etc/rancher/k3s/k3s.yaml` from the first server and keep it in an ignored,
+   mode-`0600` file. Keep the Kubernetes API private: either replace its server address
+   with a WireGuard address on an operator device connected to that mesh, or use
+   `https://127.0.0.1:6443` while an SSH tunnel is active:
 
    ```bash
-   AWS_PROFILE=root-infra-bootstrap tofu -chdir=infra/platform apply \
-     -target=aws_codeconnections_connection.github
+   ssh -f -N -i /path/to/operator-key \
+     -L 127.0.0.1:6443:10.50.0.11:6443 administrator@ORIGIN_1_PUBLIC_IP
+   export KUBECONFIG="$PWD/local-docs/production-kubeconfig"
    ```
-2. In AWS Console, select `eu-central-1`, then open Developer Tools → Settings →
-   Connections. Select the pending connection and choose **Update pending connection**
-   to authorize the AWS Connector for GitHub.
-3. In GitHub, verify the AWS Connector for GitHub is installed—not merely listed under
-   authorized applications—and grant it access only to
-   `ericnjogu/customer-service-agent`. If the connection is already `AVAILABLE` but
-   CodeBuild cannot create its webhook, install it directly from
-   <https://github.com/apps/aws-connector-for-github/installations/new>.
-4. Confirm the connection status is `AVAILABLE`, then run and apply a reviewed `platform`
-   plan. This creates the runner and webhook.
 
-The deployment role is mapped only to the `ristoh-ai-chatbot-staging-deployer` Kubernetes
-group. Helm uses the ConfigMap storage driver so CI has no permission to read Kubernetes
-Secrets. Application RBAC for tenant Telegram Secret access is owned by the locally
-applied cluster-foundation chart instead of the CI-managed application chart.
+   Do not expose TCP 6443 publicly. Copy the full CA-bound server token from
+   `/var/lib/rancher/k3s/server/token` into separately protected recovery material.
+   SSH is allowlisted to `operator_cidr`. Before moving to a network with a new
+   public address, update that CIDR and rerun the `common` role. If access is
+   already blocked, use the one.com browser/serial console to add the new `/32`;
+   do not temporarily open SSH to the internet.
+6. Export the fil.one and Restic variables required by
+   `scripts/init-fil-one-backups.sh`, initialize the encrypted cluster-state
+   repository, then verify it with `scripts/check-production-backups.sh`.
+7. Merge the deployment configuration so GitHub Actions creates `deploy/production`
+   with real GHCR digests.
+8. Install Helm 3, set `SOPS_AGE_KEY_FILE`, and run
+   `scripts/bootstrap-production.sh`. Helm 4 is intentionally rejected because the
+   pinned Argo CD chart has been validated with Helm 3. If both are installed, set
+   `HELM_BIN` to the Helm 3 binary.
+9. Commit the encrypted `SopsSecret`, then wait for Argo applications to become
+   `Synced` and `Healthy`.
+10. Confirm every origin directly with
+    `curl --resolve css.ristoh.co.ke:443:ORIGIN_IP https://css.ristoh.co.ke/api/healthz`.
+11. Apply the Cloudflare plan only after all three direct checks succeed.
 
-Manual rollback uses the administrator context and the same Helm driver:
+## Networking
 
-```bash
-HELM_DRIVER=configmap helm --kube-context ristoh-ai-chatbot-admin rollback aws-csa \
-  --namespace customer-service-staging
-```
+k3s uses WireGuard addresses for the Kubernetes API, embedded etcd and Flannel.
+UFW permits public TCP 80/443, WireGuard UDP between the three origins, and SSH only
+from the operator CIDR. All cluster ports are accepted only on `wg0`. The bundled k3s
+ServiceLB publishes Traefik on every node so Cloudflare can health-check each origin.
 
-## Argo CD retirement
+## Database and recovery
 
-Argo CD has been retired. CodeBuild owns staging deployment execution, and no Argo
-namespace, CRDs, controller, or Fargate profile should be recreated. OpenTofu applies
-remain local; GitHub Actions can deploy the application but cannot apply infrastructure.
+CloudNativePG keeps three local-storage PostgreSQL instances on distinct nodes. Local
+volumes are not independently durable; quorum replication and the off-cluster copy
+are both required. The fil.one bucket is never mounted as the live database filesystem.
 
-## Public staging endpoint
+The official Barman Cloud CNPG-I plugin continuously archives WAL files and creates
+a daily physical base backup under `s3://ristoh-css-postgres/production/postgresql`.
+The 180-day recovery window retains at least six months of daily recovery points.
+CloudNativePG's five-minute default `archive_timeout` keeps the expected RPO below
+15 minutes. A complete point-in-time restore drill must pass before production launch.
 
-The platform root requests an ACM certificate for `staging.css.ristoh.co.ke` and outputs
-the DNS validation CNAME. Because the `ristoh.co.ke` authoritative DNS service is external
-to AWS, create that record with the DNS provider and wait for the certificate to become
-`ISSUED`. The cluster-bootstrap root installs AWS Load Balancer Controller 3.5.0, and the
-staging Helm release creates an internet-facing HTTPS ALB for the web service. After the
-Ingress reports an ALB hostname, create this external DNS record:
+An encrypted Restic repository under `production/cluster-state` protects k3s
+snapshots and credentials every six hours with 7 daily, 4 weekly and 6 monthly
+snapshots. Preserve the Restic password and age key somewhere other than GitHub,
+the cluster, and fil.one. Enable bucket versioning/object retention when fil.one
+supports it, and rotate backup credentials independently of application credentials.
+The fil.one credentials must permit object deletion within the production prefixes:
+Barman retention and `restic forget --prune` cannot enforce retention otherwise.
 
-```text
-staging.css.ristoh.co.ke CNAME <ingress ALB hostname>
-```
+## Operations
 
-The browser URL is `https://staging.css.ristoh.co.ke`; nginx proxies `/api/*` to the
-private API service. Set `AGENT_WEBHOOK_PUBLIC_BASE_URL` in the
-`ristoh-ai-chatbot/staging/app-configs` AWS secret to
-`https://staging.css.ristoh.co.ke/api` so Telegram receives the public API route.
+Run `scripts/validate-production.sh` after deployments and node maintenance. Test
+failure one server at a time and confirm etcd quorum, PostgreSQL primary continuity,
+Argo health and public ingress. Never test two simultaneous node failures: three-node
+etcd and PostgreSQL designs tolerate one.

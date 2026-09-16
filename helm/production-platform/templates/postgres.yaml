@@ -43,14 +43,3 @@ spec:
   managed:
     services:
       disabledDefaultServices: []
----
-apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata:
-  name: production-postgres
-  namespace: {{ .Values.namespace }}
-spec:
-  minAvailable: 2
-  selector:
-    matchLabels:
-      cnpg.io/cluster: production-postgres

@@ -21,3 +21,7 @@ sops encrypt --age "$SOPS_AGE_RECIPIENTS" \
 ```
 
 The encrypted output is safe to commit. Confirm it contains no plaintext values.
+
+The `backup-credentials` template uses fil.one S3-compatible credentials. The same
+key may be used during bootstrap, but production should use a rotated key scoped to
+the private `ristoh-css-postgres` bucket.

@@ -22,14 +22,9 @@ redis:
 
 backup:
   enabled: true
-  image:
-    repository: ghcr.io/ericnjogu/customer-service-agent-postgres-backup
-    digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-  storageBoxHost: u000000.your-storagebox.de
-  storageBoxUser: u000000
+  endpointURL: https://eu-west-1.s3.filonecontent.com
+  bucket: ristoh-css-postgres
+  prefix: production/postgresql
   secretName: backup-credentials
-  walIntervalSeconds: 300
-  walBufferStorage: 5Gi
-  resources:
-    requests: { cpu: 25m, memory: 64Mi }
-    limits: { cpu: 500m, memory: 512Mi }
+  retentionPolicy: 180d
+  schedule: "0 31 1 * * *"

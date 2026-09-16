@@ -33,6 +33,13 @@ spec:
     podAntiAffinityType: required
   monitoring:
     enablePodMonitor: true
+  {{- if .Values.backup.enabled }}
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: production-postgres-backup
+  {{- end }}
   managed:
     services:
       disabledDefaultServices: []

@@ -4,7 +4,7 @@
   become: true
   serial: 1
   roles:
-    - common
-    - wireguard
-    - k3s
-    - backup
+    - { role: common, tags: [common] }
+    - { role: wireguard, tags: [wireguard] }
+    - { role: k3s, tags: [k3s] }
+    - { role: backup, tags: [backup] }

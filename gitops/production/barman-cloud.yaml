@@ -1,22 +1,21 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: cloudnative-pg
+  name: barman-cloud
   namespace: argocd
   annotations:
-    argocd.argoproj.io/sync-wave: "5"
+    argocd.argoproj.io/sync-wave: "6"
 spec:
   project: default
   source:
     repoURL: https://cloudnative-pg.github.io/charts
-    chart: cloudnative-pg
-    targetRevision: 0.29.0
+    chart: plugin-barman-cloud
+    targetRevision: 0.7.1
     helm:
       valuesObject:
-        replicaCount: 2
         resources:
-          requests: { cpu: 50m, memory: 128Mi }
-          limits: { cpu: 500m, memory: 512Mi }
+          requests: { cpu: 25m, memory: 64Mi }
+          limits: { cpu: 250m, memory: 256Mi }
   destination: { server: https://kubernetes.default.svc, namespace: cnpg-system }
   syncPolicy:
     automated: { prune: true, selfHeal: true }

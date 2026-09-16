@@ -8,22 +8,17 @@ spec:
     - name: production-backups
       rules:
         - alert: ProductionPostgresBackupFailed
-          expr: kube_job_status_failed{namespace="{{ .Values.namespace }}",job_name=~"postgres-(base-backup|force-wal-switch).*"} > 0
+          expr: barman_cloud_cloudnative_pg_io_last_failed_backup_timestamp{namespace="{{ .Values.namespace }}"} > barman_cloud_cloudnative_pg_io_last_available_backup_timestamp{namespace="{{ .Values.namespace }}"}
           for: 5m
           labels: { severity: critical }
           annotations: { summary: "A production PostgreSQL backup job failed" }
         - alert: ProductionPostgresBaseBackupStale
-          expr: postgres_base_backup_age_seconds > 93600
+          expr: time() - barman_cloud_cloudnative_pg_io_last_available_backup_timestamp{namespace="{{ .Values.namespace }}"} > 93600
           for: 15m
           labels: { severity: critical }
           annotations: { summary: "No successful PostgreSQL base backup in 26 hours" }
-        - alert: ProductionPostgresWalArchiveStale
-          expr: postgres_wal_archive_age_seconds > 900
-          for: 5m
-          labels: { severity: critical }
-          annotations: { summary: "Production PostgreSQL WAL archive is more than 15 minutes old" }
         - alert: ProductionBackupMetricsMissing
-          expr: absent(postgres_wal_archive_age_seconds) == 1
+          expr: absent(barman_cloud_cloudnative_pg_io_last_available_backup_timestamp{namespace="{{ .Values.namespace }}"}) == 1
           for: 15m
           labels: { severity: critical }
           annotations: { summary: "Production backup monitoring is unavailable" }
@@ -39,8 +34,8 @@ spec:
           for: 15m
           labels: { severity: warning }
           annotations: { summary: "Production certificate expires in less than 14 days" }
-        - alert: ProductionStorageBoxNearlyFull
-          expr: 100 * storage_box_available_bytes / storage_box_size_bytes < 20
+        - alert: ProductionPersistentVolumeNearlyFull
+          expr: 100 * kubelet_volume_stats_available_bytes{namespace="{{ .Values.namespace }}"} / kubelet_volume_stats_capacity_bytes{namespace="{{ .Values.namespace }}"} < 20
           for: 15m
           labels: { severity: warning }
-          annotations: { summary: "Hetzner Storage Box has less than 20% free capacity" }
+          annotations: { summary: "A production persistent volume has less than 20% free capacity" }

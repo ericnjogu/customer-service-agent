@@ -16,7 +16,6 @@ concurrency:
 env:
   APP_IMAGE: ghcr.io/${{ github.repository }}
   WEB_IMAGE: ghcr.io/${{ github.repository }}-web
-  BACKUP_IMAGE: ghcr.io/${{ github.repository }}-postgres-backup
 
 jobs:
   publish:
@@ -48,24 +47,13 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ${{ env.WEB_IMAGE }}:${{ github.sha }}
-      - name: Build and push PostgreSQL backup utility
-        id: backup
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6
-        with:
-          context: ops/postgres-backup
-          file: ops/postgres-backup/Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: ${{ env.BACKUP_IMAGE }}:${{ github.sha }}
       - name: Rebuild immutable production delivery branch
         env:
           APP_DIGEST: ${{ steps.app.outputs.digest }}
           WEB_DIGEST: ${{ steps.web.outputs.digest }}
-          BACKUP_DIGEST: ${{ steps.backup.outputs.digest }}
         run: |
           case "$APP_DIGEST" in sha256:*) ;; *) exit 1 ;; esac
           case "$WEB_DIGEST" in sha256:*) ;; *) exit 1 ;; esac
-          case "$BACKUP_DIGEST" in sha256:*) ;; *) exit 1 ;; esac
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git switch --orphan deploy/production-next
@@ -81,10 +69,6 @@ jobs:
           zeros = "sha256:" + "0" * 64
           value = value.replace(zeros, os.environ["APP_DIGEST"], 1)
           value = value.replace(zeros, os.environ["WEB_DIGEST"], 1)
-          path.write_text(value)
-
-          path = Path("helm/production-platform/values.yaml")
-          value = path.read_text().replace(zeros, os.environ["BACKUP_DIGEST"], 1)
           path.write_text(value)
           PY
           git add app helm gitops

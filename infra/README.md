@@ -1,7 +1,7 @@
 # Production infrastructure
 
 The production platform consists of three one.com Cloud Server M instances and a
-1-TB Hetzner Storage Box. OpenTofu manages Cloudflare DNS/load balancing. Ansible
+private fil.one S3-compatible bucket. OpenTofu manages Cloudflare DNS/load balancing. Ansible
 configures the hosts, WireGuard and k3s. Argo CD manages Kubernetes workloads.
 
 ## Inputs that must remain outside Git
@@ -11,7 +11,7 @@ configures the hosts, WireGuard and k3s. Argo CD manages Kubernetes workloads.
 - The operator CIDR.
 - Cloudflare API token, zone ID and notification address, plus a fine-grained GitHub
   token allowed to manage Actions variables for this repository.
-- Storage Box hostname, username, SSH key and Borg passphrase.
+- fil.one access key, secret key, and a Restic repository password.
 - Production age private key and application secret values.
 
 Copy `ansible/inventory/production.example.yml` to the ignored
@@ -33,20 +33,37 @@ and Cloudflare identifiers but no token.
 
 ## Bootstrap order
 
-1. Install Ubuntu 24.04 LTS and add the actual SSH host fingerprints locally.
+1. Verify the provisioned Ubuntu 26.04 hosts and add their SSH host fingerprints locally.
 2. Generate unique WireGuard and age keys; store recovery copies independently.
 3. Install the pinned Ansible version used by CI.
 4. Run `ansible-playbook ansible/site.yml --ask-vault-pass` twice; the second run
    must report no unexpected changes.
-5. Copy `/etc/rancher/k3s/k3s.yaml` from the first server, replace its server address
-   with that server's WireGuard IP, and keep it only on an operator device connected
-   to WireGuard.
-6. Export the Storage Box variables required by `scripts/init-storage-box.sh`, run it
-   to initialize `cluster-state`, `postgres-base`, and `postgres-wal`, then verify the
-   repositories with `scripts/check-production-backups.sh`.
+5. Copy `/etc/rancher/k3s/k3s.yaml` from the first server and keep it in an ignored,
+   mode-`0600` file. Keep the Kubernetes API private: either replace its server address
+   with a WireGuard address on an operator device connected to that mesh, or use
+   `https://127.0.0.1:6443` while an SSH tunnel is active:
+
+   ```bash
+   ssh -f -N -i /path/to/operator-key \
+     -L 127.0.0.1:6443:10.50.0.11:6443 administrator@ORIGIN_1_PUBLIC_IP
+   export KUBECONFIG="$PWD/local-docs/production-kubeconfig"
+   ```
+
+   Do not expose TCP 6443 publicly. Copy the full CA-bound server token from
+   `/var/lib/rancher/k3s/server/token` into separately protected recovery material.
+   SSH is allowlisted to `operator_cidr`. Before moving to a network with a new
+   public address, update that CIDR and rerun the `common` role. If access is
+   already blocked, use the one.com browser/serial console to add the new `/32`;
+   do not temporarily open SSH to the internet.
+6. Export the fil.one and Restic variables required by
+   `scripts/init-fil-one-backups.sh`, initialize the encrypted cluster-state
+   repository, then verify it with `scripts/check-production-backups.sh`.
 7. Merge the deployment configuration so GitHub Actions creates `deploy/production`
    with real GHCR digests.
-8. Set `SOPS_AGE_KEY_FILE` and run `scripts/bootstrap-production.sh`.
+8. Install Helm 3, set `SOPS_AGE_KEY_FILE`, and run
+   `scripts/bootstrap-production.sh`. Helm 4 is intentionally rejected because the
+   pinned Argo CD chart has been validated with Helm 3. If both are installed, set
+   `HELM_BIN` to the Helm 3 binary.
 9. Commit the encrypted `SopsSecret`, then wait for Argo applications to become
    `Synced` and `Healthy`.
 10. Confirm every origin directly with
@@ -64,19 +81,21 @@ ServiceLB publishes Traefik on every node so Cloudflare can health-check each or
 
 CloudNativePG keeps three local-storage PostgreSQL instances on distinct nodes. Local
 volumes are not independently durable; quorum replication and the off-cluster copy
-are both required. The Storage Box is never mounted as the live database filesystem.
+are both required. The fil.one bucket is never mounted as the live database filesystem.
 
-CloudNativePG's native continuous-backup integration requires S3-compatible object
-storage and cannot write directly to a Storage Box. Meeting the selected 15-minute
-RPO therefore requires a separately validated WAL receiver/archive job. Do not launch
-production until that job, daily physical base backups, alerting, and a complete
-two-hour restore drill have passed. If this operational path proves unreliable, add
-S3-compatible object storage and use the official Barman Cloud plugin.
+The official Barman Cloud CNPG-I plugin continuously archives WAL files and creates
+a daily physical base backup under `s3://ristoh-css-postgres/production/postgresql`.
+The 180-day recovery window retains at least six months of daily recovery points.
+CloudNativePG's five-minute default `archive_timeout` keeps the expected RPO below
+15 minutes. A complete point-in-time restore drill must pass before production launch.
 
-Host Borg jobs protect k3s snapshots and credentials every six hours. Retention is
-7 daily, 4 weekly and 6 monthly archives. Configure Storage Box snapshots and alert
-at 80% capacity. Preserve Borg and age keys somewhere other than GitHub, the cluster,
-and the Storage Box.
+An encrypted Restic repository under `production/cluster-state` protects k3s
+snapshots and credentials every six hours with 7 daily, 4 weekly and 6 monthly
+snapshots. Preserve the Restic password and age key somewhere other than GitHub,
+the cluster, and fil.one. Enable bucket versioning/object retention when fil.one
+supports it, and rotate backup credentials independently of application credentials.
+The fil.one credentials must permit object deletion within the production prefixes:
+Barman retention and `restic forget --prune` cannot enforce retention otherwise.
 
 ## Operations
 

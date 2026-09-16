@@ -1,51 +1,8 @@
 ---
-- name: Download pinned k3s installer
-  ansible.builtin.get_url:
-    url: https://raw.githubusercontent.com/k3s-io/k3s/{{ k3s_version | urlencode }}/install.sh
-    dest: /usr/local/sbin/install-k3s.sh
-    mode: "0755"
-
-- name: Install first embedded-etcd server
-  ansible.builtin.command:
-    argv:
-      - /usr/local/sbin/install-k3s.sh
-  environment:
-    INSTALL_K3S_VERSION: "{{ k3s_version }}"
-    K3S_TOKEN: "{{ k3s_token }}"
-    INSTALL_K3S_EXEC: >-
-      server --cluster-init --node-ip={{ wireguard_address }}
-      --advertise-address={{ wireguard_address }} --flannel-iface=wg0
-      --secrets-encryption
-      --tls-san={{ wireguard_address }}
-  args:
-    creates: /etc/systemd/system/k3s.service
-  when: inventory_hostname == groups['k3s_servers'][0]
-  no_log: true
-
-- name: Wait for first server API
-  ansible.builtin.wait_for:
-    host: "{{ hostvars[groups['k3s_servers'][0]].wireguard_address }}"
-    port: 6443
-    timeout: 180
-  when: inventory_hostname != groups['k3s_servers'][0]
-
-- name: Join additional embedded-etcd servers
-  ansible.builtin.command:
-    argv:
-      - /usr/local/sbin/install-k3s.sh
-  environment:
-    INSTALL_K3S_VERSION: "{{ k3s_version }}"
-    K3S_TOKEN: "{{ k3s_token }}"
-    K3S_URL: "https://{{ hostvars[groups['k3s_servers'][0]].wireguard_address }}:6443"
-    INSTALL_K3S_EXEC: >-
-      server --node-ip={{ wireguard_address }}
-      --advertise-address={{ wireguard_address }} --flannel-iface=wg0
-      --secrets-encryption
-      --tls-san={{ wireguard_address }}
-  args:
-    creates: /etc/systemd/system/k3s.service
-  when: inventory_hostname != groups['k3s_servers'][0]
-  no_log: true
+- name: Check for an existing k3s installation
+  ansible.builtin.stat:
+    path: /etc/systemd/system/k3s.service
+  register: k3s_service_before_configuration
 
 - name: Create k3s configuration drop-in directory
   ansible.builtin.file:
@@ -64,4 +21,115 @@
     content: |
       etcd-snapshot-schedule-cron: "0 */6 * * *"
       etcd-snapshot-retention: 14
-  notify: Restart k3s
+  register: k3s_snapshot_configuration
+
+- name: Enable Kubernetes Secrets encryption at rest
+  ansible.builtin.copy:
+    dest: /etc/rancher/k3s/config.yaml.d/30-secrets-encryption.yaml
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      secrets-encryption: true
+  register: k3s_secrets_encryption_configuration
+
+- name: Check for the pinned k3s installer
+  ansible.builtin.stat:
+    path: /usr/local/sbin/install-k3s.sh
+  register: k3s_installer
+
+- name: Download pinned k3s installer
+  ansible.builtin.get_url:
+    url: https://raw.githubusercontent.com/k3s-io/k3s/{{ k3s_version | urlencode }}/install.sh
+    dest: /usr/local/sbin/install-k3s.sh
+    mode: "0755"
+  when: not k3s_installer.stat.exists
+
+- name: Install first embedded-etcd server
+  ansible.builtin.command:
+    argv:
+      - /usr/local/sbin/install-k3s.sh
+  environment:
+    INSTALL_K3S_VERSION: "{{ k3s_version }}"
+    INSTALL_K3S_SKIP_DOWNLOAD: "true"
+    K3S_TOKEN: "{{ k3s_token }}"
+    INSTALL_K3S_EXEC: >-
+      server --cluster-init --node-ip={{ wireguard_address }}
+      --advertise-address={{ wireguard_address }} --flannel-iface=wg0
+      --tls-san={{ wireguard_address }}
+  args:
+    creates: /etc/systemd/system/k3s.service
+  when: inventory_hostname == groups['k3s_servers'][0]
+  no_log: true
+
+- name: Wait for first server API
+  ansible.builtin.wait_for:
+    host: "{{ hostvars[groups['k3s_servers'][0]].wireguard_address }}"
+    port: 6443
+    timeout: 180
+  when: inventory_hostname != groups['k3s_servers'][0]
+
+- name: Read the first server's full CA-bound join token
+  ansible.builtin.slurp:
+    src: /var/lib/rancher/k3s/server/token
+  delegate_to: "{{ groups['k3s_servers'][0] }}"
+  register: k3s_full_server_token
+  when: inventory_hostname != groups['k3s_servers'][0]
+  no_log: true
+
+- name: Join additional embedded-etcd servers
+  ansible.builtin.command:
+    argv:
+      - /usr/local/sbin/install-k3s.sh
+  environment:
+    INSTALL_K3S_VERSION: "{{ k3s_version }}"
+    INSTALL_K3S_SKIP_DOWNLOAD: "true"
+    K3S_TOKEN: "{{ k3s_full_server_token.content | b64decode | trim }}"
+    INSTALL_K3S_EXEC: >-
+      server --server=https://{{ hostvars[groups['k3s_servers'][0]].wireguard_address }}:6443
+      --node-ip={{ wireguard_address }}
+      --advertise-address={{ wireguard_address }} --flannel-iface=wg0
+      --tls-san={{ wireguard_address }}
+  args:
+    creates: /etc/systemd/system/k3s.service
+  when: inventory_hostname != groups['k3s_servers'][0]
+  no_log: true
+
+- name: Run one Traefik ingress replica on each server
+  ansible.builtin.copy:
+    dest: /var/lib/rancher/k3s/server/manifests/traefik-config.yaml
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      apiVersion: helm.cattle.io/v1
+      kind: HelmChartConfig
+      metadata:
+        name: traefik
+        namespace: kube-system
+      spec:
+        valuesContent: |-
+          deployment:
+            replicas: 3
+          updateStrategy:
+            rollingUpdate:
+              maxUnavailable: 1
+              maxSurge: 1
+          affinity:
+            podAntiAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchLabels:
+                      app.kubernetes.io/name: traefik
+                      app.kubernetes.io/instance: traefik-kube-system
+                  topologyKey: kubernetes.io/hostname
+  when: inventory_hostname == groups['k3s_servers'][0]
+
+- name: Restart k3s when an existing installation's configuration changed
+  ansible.builtin.systemd:
+    name: k3s
+    state: restarted
+  when:
+    - k3s_service_before_configuration.stat.exists
+    - k3s_snapshot_configuration.changed or k3s_secrets_encryption_configuration.changed
+    - not ansible_check_mode

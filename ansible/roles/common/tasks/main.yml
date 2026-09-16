@@ -11,7 +11,7 @@
 - name: Install host packages
   ansible.builtin.apt:
     name:
-      - borgbackup
+      - restic
       - ca-certificates
       - curl
       - jq
@@ -37,6 +37,13 @@
   ansible.builtin.command: "ufw allow {{ item }}/tcp"
   changed_when: false
   loop: ["80", "443"]
+
+- name: Permit host loopback traffic
+  ansible.builtin.command: "ufw allow {{ item }} on lo"
+  changed_when: false
+  loop:
+    - in
+    - out
 
 - name: Permit operator SSH
   ansible.builtin.command: "ufw allow from {{ operator_cidr }} to any port 22 proto tcp"

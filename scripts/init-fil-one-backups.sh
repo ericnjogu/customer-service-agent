@@ -11,7 +11,13 @@ export AWS_DEFAULT_REGION=eu-west-1
 export AWS_S3_ADDRESSING_STYLE=path
 export RESTIC_REPOSITORY=s3:https://eu-west-1.s3.filonecontent.com/ristoh-css-postgres/production/cluster-state
 
-restic check
-restic snapshots --latest 3
-kubectl -n customer-service-production get cluster,scheduledbackup,backup
-kubectl -n customer-service-production get objectstore.barmancloud.cnpg.io
+aws s3api head-bucket \
+  --bucket ristoh-css-postgres \
+  --endpoint-url https://eu-west-1.s3.filonecontent.com
+
+if restic snapshots >/dev/null 2>&1; then
+  echo "Encrypted cluster-state repository already initialized"
+else
+  restic init
+  echo "Initialized encrypted cluster-state repository"
+fi

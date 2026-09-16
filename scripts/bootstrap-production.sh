@@ -6,6 +6,21 @@ set -euo pipefail
 ARGOCD_CHART_VERSION="10.9.0"
 REPOSITORY="https://github.com/ericnjogu/customer-service-agent.git"
 REVISION="deploy/production"
+HELM_BIN="${HELM_BIN:-helm}"
+
+helm_version="$(${HELM_BIN} version --template '{{.Version}}')"
+case "${helm_version}" in
+  v3.*) ;;
+  *)
+    echo "Helm 3 is required; found ${helm_version}. Set HELM_BIN to a Helm 3 binary." >&2
+    exit 1
+    ;;
+esac
+
+if ! git ls-remote --exit-code --heads "${REPOSITORY}" "${REVISION}" >/dev/null; then
+  echo "${REVISION} does not exist yet. Merge the image workflow and let it publish real production digests first." >&2
+  exit 1
+fi
 
 kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
 kubectl create namespace sops --dry-run=client -o yaml | kubectl apply -f -
@@ -13,8 +28,8 @@ kubectl -n sops create secret generic sops-age-key-file \
   --from-file="key=${SOPS_AGE_KEY_FILE}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
-helm repo add argo https://argoproj.github.io/argo-helm --force-update
-helm upgrade --install argocd argo/argo-cd \
+"${HELM_BIN}" repo add argo https://argoproj.github.io/argo-helm --force-update
+"${HELM_BIN}" upgrade --install argocd argo/argo-cd \
   --namespace argocd \
   --version "${ARGOCD_CHART_VERSION}" \
   --values gitops/argocd-values.yaml \

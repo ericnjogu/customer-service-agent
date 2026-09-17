@@ -1,32 +1,11 @@
 variable "cloudflare_api_token" {
-  description = "Cloudflare token with DNS and Load Balancing edit permissions for the selected zone."
+  description = "Cloudflare token with DNS edit permission for the selected zone."
   type        = string
   sensitive   = true
-}
-
-variable "github_token" {
-  description = "Fine-grained GitHub token allowed to manage Actions variables for the repository."
-  type        = string
-  sensitive   = true
-}
-
-variable "github_owner" {
-  type    = string
-  default = "ericnjogu"
-}
-
-variable "github_repository" {
-  type    = string
-  default = "customer-service-agent"
 }
 
 variable "cloudflare_zone_id" {
   description = "Cloudflare zone containing ristoh.co.ke."
-  type        = string
-}
-
-variable "cloudflare_account_id" {
-  description = "Cloudflare account that owns the production zone and load balancer."
   type        = string
 }
 
@@ -43,9 +22,4 @@ variable "hostname" {
   description = "Production hostname."
   type        = string
   default     = "css.ristoh.co.ke"
-}
-
-variable "notification_email" {
-  description = "Address that receives Cloudflare load-balancer health notifications."
-  type        = string
 }

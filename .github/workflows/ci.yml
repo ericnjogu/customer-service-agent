@@ -70,11 +70,8 @@ jobs:
           tofu -chdir=infra/production validate
           tofu -chdir=infra/production plan -refresh=false -lock=false -input=false \
             -var cloudflare_api_token=0000000000000000000000000000000000000000 \
-            -var github_token=github_pat_0000000000000000000000000000000000000000 \
             -var cloudflare_zone_id=00000000000000000000000000000000 \
-            -var cloudflare_account_id=00000000000000000000000000000000 \
-            -var 'origin_ipv4_addresses=["192.0.2.11","192.0.2.12","192.0.2.13"]' \
-            -var notification_email=operations@example.com
+            -var 'origin_ipv4_addresses=["192.0.2.11","192.0.2.12","192.0.2.13"]'
       - name: Syntax-check Ansible
         run: |
           python -m pip install ansible-core==2.19.1

@@ -1,7 +1,7 @@
 output "production_hostname" {
-  value = cloudflare_load_balancer.production.name
+  value = var.hostname
 }
 
-output "load_balancer_pool_id" {
-  value = cloudflare_load_balancer_pool.production.id
+output "production_record_ids" {
+  value = { for name, record in cloudflare_record.production : name => record.id }
 }

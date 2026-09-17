@@ -9,8 +9,8 @@ configures the hosts, WireGuard and k3s. Argo CD manages Kubernetes workloads.
 - Three public server addresses and verified SSH host keys.
 - Per-node WireGuard private keys and the shared k3s token.
 - The operator CIDR.
-- Cloudflare API token, zone ID and notification address, plus a fine-grained GitHub
-  token allowed to manage Actions variables for this repository.
+- Cloudflare API token with DNS and Load Balancing edit access, zone ID, account ID,
+  and notification address.
 - fil.one access key, secret key, and a Restic repository password.
 - Production age private key and application secret values.
 
@@ -21,7 +21,6 @@ untracked `.auto.tfvars` file and export the Cloudflare token:
 
 ```bash
 export TF_VAR_cloudflare_api_token='...'
-export TF_VAR_github_token='...'
 tofu -chdir=infra/production init -backend-config=backend.hcl
 tofu -chdir=infra/production plan -out=production.tfplan
 tofu -chdir=infra/production apply production.tfplan

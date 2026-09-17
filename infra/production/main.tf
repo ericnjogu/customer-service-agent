@@ -2,12 +2,6 @@ locals {
   origin_names = ["production-1", "production-2", "production-3"]
 }
 
-resource "github_actions_variable" "production_hostname" {
-  repository    = var.github_repository
-  variable_name = "PRODUCTION_HOSTNAME"
-  value         = var.hostname
-}
-
 resource "cloudflare_load_balancer_monitor" "https" {
   account_id     = var.cloudflare_account_id
   type           = "https"

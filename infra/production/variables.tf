@@ -4,22 +4,6 @@ variable "cloudflare_api_token" {
   sensitive   = true
 }
 
-variable "github_token" {
-  description = "Fine-grained GitHub token allowed to manage Actions variables for the repository."
-  type        = string
-  sensitive   = true
-}
-
-variable "github_owner" {
-  type    = string
-  default = "ericnjogu"
-}
-
-variable "github_repository" {
-  type    = string
-  default = "customer-service-agent"
-}
-
 variable "cloudflare_zone_id" {
   description = "Cloudflare zone containing ristoh.co.ke."
   type        = string

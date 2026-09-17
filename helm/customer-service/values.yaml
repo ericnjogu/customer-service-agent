@@ -1,0 +1,253 @@
+image:
+  repository: customer-service
+  tag: local
+  digest: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+imagePullSecrets: []
+
+deploymentStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 25%
+    maxUnavailable: 25%
+
+podLabels: {}
+
+service:
+  type: ClusterIP
+  port: 8000
+
+ingress:
+  enabled: false
+  className: alb
+  host: ""
+  annotations: {}
+  tls: []
+
+web:
+  enabled: true
+  replicaCount: 1
+  deploymentStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+  image:
+    repository: customer-service-web
+    tag: local
+    digest: ""
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+    annotations: {}
+  publicBaseUrl: "http://localhost:5173"
+  apiBaseUrl: "/api"
+  resources: {}
+
+serviceAccount:
+  annotations: {}
+
+database:
+  existingSecret: ""
+  secretKey: database-url
+  secretArn: ""
+  host: ""
+  port: 5432
+  name: risto_css
+
+tenant:
+  defaultId: default
+  plans:
+    sme:
+      description: Shared small-business onboarding baseline
+      defaultFeatures:
+        - telegram
+        - whatsapp
+      vectorIndexMode: shared
+      hostingModel: shared
+    enterprise:
+      description: Enterprise onboarding baseline
+      defaultFeatures:
+        - telegram
+        - whatsapp
+        - multimedia
+      vectorIndexMode: dedicated
+      hostingModel: dedicated
+
+postgres:
+  enabled: true
+  image: pgvector/pgvector:pg16
+  port: 5432
+  database: risto_css
+  username: ristoh_ai
+  password: local-only-password
+  storage: 1Gi
+
+redis:
+  enabled: true
+  image: redis:7-alpine
+  port: 6379
+  url: ""
+  existingSecret: ""
+  secretKey: redis-url
+  iamAuth:
+    enabled: false
+    cacheName: ""
+    username: ""
+    region: eu-central-1
+
+n8n:
+  enabled: false
+  image: n8nio/n8n:2.33.7
+  port: 5678
+  storage: 1Gi
+  timezone: Europe/Amsterdam
+  webhookUrl: ""
+  editorBaseUrl: ""
+  encryptionKey:
+    existingSecret: "n8n-owner"
+    secretKey: N8N_ENCRYPTION_KEY
+  owner:
+    managedByEnv: false
+    email: ""
+    firstName: ""
+    lastName: ""
+    existingSecret: ""
+    passwordHashSecretKey: N8N_INSTANCE_OWNER_PASSWORD_HASH
+  email:
+    resendApiKeySecretName: "api-keys"
+    resendApiKeySecretKey: RESEND_API_KEY
+    onboardingEmail: ""
+  code:
+    allowBuiltinModules: url
+  database:
+    type: postgresdb
+    schema: public
+    tablePrefix: n8n_
+  resources: {}
+
+onboarding:
+  actionTokenTtlMinutes: 60
+  emailVerificationTokenTtlMinutes: 60
+  requireAdminEmailDomainMatch: true
+  websiteAnalysisProvider: openai
+  websiteFetchTimeoutSeconds: 10
+
+platform:
+  webSearchProvider: tavily
+  webSearchProjectId: ristoh-css
+  webSearchMaxResults: 3
+  webSearchTimeoutSeconds: 15
+  webSearchApiKeySecretName: "api-keys"
+  webSearchApiKeySecretKey: PLATFORM_TAVILY_API_KEY
+
+runtime:
+  webSearchProvider: tavily
+
+providerProjects:
+  provisioner: api
+  openaiAdminKeySecretName: "api-keys"
+  openaiAdminKeySecretKey: OPENAI_ADMIN_KEY
+
+email:
+  provider: resend
+  from: ""
+  onboardingReviewEmail: ""
+  configSecretName: "app-configs"
+  fromSecretKey: AGENT_EMAIL_FROM
+  onboardingReviewEmailSecretKey: AGENT_ONBOARDING_REVIEW_EMAIL
+  resendApiKeySecretName: "api-keys"
+  resendApiKeySecretKey: RESEND_API_KEY
+
+retrieval:
+  provider: pgvector
+
+vector:
+  collection: customer-service
+
+answer:
+  provider: openai
+
+embedding:
+  provider: openai
+  model: text-embedding-3-small
+  dimensions: 1536
+
+knowledge:
+  chunkSize: 1000
+  chunkOverlap: 180
+
+questionPlanner:
+  provider: llm
+
+conversationHistory:
+  maxMessages: 100
+  greetingLapseMinutes: 60
+
+tenantConfigCache:
+  provider: redis
+  ttlSeconds: 300
+
+telegram:
+  credentialProvider: kubernetes
+  secretNamespace: ""
+  rbac:
+    create: true
+  botTokenSecretKey: TELEGRAM_BOT_TOKEN
+  webhookSecretTokenSecretKey: TELEGRAM_WEBHOOK_SECRET_TOKEN
+
+webhook:
+  publicBaseUrl: ""
+  publicBaseUrlSecretName: "app-configs"
+  publicBaseUrlSecretKey: AGENT_WEBHOOK_PUBLIC_BASE_URL
+
+whatsapp:
+  secretNamespace: ""
+  accessTokenSecretKey: WHATSAPP_ACCESS_TOKEN
+  phoneNumberIdSecretKey: WHATSAPP_PHONE_NUMBER_ID
+  verifyTokenSecretKey: WHATSAPP_VERIFY_TOKEN
+  graphApiVersionSecretKey: WHATSAPP_GRAPH_API_VERSION
+  graphApiVersion: v20.0
+
+llm:
+  model: gpt-5-mini
+  temperature: "0"
+  existingSecret: "api-keys"
+  secretKey: OPENAI_API_KEY
+
+logging:
+  level: INFO
+  format: "{asctime} - {levelname}:{name}:trace_id={trace_id} span_id={span_id}:{message}"
+
+telemetry:
+  enabled: false
+  endpoint: http://otel-collector.amazon-cloudwatch:4318
+  serviceName: customer-service-agent
+  environment: local
+  traceSampleRatio: "1.0"
+
+prompts:
+  enabled: false
+  useBundledFiles: false
+  mountPath: /etc/aws-csa/prompts
+  system: ""
+  questionPlanning: ""
+  websiteAnalysis: ""
+  websiteResearch: ""
+
+langsmith:
+  LANGSMITH_TRACING: "true"
+  LANGSMITH_TRACING_V2: "true"
+  LANGCHAIN_TRACING_V2: "true"
+  LANGSMITH_ENDPOINT: "https://eu.api.smith.langchain.com"
+  LANGSMITH_PROJECT: "customer-service-dev2"
+  LANGSMITH_WORKSPACE_ID: ""
+  existingSecret: "api-keys"
+  secretKey: LANGSMITH_API_KEY
+  workspaceIdSecretKey: LANGSMITH_WORKSPACE_ID
+
+resources: {}

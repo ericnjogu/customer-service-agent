@@ -1,0 +1,85 @@
+image:
+  repository: ghcr.io/ericnjogu/customer-service-agent
+  tag: bootstrap-required
+  digest: "sha256:7bcfccc7c53164375b47c59b832d00ffc8321acff92aad36f5d88f501a24861a"
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+imagePullSecrets:
+  - name: ghcr-pull
+
+web:
+  replicaCount: 2
+  image:
+    repository: ghcr.io/ericnjogu/customer-service-agent-web
+    tag: bootstrap-required
+    digest: "sha256:120193ec1a802b386eb9d297f6b73f0bae79fe13e35f8f0340a04c2a03174242"
+    pullPolicy: IfNotPresent
+  publicBaseUrl: https://css.ristoh.co.ke
+  apiBaseUrl: /api
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+    limits: { cpu: 250m, memory: 128Mi }
+
+ingress:
+  enabled: true
+  className: traefik
+  host: css.ristoh.co.ke
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-production
+  tls:
+    - hosts: [css.ristoh.co.ke]
+      secretName: css-ristoh-co-ke-tls
+
+postgres:
+  enabled: false
+
+database:
+  existingSecret: production-postgres-app
+  secretKey: uri
+
+redis:
+  enabled: false
+  url: redis://production-redis:6379/0
+  iamAuth:
+    enabled: false
+
+telegram:
+  credentialProvider: kubernetes
+  secretNamespace: customer-service-production
+
+whatsapp:
+  secretNamespace: customer-service-production
+
+webhook:
+  publicBaseUrl: https://css.ristoh.co.ke
+  publicBaseUrlSecretName: ""
+
+email:
+  configSecretName: app-configs
+
+llm:
+  existingSecret: api-keys
+
+langsmith:
+  existingSecret: api-keys
+  LANGSMITH_PROJECT: customer-service-production
+
+prompts:
+  enabled: true
+  useBundledFiles: true
+
+logging:
+  level: INFO
+
+telemetry:
+  enabled: false
+  endpoint: http://otel-collector.monitoring.svc:4318
+  serviceName: customer-service-agent
+  environment: production
+  traceSampleRatio: "0.1"
+
+resources:
+  requests: { cpu: 150m, memory: 384Mi }
+  limits: { cpu: "1", memory: 1Gi }

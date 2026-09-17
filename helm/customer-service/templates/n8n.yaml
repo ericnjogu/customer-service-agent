@@ -1,0 +1,169 @@
+{{- if .Values.n8n.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "customer-service.fullname" . }}-n8n
+  labels:
+    {{- include "customer-service.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/component: n8n
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.n8n.port }}
+      targetPort: http
+  type: ClusterIP
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "customer-service.fullname" . }}-n8n
+  labels:
+    {{- include "customer-service.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.n8n.storage | quote }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "customer-service.fullname" . }}-n8n
+  labels:
+    {{- include "customer-service.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: n8n
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: n8n
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      {{- if .Values.postgres.enabled }}
+      initContainers:
+        - name: wait-for-postgres
+          image: {{ .Values.postgres.image | quote }}
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - >-
+              until pg_isready
+              --host={{ include "customer-service.fullname" . }}-postgres
+              --port={{ .Values.postgres.port }}
+              --username={{ .Values.postgres.username }}
+              --dbname={{ .Values.postgres.database }};
+              do echo "Waiting for PostgreSQL"; sleep 2; done
+      {{- end }}
+      containers:
+        - name: n8n
+          image: {{ .Values.n8n.image | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.n8n.port }}
+          env:
+            - name: N8N_PORT
+              value: {{ .Values.n8n.port | quote }}
+            - name: N8N_HOST
+              value: "0.0.0.0"
+            - name: N8N_PROTOCOL
+              value: "http"
+            - name: GENERIC_TIMEZONE
+              value: {{ .Values.n8n.timezone | quote }}
+            - name: TZ
+              value: {{ .Values.n8n.timezone | quote }}
+            {{- if .Values.n8n.code.allowBuiltinModules }}
+            - name: NODE_FUNCTION_ALLOW_BUILTIN
+              value: {{ .Values.n8n.code.allowBuiltinModules | quote }}
+            {{- end }}
+            {{- if .Values.n8n.email.resendApiKeySecretName }}
+            - name: RESEND_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.n8n.email.resendApiKeySecretName | quote }}
+                  key: {{ .Values.n8n.email.resendApiKeySecretKey | quote }}
+            {{- end }}
+            {{- if .Values.n8n.email.onboardingEmail }}
+            - name: ONBOARDING_EMAIL
+              value: {{ .Values.n8n.email.onboardingEmail | quote }}
+            {{- end }}
+            {{- if .Values.n8n.encryptionKey.existingSecret }}
+            - name: N8N_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.n8n.encryptionKey.existingSecret | quote }}
+                  key: {{ .Values.n8n.encryptionKey.secretKey | quote }}
+            {{- end }}
+            {{- if .Values.n8n.owner.managedByEnv }}
+            - name: N8N_INSTANCE_OWNER_MANAGED_BY_ENV
+              value: "true"
+            - name: N8N_INSTANCE_OWNER_EMAIL
+              value: {{ required "n8n.owner.email is required when n8n.owner.managedByEnv=true" .Values.n8n.owner.email | quote }}
+            - name: N8N_INSTANCE_OWNER_FIRST_NAME
+              value: {{ required "n8n.owner.firstName is required when n8n.owner.managedByEnv=true" .Values.n8n.owner.firstName | quote }}
+            - name: N8N_INSTANCE_OWNER_LAST_NAME
+              value: {{ required "n8n.owner.lastName is required when n8n.owner.managedByEnv=true" .Values.n8n.owner.lastName | quote }}
+            - name: N8N_INSTANCE_OWNER_PASSWORD_HASH
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "n8n.owner.existingSecret is required when n8n.owner.managedByEnv=true" .Values.n8n.owner.existingSecret | quote }}
+                  key: {{ .Values.n8n.owner.passwordHashSecretKey | quote }}
+            {{- end }}
+            {{- if .Values.postgres.enabled }}
+            - name: DB_TYPE
+              value: {{ .Values.n8n.database.type | quote }}
+            - name: DB_POSTGRESDB_HOST
+              value: {{ printf "%s-postgres" (include "customer-service.fullname" .) | quote }}
+            - name: DB_POSTGRESDB_PORT
+              value: {{ .Values.postgres.port | quote }}
+            - name: DB_POSTGRESDB_DATABASE
+              value: {{ .Values.postgres.database | quote }}
+            - name: DB_POSTGRESDB_USER
+              value: {{ .Values.postgres.username | quote }}
+            - name: DB_POSTGRESDB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "customer-service.fullname" . }}-postgres
+                  key: password
+            - name: DB_POSTGRESDB_SCHEMA
+              value: {{ .Values.n8n.database.schema | quote }}
+            - name: DB_TABLE_PREFIX
+              value: {{ .Values.n8n.database.tablePrefix | quote }}
+            {{- end }}
+            {{- if .Values.n8n.webhookUrl }}
+            - name: WEBHOOK_URL
+              value: {{ .Values.n8n.webhookUrl | quote }}
+            {{- end }}
+            {{- if .Values.n8n.editorBaseUrl }}
+            - name: N8N_EDITOR_BASE_URL
+              value: {{ .Values.n8n.editorBaseUrl | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: n8n-data
+              mountPath: /home/node/.n8n
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.n8n.resources | nindent 12 }}
+      volumes:
+        - name: n8n-data
+          persistentVolumeClaim:
+            claimName: {{ include "customer-service.fullname" . }}-n8n
+{{- end }}

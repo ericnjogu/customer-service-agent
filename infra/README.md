@@ -1,16 +1,16 @@
 # Production infrastructure
 
 The production platform consists of three one.com Cloud Server M instances and a
-private fil.one S3-compatible bucket. OpenTofu manages Cloudflare DNS/load balancing. Ansible
-configures the hosts, WireGuard and k3s. Argo CD manages Kubernetes workloads.
+private fil.one S3-compatible bucket. OpenTofu manages three proxied Cloudflare DNS
+records for round-robin origin selection. Ansible configures the hosts, WireGuard and
+k3s. Argo CD manages Kubernetes workloads.
 
 ## Inputs that must remain outside Git
 
 - Three public server addresses and verified SSH host keys.
 - Per-node WireGuard private keys and the shared k3s token.
 - The operator CIDR.
-- Cloudflare API token, zone ID and notification address, plus a fine-grained GitHub
-  token allowed to manage Actions variables for this repository.
+- Cloudflare API token with DNS edit access and the zone ID.
 - fil.one access key, secret key, and a Restic repository password.
 - Production age private key and application secret values.
 
@@ -21,7 +21,6 @@ untracked `.auto.tfvars` file and export the Cloudflare token:
 
 ```bash
 export TF_VAR_cloudflare_api_token='...'
-export TF_VAR_github_token='...'
 tofu -chdir=infra/production init -backend-config=backend.hcl
 tofu -chdir=infra/production plan -out=production.tfplan
 tofu -chdir=infra/production apply production.tfplan
@@ -68,14 +67,17 @@ and Cloudflare identifiers but no token.
    `Synced` and `Healthy`.
 10. Confirm every origin directly with
     `curl --resolve css.ristoh.co.ke:443:ORIGIN_IP https://css.ristoh.co.ke/api/healthz`.
-11. Apply the Cloudflare plan only after all three direct checks succeed.
+11. Apply the Cloudflare DNS plan only after all three direct checks succeed.
 
 ## Networking
 
 k3s uses WireGuard addresses for the Kubernetes API, embedded etcd and Flannel.
 UFW permits public TCP 80/443, WireGuard UDP between the three origins, and SSH only
 from the operator CIDR. All cluster ports are accepted only on `wg0`. The bundled k3s
-ServiceLB publishes Traefik on every node so Cloudflare can health-check each origin.
+ServiceLB publishes Traefik on every node. Cloudflare proxies three same-name `A`
+records and can select any origin, but this initial DNS-only configuration does not
+perform active health checks or automatically remove a failed origin. Upgrade the
+OpenTofu stack to Cloudflare Load Balancing before treating origin failover as automatic.
 
 ## Database and recovery
 

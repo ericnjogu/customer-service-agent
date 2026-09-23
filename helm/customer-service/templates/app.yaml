@@ -1,0 +1,371 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "customer-service.fullname" . }}-app
+  labels:
+    {{- include "customer-service.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/component: app
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+  type: {{ .Values.service.type }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "customer-service.fullname" . }}-app
+  labels:
+    {{- include "customer-service.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    {{- toYaml .Values.deploymentStrategy | nindent 4 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: app
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      {{- if .Values.prompts.enabled }}
+      annotations:
+        checksum/prompts: {{ include (print $.Template.BasePath "/prompts.yaml") . | sha256sum }}
+      {{- end }}
+      labels:
+        app.kubernetes.io/component: app
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "customer-service.fullname" . }}-app
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if gt (int .Values.replicaCount) 1 }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/component: app
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      {{- end }}
+      {{- if .Values.postgres.enabled }}
+      initContainers:
+        - name: wait-for-postgres
+          image: {{ .Values.postgres.image | quote }}
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - >-
+              until pg_isready
+              --host={{ include "customer-service.fullname" . }}-postgres
+              --port={{ .Values.postgres.port }}
+              --username={{ .Values.postgres.username }}
+              --dbname={{ .Values.postgres.database }};
+              do echo "Waiting for PostgreSQL"; sleep 2; done
+      {{- end }}
+      containers:
+        - name: app
+          image: {{ include "customer-service.image" .Values.image | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: AGENT_DEFAULT_TENANT_ID
+              value: {{ .Values.tenant.defaultId | quote }}
+            - name: AGENT_RETRIEVAL_PROVIDER
+              value: {{ .Values.retrieval.provider | quote }}
+            - name: AGENT_VECTOR_COLLECTION
+              value: {{ .Values.vector.collection | quote }}
+            - name: AGENT_ANSWER_PROVIDER
+              value: {{ .Values.answer.provider | quote }}
+            - name: AGENT_EMBEDDING_PROVIDER
+              value: {{ .Values.embedding.provider | quote }}
+            - name: AGENT_EMBEDDING_MODEL
+              value: {{ .Values.embedding.model | quote }}
+            - name: AGENT_EMBEDDING_DIMENSIONS
+              value: {{ .Values.embedding.dimensions | quote }}
+            - name: AGENT_KB_CHUNK_SIZE
+              value: {{ .Values.knowledge.chunkSize | quote }}
+            - name: AGENT_KB_CHUNK_OVERLAP
+              value: {{ .Values.knowledge.chunkOverlap | quote }}
+            - name: AGENT_QUESTION_PLANNER_PROVIDER
+              value: {{ .Values.questionPlanner.provider | quote }}
+            - name: AGENT_CONVERSATION_HISTORY_MAX_MESSAGES
+              value: {{ .Values.conversationHistory.maxMessages | quote }}
+            - name: AGENT_GREETING_LAPSE_MINUTES
+              value: {{ .Values.conversationHistory.greetingLapseMinutes | quote }}
+            - name: AGENT_TENANT_CONFIG_CACHE_PROVIDER
+              value: {{ .Values.tenantConfigCache.provider | quote }}
+            - name: AGENT_TENANT_CONFIG_CACHE_TTL_SECONDS
+              value: {{ .Values.tenantConfigCache.ttlSeconds | quote }}
+            {{- if .Values.redis.enabled }}
+            - name: AGENT_REDIS_URL
+              value: {{ printf "redis://%s-redis:%v/0" (include "customer-service.fullname" .) .Values.redis.port | quote }}
+            {{- else if .Values.redis.url }}
+            - name: AGENT_REDIS_URL
+              value: {{ .Values.redis.url | quote }}
+            {{- else if .Values.redis.existingSecret }}
+            - name: AGENT_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.redis.existingSecret | quote }}
+                  key: {{ .Values.redis.secretKey | quote }}
+            {{- end }}
+            - name: AGENT_REDIS_IAM_AUTH
+              value: {{ .Values.redis.iamAuth.enabled | quote }}
+            {{- if .Values.redis.iamAuth.enabled }}
+            - name: AGENT_REDIS_IAM_CACHE_NAME
+              value: {{ required "redis.iamAuth.cacheName is required" .Values.redis.iamAuth.cacheName | quote }}
+            - name: AGENT_REDIS_IAM_USERNAME
+              value: {{ required "redis.iamAuth.username is required" .Values.redis.iamAuth.username | quote }}
+            - name: AGENT_AWS_REGION
+              value: {{ .Values.redis.iamAuth.region | quote }}
+            {{- end }}
+            - name: AGENT_TELEGRAM_CREDENTIAL_PROVIDER
+              value: {{ .Values.telegram.credentialProvider | quote }}
+            {{- if .Values.telegram.secretNamespace }}
+            - name: AGENT_TELEGRAM_SECRET_NAMESPACE
+              value: {{ .Values.telegram.secretNamespace | quote }}
+            {{- else }}
+            - name: AGENT_TELEGRAM_SECRET_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- end }}
+            - name: AGENT_TELEGRAM_BOT_TOKEN_SECRET_KEY
+              value: {{ .Values.telegram.botTokenSecretKey | quote }}
+            - name: AGENT_TELEGRAM_WEBHOOK_SECRET_TOKEN_SECRET_KEY
+              value: {{ .Values.telegram.webhookSecretTokenSecretKey | quote }}
+            {{- if .Values.whatsapp.secretNamespace }}
+            - name: AGENT_WHATSAPP_SECRET_NAMESPACE
+              value: {{ .Values.whatsapp.secretNamespace | quote }}
+            {{- else }}
+            - name: AGENT_WHATSAPP_SECRET_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- end }}
+            - name: AGENT_WHATSAPP_ACCESS_TOKEN_SECRET_KEY
+              value: {{ .Values.whatsapp.accessTokenSecretKey | quote }}
+            - name: AGENT_WHATSAPP_PHONE_NUMBER_ID_SECRET_KEY
+              value: {{ .Values.whatsapp.phoneNumberIdSecretKey | quote }}
+            - name: AGENT_WHATSAPP_VERIFY_TOKEN_SECRET_KEY
+              value: {{ .Values.whatsapp.verifyTokenSecretKey | quote }}
+            - name: AGENT_WHATSAPP_GRAPH_API_VERSION_SECRET_KEY
+              value: {{ .Values.whatsapp.graphApiVersionSecretKey | quote }}
+            - name: AGENT_WHATSAPP_GRAPH_API_VERSION
+              value: {{ .Values.whatsapp.graphApiVersion | quote }}
+            - name: AGENT_WEB_PUBLIC_BASE_URL
+              value: {{ include "customer-service.webPublicBaseUrl" . | quote }}
+            - name: AGENT_ONBOARDING_ACTION_TOKEN_TTL_MINUTES
+              value: {{ .Values.onboarding.actionTokenTtlMinutes | quote }}
+            - name: AGENT_ONBOARDING_EMAIL_VERIFICATION_TOKEN_TTL_MINUTES
+              value: {{ .Values.onboarding.emailVerificationTokenTtlMinutes | quote }}
+            - name: AGENT_ONBOARDING_EMAIL_VERIFICATION_CODE_TTL_MINUTES
+              value: {{ .Values.onboarding.emailVerificationCodeTtlMinutes | quote }}
+            - name: AGENT_ONBOARDING_EMAIL_VERIFICATION_MAX_ATTEMPTS
+              value: {{ .Values.onboarding.emailVerificationMaxAttempts | quote }}
+            - name: AGENT_ONBOARDING_EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS
+              value: {{ .Values.onboarding.emailVerificationResendCooldownSeconds | quote }}
+            {{- if .Values.onboarding.verificationCodeSecretName }}
+            - name: AGENT_ONBOARDING_VERIFICATION_CODE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.onboarding.verificationCodeSecretName | quote }}
+                  key: {{ .Values.onboarding.verificationCodeSecretKey | quote }}
+            {{- end }}
+            - name: AGENT_ONBOARDING_REQUIRE_ADMIN_EMAIL_DOMAIN_MATCH
+              value: {{ .Values.onboarding.requireAdminEmailDomainMatch | quote }}
+            - name: AGENT_ONBOARDING_WEBSITE_ANALYSIS_PROVIDER
+              value: {{ .Values.onboarding.websiteAnalysisProvider | quote }}
+            - name: AGENT_ONBOARDING_WEBSITE_FETCH_TIMEOUT_SECONDS
+              value: {{ .Values.onboarding.websiteFetchTimeoutSeconds | quote }}
+            - name: AGENT_PLATFORM_WEB_SEARCH_PROVIDER
+              value: {{ .Values.platform.webSearchProvider | quote }}
+            - name: AGENT_PLATFORM_WEB_SEARCH_PROJECT_ID
+              value: {{ .Values.platform.webSearchProjectId | quote }}
+            - name: AGENT_PLATFORM_WEB_SEARCH_MAX_RESULTS
+              value: {{ .Values.platform.webSearchMaxResults | quote }}
+            - name: AGENT_PLATFORM_WEB_SEARCH_TIMEOUT_SECONDS
+              value: {{ .Values.platform.webSearchTimeoutSeconds | quote }}
+            - name: AGENT_RUNTIME_WEB_SEARCH_PROVIDER
+              value: {{ .Values.runtime.webSearchProvider | quote }}
+            {{- if .Values.platform.webSearchApiKeySecretName }}
+            - name: AGENT_PLATFORM_WEB_SEARCH_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.platform.webSearchApiKeySecretName | quote }}
+                  key: {{ .Values.platform.webSearchApiKeySecretKey | quote }}
+            {{- end }}
+            - name: AGENT_EMAIL_PROVIDER
+              value: {{ .Values.email.provider | quote }}
+            - name: AGENT_PROVIDER_PROJECT_PROVISIONER
+              value: {{ .Values.providerProjects.provisioner | quote }}
+            {{- if .Values.providerProjects.openaiAdminKeySecretName }}
+            - name: OPENAI_ADMIN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.providerProjects.openaiAdminKeySecretName | quote }}
+                  key: {{ .Values.providerProjects.openaiAdminKeySecretKey | quote }}
+            {{- end }}
+            {{- if .Values.email.configSecretName }}
+            - name: AGENT_EMAIL_FROM
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.email.configSecretName | quote }}
+                  key: {{ .Values.email.fromSecretKey | quote }}
+            - name: AGENT_ONBOARDING_REVIEW_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.email.configSecretName | quote }}
+                  key: {{ .Values.email.onboardingReviewEmailSecretKey | quote }}
+            {{- else }}
+            {{- if .Values.email.from }}
+            - name: AGENT_EMAIL_FROM
+              value: {{ .Values.email.from | quote }}
+            {{- end }}
+            {{- if .Values.email.onboardingReviewEmail }}
+            - name: AGENT_ONBOARDING_REVIEW_EMAIL
+              value: {{ .Values.email.onboardingReviewEmail | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.email.resendApiKeySecretName }}
+            - name: RESEND_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.email.resendApiKeySecretName | quote }}
+                  key: {{ .Values.email.resendApiKeySecretKey | quote }}
+                  optional: true
+            {{- end }}
+            - name: AGENT_CORS_ALLOW_ORIGINS
+              value: {{- if hasPrefix "http" .Values.web.apiBaseUrl }} {{ printf "%s,%s" (include "customer-service.webPublicBaseUrl" .) .Values.web.apiBaseUrl | quote }}{{- else }} {{ include "customer-service.webPublicBaseUrl" . | quote }}{{- end }}
+            - name: AGENT_LLM_MODEL
+              value: {{ .Values.llm.model | quote }}
+            - name: AGENT_LLM_TEMPERATURE
+              value: {{ .Values.llm.temperature | quote }}
+            {{- if .Values.llm.existingSecret }}
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.llm.existingSecret | quote }}
+                  key: {{ .Values.llm.secretKey | quote }}
+            {{- end }}
+            - name: AGENT_LOG_LEVEL
+              value: {{ .Values.logging.level | quote }}
+            - name: AGENT_LOG_FORMAT
+              value: {{ .Values.logging.format | quote }}
+            - name: AGENT_TELEMETRY_ENABLED
+              value: {{ .Values.telemetry.enabled | quote }}
+            - name: AGENT_OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.telemetry.endpoint | quote }}
+            - name: AGENT_OTEL_SERVICE_NAME
+              value: {{ .Values.telemetry.serviceName | quote }}
+            - name: AGENT_DEPLOYMENT_ENVIRONMENT
+              value: {{ .Values.telemetry.environment | quote }}
+            - name: AGENT_OTEL_TRACE_SAMPLE_RATIO
+              value: {{ .Values.telemetry.traceSampleRatio | quote }}
+            {{- if .Values.prompts.enabled }}
+            - name: AGENT_SYSTEM_PROMPT_PATH
+              value: {{ printf "%s/system.md" .Values.prompts.mountPath | quote }}
+            - name: AGENT_QUESTION_PLANNING_PROMPT_PATH
+              value: {{ printf "%s/question-planning.md" .Values.prompts.mountPath | quote }}
+            - name: AGENT_WEBSITE_ANALYSIS_PROMPT_PATH
+              value: {{ printf "%s/website-analysis.md" .Values.prompts.mountPath | quote }}
+            - name: AGENT_WEBSITE_RESEARCH_PROMPT_PATH
+              value: {{ printf "%s/website-research.md" .Values.prompts.mountPath | quote }}
+            {{- end }}
+            - name: LANGSMITH_TRACING
+              value: {{ .Values.langsmith.LANGSMITH_TRACING | quote }}
+            - name: LANGSMITH_TRACING_V2
+              value: {{ .Values.langsmith.LANGSMITH_TRACING_V2 | quote }}
+            - name: LANGCHAIN_TRACING_V2
+              value: {{ .Values.langsmith.LANGCHAIN_TRACING_V2 | quote }}
+            - name: LANGSMITH_ENDPOINT
+              value: {{ .Values.langsmith.LANGSMITH_ENDPOINT | quote }}
+            - name: LANGSMITH_PROJECT
+              value: {{ .Values.langsmith.LANGSMITH_PROJECT | quote }}
+            {{- if .Values.langsmith.LANGSMITH_WORKSPACE_ID }}
+            - name: LANGSMITH_WORKSPACE_ID
+              value: {{ .Values.langsmith.LANGSMITH_WORKSPACE_ID | quote }}
+            {{- else if and .Values.langsmith.existingSecret .Values.langsmith.workspaceIdSecretKey }}
+            - name: LANGSMITH_WORKSPACE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.langsmith.existingSecret | quote }}
+                  key: {{ .Values.langsmith.workspaceIdSecretKey | quote }}
+                  optional: true
+            {{- end }}
+            {{- if .Values.langsmith.existingSecret }}
+            - name: LANGSMITH_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.langsmith.existingSecret | quote }}
+                  key: {{ .Values.langsmith.secretKey | quote }}
+            {{- end }}
+            - name: AGENT_DATABASE_URL
+              {{- if or .Values.postgres.enabled .Values.database.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.postgres.enabled }}
+                  name: {{ include "customer-service.fullname" . }}-postgres
+                  key: database-url
+                  {{- else }}
+                  name: {{ required "database.existingSecret is required when postgres.enabled=false" .Values.database.existingSecret | quote }}
+                  key: {{ .Values.database.secretKey | quote }}
+                  {{- end }}
+              {{- else }}
+              value: ""
+              {{- end }}
+            {{- if .Values.database.secretArn }}
+            - name: AGENT_DATABASE_SECRET_ARN
+              value: {{ .Values.database.secretArn | quote }}
+            - name: AGENT_DATABASE_HOST
+              value: {{ required "database.host is required with database.secretArn" .Values.database.host | quote }}
+            - name: AGENT_DATABASE_PORT
+              value: {{ .Values.database.port | quote }}
+            - name: AGENT_DATABASE_NAME
+              value: {{ .Values.database.name | quote }}
+            {{- end }}
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- if .Values.prompts.enabled }}
+          volumeMounts:
+            - name: prompts
+              mountPath: {{ .Values.prompts.mountPath | quote }}
+              readOnly: true
+          {{- end }}
+      {{- if .Values.prompts.enabled }}
+      volumes:
+        - name: prompts
+          configMap:
+            name: {{ include "customer-service.fullname" . }}-prompts
+      {{- end }}

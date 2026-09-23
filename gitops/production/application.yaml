@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: customer-service-production
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "20"
+spec:
+  project: default
+  sources:
+    - repoURL: https://github.com/ericnjogu/customer-service-agent.git
+      targetRevision: deploy/production
+      path: helm/customer-service
+      helm:
+        releaseName: one-css
+        valueFiles: [values-production.yaml]
+  destination: { server: https://kubernetes.default.svc, namespace: customer-service-production }
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=true]

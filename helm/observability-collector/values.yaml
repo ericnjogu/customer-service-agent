@@ -1,0 +1,26 @@
+image:
+  repository: otel/opentelemetry-collector-contrib
+  tag: 0.160.0
+  digest: sha256:799dc6cf12c96192af37b5bdba804da8c10b3bc563b43cb90c3f3c58d9572ad6
+  pullPolicy: IfNotPresent
+
+serviceAccount:
+  roleArn: ""
+
+environment: local
+clusterName: rancher-desktop
+collectionInterval: 60s
+configRevision: ""
+
+exporters:
+  otlp:
+    enabled: false
+    metricsEndpoint: ""
+    logsEndpoint: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 384Mi

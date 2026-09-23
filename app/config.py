@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     question_planner_provider: str = "rules"
     llm_model: str = "gpt-4.1-mini"
     openai_api_key: str | None = Field(default=None, validation_alias="OPENAI_API_KEY")
+    openai_base_url: str | None = None
     llm_temperature: float = 0.0
     confidence_threshold: float = 0.60
     conversation_history_max_messages: int = Field(default=50, gt=0)
@@ -40,16 +41,19 @@ class Settings(BaseSettings):
     telegram_secret_namespace: str | None = None
     telegram_bot_token_secret_key: str = "TELEGRAM_BOT_TOKEN"
     telegram_webhook_secret_token_secret_key: str = "TELEGRAM_WEBHOOK_SECRET_TOKEN"
-    webhook_public_base_url: str | None = None
     whatsapp_secret_namespace: str | None = None
     whatsapp_access_token_secret_key: str = "WHATSAPP_ACCESS_TOKEN"
     whatsapp_phone_number_id_secret_key: str = "WHATSAPP_PHONE_NUMBER_ID"
     whatsapp_verify_token_secret_key: str = "WHATSAPP_VERIFY_TOKEN"
     whatsapp_graph_api_version_secret_key: str = "WHATSAPP_GRAPH_API_VERSION"
     whatsapp_graph_api_version: str = "v20.0"
-    web_public_base_url: str = "http://localhost:5173"
+    web_public_base_url: str = "http://localhost:8080"
     onboarding_action_token_ttl_minutes: int = Field(default=60, gt=0)
     onboarding_email_verification_token_ttl_minutes: int = Field(default=60, gt=0)
+    onboarding_email_verification_code_ttl_minutes: int = Field(default=10, gt=0)
+    onboarding_email_verification_max_attempts: int = Field(default=5, gt=0)
+    onboarding_email_verification_resend_cooldown_seconds: int = Field(default=60, gt=0)
+    onboarding_verification_code_secret: str | None = Field(default=None, min_length=32)
     onboarding_require_admin_email_domain_match: bool = True
     onboarding_website_analysis_provider: str = "openai"
     onboarding_website_fetch_timeout_seconds: int = Field(default=10, gt=0)
@@ -57,6 +61,7 @@ class Settings(BaseSettings):
     platform_web_search_project_id: str = "ristoh-css"
     platform_web_search_max_results: int = Field(default=3, gt=0)
     platform_web_search_timeout_seconds: int = Field(default=15, gt=0)
+    tavily_api_base_url: str = "https://api.tavily.com"
     platform_web_search_api_key: str | None = Field(
         default=None,
         validation_alias=AliasChoices(
@@ -80,6 +85,8 @@ class Settings(BaseSettings):
     email_from: str | None = None
     onboarding_review_email: str | None = None
     resend_api_key: str | None = Field(default=None, validation_alias="RESEND_API_KEY")
+    resend_api_base_url: str = "https://api.resend.com"
+    telegram_api_base_url: str = "https://api.telegram.org"
     cors_allow_origins: str = "*"
     log_level: str = "INFO"
     log_format: str = (
@@ -95,7 +102,24 @@ class Settings(BaseSettings):
     def validate_kb_chunk_settings(self) -> "Settings":
         if self.kb_chunk_overlap >= self.kb_chunk_size:
             raise ValueError("AGENT_KB_CHUNK_OVERLAP must be smaller than AGENT_KB_CHUNK_SIZE")
+        if (
+            self.deployment_environment not in {"local", "test"}
+            and not self.onboarding_verification_code_secret
+        ):
+            raise ValueError(
+                "AGENT_ONBOARDING_VERIFICATION_CODE_SECRET is required outside local/test"
+            )
         return self
+
+    @property
+    def public_webhook_api_url(self) -> str | None:
+        web_url = self.web_public_base_url.strip().rstrip("/")
+        # Telegram requires HTTPS; HTTP is only used against mocks in tests.
+        if web_url.startswith("https://") or (
+            self.deployment_environment == "test" and web_url.startswith("http://")
+        ):
+            return f"{web_url}/api"
+        return None
 
 
 @lru_cache

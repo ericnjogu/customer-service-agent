@@ -4,6 +4,8 @@
 .uv-bin/
 .ansible-collections/
 node_modules/
+web/test-results/
+web/playwright-report/
 __pycache__/
 .pytest_cache/
 .ruff_cache/

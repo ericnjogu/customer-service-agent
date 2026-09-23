@@ -1,5 +1,7 @@
 import hashlib
+import hmac
 import logging
+import math
 import secrets
 import time
 from dataclasses import dataclass
@@ -36,6 +38,12 @@ logger = logging.getLogger(__name__)
 
 class OnboardingValidationError(ValueError):
     pass
+
+
+class OnboardingRateLimitError(OnboardingValidationError):
+    def __init__(self, message: str, *, retry_after_seconds: int) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = max(1, retry_after_seconds)
 
 
 @dataclass(frozen=True)
@@ -102,21 +110,33 @@ class OnboardingSessionService:
             raise OnboardingValidationError(
                 "Username email must be verified before website verification"
             )
+        if request.website_url is None:
+            return await self.onboarding.clear_session_website(session_id)
+        assert request.website_verification_email is not None
+        requested_website_url = str(request.website_url)
+        requested_email = str(request.website_verification_email).lower()
+        if (
+            session.website_url == requested_website_url
+            and str(session.website_verification_email or "").lower() == requested_email
+        ):
+            enforce_resend_cooldown(
+                session.website_email_verification_resend_available_at
+            )
         validate_website_verification_fields(
-            str(request.website_url),
-            str(request.website_verification_email),
+            requested_website_url,
+            requested_email,
             require_email_domain_match=(
                 self.settings.onboarding_require_admin_email_domain_match
             ),
         )
         await self._validate_no_duplicate_website(
-            str(request.website_url),
+            requested_website_url,
             session_id=session_id,
         )
         updated = await self.onboarding.save_session_website(
             session_id,
-            website_url=str(request.website_url),
-            website_verification_email=str(request.website_verification_email),
+            website_url=requested_website_url,
+            website_verification_email=requested_email,
         )
         return await self.send_website_email_verification(updated.session_id)
 
@@ -213,14 +233,16 @@ class OnboardingSessionService:
     ) -> OnboardingSessionRecord:
         started_at = time.perf_counter()
         session = await self._require_session(session_id)
-        token = secrets.token_urlsafe(32)
-        expires_at = datetime.now(timezone.utc) + timedelta(
-            minutes=self.settings.onboarding_email_verification_token_ttl_minutes
+        enforce_resend_cooldown(
+            session.username_email_verification_resend_available_at
         )
-        verify_url = username_email_verification_url(
-            self.settings.web_public_base_url,
-            session.session_id,
-            token,
+        code = generate_verification_code()
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(
+            minutes=self.settings.onboarding_email_verification_code_ttl_minutes
+        )
+        resend_available_at = now + timedelta(
+            seconds=self.settings.onboarding_email_verification_resend_cooldown_seconds
         )
         resume_url = onboarding_resume_url(
             self.settings.web_public_base_url,
@@ -228,8 +250,12 @@ class OnboardingSessionService:
         )
         updated = await self.onboarding.save_username_email_verification_token(
             session_id,
-            token_hash=token_hash(token),
+            token_hash=verification_code_hash(
+                code,
+                self.settings.onboarding_verification_code_secret,
+            ),
             expires_at=expires_at,
+            resend_available_at=resend_available_at,
         )
         logger.info(
             "Saved onboarding username verification token session_id=%s "
@@ -253,13 +279,13 @@ class OnboardingSessionService:
                 subject="Verify your customer-service onboarding account email",
                 text=(
                     f"Hello {session.admin.name},\n\n"
-                    "Please verify the email address you will use for your future "
-                    "customer-service dashboard account.\n\n"
-                    f"{verify_url}\n\n"
+                    "Use this verification code to confirm the email address for "
+                    "your future customer-service dashboard account:\n\n"
+                    f"{code}\n\n"
                     "You can resume this onboarding later from:\n\n"
                     f"{resume_url}\n\n"
-                    f"This link expires in "
-                    f"{self.settings.onboarding_email_verification_token_ttl_minutes} "
+                    f"This code expires in "
+                    f"{self.settings.onboarding_email_verification_code_ttl_minutes} "
                     "minutes."
                 ),
             )
@@ -291,14 +317,14 @@ class OnboardingSessionService:
         session = await self._require_session(session_id)
         if not session.website_verification_email:
             raise OnboardingValidationError("Website verification email is required")
-        token = secrets.token_urlsafe(32)
-        expires_at = datetime.now(timezone.utc) + timedelta(
-            minutes=self.settings.onboarding_email_verification_token_ttl_minutes
+        enforce_resend_cooldown(session.website_email_verification_resend_available_at)
+        code = generate_verification_code()
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(
+            minutes=self.settings.onboarding_email_verification_code_ttl_minutes
         )
-        verify_url = website_email_verification_url(
-            self.settings.web_public_base_url,
-            session.session_id,
-            token,
+        resend_available_at = now + timedelta(
+            seconds=self.settings.onboarding_email_verification_resend_cooldown_seconds
         )
         resume_url = onboarding_resume_url(
             self.settings.web_public_base_url,
@@ -306,8 +332,12 @@ class OnboardingSessionService:
         )
         updated = await self.onboarding.save_website_email_verification_token(
             session_id,
-            token_hash=token_hash(token),
+            token_hash=verification_code_hash(
+                code,
+                self.settings.onboarding_verification_code_secret,
+            ),
             expires_at=expires_at,
+            resend_available_at=resend_available_at,
         )
         logger.info(
             "Sending onboarding website email verification session_id=%s "
@@ -323,13 +353,13 @@ class OnboardingSessionService:
                 subject="Verify your business website for customer-service onboarding",
                 text=(
                     f"Hello {session.admin.name},\n\n"
-                    "Please verify this business website contact email to continue "
-                    "customer-service onboarding.\n\n"
-                    f"{verify_url}\n\n"
+                    "Use this verification code to confirm the business website "
+                    "contact email:\n\n"
+                    f"{code}\n\n"
                     "You can resume this onboarding later from:\n\n"
                     f"{resume_url}\n\n"
-                    f"This link expires in "
-                    f"{self.settings.onboarding_email_verification_token_ttl_minutes} "
+                    f"This code expires in "
+                    f"{self.settings.onboarding_email_verification_code_ttl_minutes} "
                     "minutes."
                 ),
             )
@@ -357,12 +387,19 @@ class OnboardingSessionService:
         request: OnboardingEmailVerificationRequest,
     ) -> OnboardingSessionRecord:
         await self._require_session(session_id)
-        submitted_token_hash = token_hash(request.token)
+        submitted_token_hash = email_verification_hash(request, self.settings)
         accepted = await self.onboarding.consume_username_email_verification_token(
             session_id,
             token_hash=submitted_token_hash,
+            max_attempts=self.settings.onboarding_email_verification_max_attempts,
         )
         if not accepted:
+            failed_attempts = (
+                await self.onboarding.record_username_email_verification_failure(
+                    session_id,
+                    max_attempts=self.settings.onboarding_email_verification_max_attempts,
+                )
+            )
             diagnostic = await self.onboarding.inspect_username_email_verification_token(
                 session_id,
                 token_hash=submitted_token_hash,
@@ -384,8 +421,12 @@ class OnboardingSessionService:
                 diagnostic.submitted_token_fingerprint,
                 diagnostic.stored_token_fingerprint,
             )
+            if max(failed_attempts or 0, diagnostic.failed_attempts) >= (
+                self.settings.onboarding_email_verification_max_attempts
+            ):
+                raise verification_attempts_exhausted(diagnostic)
             raise OnboardingValidationError(
-                "Email verification link is missing, expired, invalid, or already used"
+                "Email verification code is missing, expired, invalid, or already used"
             )
         session = await self._require_session(session_id)
         return session
@@ -396,12 +437,19 @@ class OnboardingSessionService:
         request: OnboardingEmailVerificationRequest,
     ) -> OnboardingSessionRecord:
         await self._require_session(session_id)
-        submitted_token_hash = token_hash(request.token)
+        submitted_token_hash = email_verification_hash(request, self.settings)
         accepted = await self.onboarding.consume_website_email_verification_token(
             session_id,
             token_hash=submitted_token_hash,
+            max_attempts=self.settings.onboarding_email_verification_max_attempts,
         )
         if not accepted:
+            failed_attempts = (
+                await self.onboarding.record_website_email_verification_failure(
+                    session_id,
+                    max_attempts=self.settings.onboarding_email_verification_max_attempts,
+                )
+            )
             diagnostic = await self.onboarding.inspect_website_email_verification_token(
                 session_id,
                 token_hash=submitted_token_hash,
@@ -423,15 +471,19 @@ class OnboardingSessionService:
                 diagnostic.submitted_token_fingerprint,
                 diagnostic.stored_token_fingerprint,
             )
+            if max(failed_attempts or 0, diagnostic.failed_attempts) >= (
+                self.settings.onboarding_email_verification_max_attempts
+            ):
+                raise verification_attempts_exhausted(diagnostic)
             raise OnboardingValidationError(
-                "Email verification link is missing, expired, invalid, or already used"
+                "Email verification code is missing, expired, invalid, or already used"
             )
         session = await self._require_session(session_id)
         return session
 
     async def prepare_telegram_setup(self, session_id: UUID) -> OnboardingSessionRecord:
         session = await self._require_session(session_id)
-        if not session.username_email_verified or not session.website_email_verified:
+        if not session.username_email_verified or not website_requirement_satisfied(session):
             raise OnboardingValidationError(
                 "Username and website emails must be verified before Telegram setup"
             )
@@ -502,7 +554,7 @@ class OnboardingSessionService:
 
     async def submit_session(self, session_id: UUID) -> OnboardingSessionSubmission:
         session = await self._require_session(session_id)
-        if not session.username_email_verified or not session.website_email_verified:
+        if not session.username_email_verified or not website_requirement_satisfied(session):
             raise OnboardingValidationError(
                 "Username and website emails must be verified before submit"
             )
@@ -688,6 +740,65 @@ def telegram_setup_email_text(
 
 def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def generate_verification_code() -> str:
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+def verification_code_hash(code: str, secret: str | None) -> str:
+    signing_secret = secret or "local-development-verification-secret"
+    digest = hmac.new(
+        signing_secret.encode("utf-8"),
+        code.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"code:{digest}"
+
+
+def email_verification_hash(
+    request: OnboardingEmailVerificationRequest,
+    settings: Settings,
+) -> str:
+    if request.code is not None:
+        return verification_code_hash(
+            request.code,
+            settings.onboarding_verification_code_secret,
+        )
+    assert request.token is not None
+    return token_hash(request.token)
+
+
+def enforce_resend_cooldown(resend_available_at: datetime | None) -> None:
+    if resend_available_at is None:
+        return
+    remaining = (resend_available_at - datetime.now(timezone.utc)).total_seconds()
+    if remaining > 0:
+        raise OnboardingRateLimitError(
+            "Please wait before requesting another verification code",
+            retry_after_seconds=math.ceil(remaining),
+        )
+
+
+def verification_attempts_exhausted(
+    diagnostic: OnboardingEmailVerificationDiagnostic,
+) -> OnboardingRateLimitError:
+    retry_after = 60
+    if diagnostic.expires_at:
+        retry_after = max(
+            1,
+            math.ceil(
+                (diagnostic.expires_at - datetime.now(timezone.utc)).total_seconds()
+            ),
+        )
+    return OnboardingRateLimitError(
+        "Too many incorrect verification attempts; request a new code",
+        retry_after_seconds=retry_after,
+    )
+
+
+def website_requirement_satisfied(session: OnboardingSessionRecord) -> bool:
+    return session.website_url is None or session.website_email_verified
 
 
 def email_verification_rejection_reason(

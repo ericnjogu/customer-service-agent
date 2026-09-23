@@ -1,11 +1,28 @@
+import ssl
+
 import pytest
+from redis.asyncio.connection import Connection, SSLConnection
 
 from app.adapters.tenant_cache import (
     ElastiCacheIAMCredentialProvider,
     MemoryCachedTenantConfigRepository,
     RedisTenantConfigRepository,
+    create_redis_client,
 )
 from app.models import TenantConfig, TenantPlan
+
+
+@pytest.mark.parametrize("scheme", ["redis", "rediss"])
+def test_redis_client_constructs_connection_for_url_scheme(scheme):
+    client = create_redis_client(f"{scheme}://localhost:6379/0")
+    # Redis constructs connections lazily: from_url alone would miss the failure.
+    connection = client.connection_pool.make_connection()
+    if scheme == "rediss":
+        assert isinstance(connection, SSLConnection)
+        assert connection.ssl_context.cert_reqs == ssl.CERT_REQUIRED
+    else:
+        assert type(connection) is Connection
+        assert "ssl_cert_reqs" not in client.connection_pool.connection_kwargs
 
 
 class RecordingTenantConfigRepository:

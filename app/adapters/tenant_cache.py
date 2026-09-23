@@ -1,6 +1,7 @@
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import urlsplit
 
 from app.models import TenantConfig, TenantPlan
 from app.ports import TenantConfigRepository
@@ -262,11 +263,12 @@ def create_redis_client(
             aws_region,
         )
 
+    tls_options = {"ssl_cert_reqs": "required"} if urlsplit(redis_url).scheme == "rediss" else {}
     return Redis.from_url(
         redis_url,
         decode_responses=True,
         credential_provider=credential_provider,
-        ssl_cert_reqs="required",
+        **tls_options,
         socket_connect_timeout=5,
         socket_timeout=5,
         health_check_interval=30,

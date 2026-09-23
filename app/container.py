@@ -88,6 +88,7 @@ def create_platform_website_researcher(settings: Settings) -> object:
             project_id=settings.platform_web_search_project_id,
             max_results=settings.platform_web_search_max_results,
             timeout_seconds=settings.platform_web_search_timeout_seconds,
+            api_base_url=settings.tavily_api_base_url,
         )
     raise ValueError(
         f"Unsupported platform web search provider: {settings.platform_web_search_provider}"
@@ -116,6 +117,7 @@ def create_runtime_web_search(settings: Settings) -> object:
             api_key=settings.platform_web_search_api_key,
             max_results=settings.platform_web_search_max_results,
             timeout_seconds=settings.platform_web_search_timeout_seconds,
+            api_base_url=settings.tavily_api_base_url,
         )
     raise ValueError(
         f"Unsupported runtime web search provider: {settings.runtime_web_search_provider}"
@@ -314,6 +316,7 @@ async def create_container(settings: Settings) -> Container:
             api_key=settings.openai_api_key,
             model=settings.llm_model,
             temperature=settings.llm_temperature,
+            base_url=settings.openai_base_url,
         )
     else:
         raise ValueError(f"Unsupported answer provider: {settings.answer_provider}")
@@ -330,6 +333,7 @@ async def create_container(settings: Settings) -> Container:
             api_key=settings.openai_api_key,
             model=settings.llm_model,
             temperature=0.0,
+            base_url=settings.openai_base_url,
         )
     else:
         raise ValueError(
@@ -370,6 +374,7 @@ async def create_container(settings: Settings) -> Container:
         email_sender = ResendEmailSender(
             api_key=settings.resend_api_key,
             from_email=settings.email_from,
+            api_base_url=settings.resend_api_base_url,
         )
     else:
         raise ValueError(f"Unsupported email provider: {settings.email_provider}")
@@ -381,9 +386,12 @@ async def create_container(settings: Settings) -> Container:
         webhook_secret_token_key=settings.telegram_webhook_secret_token_secret_key,
     )
     telegram_webhook_registrar = TelegramBotWebhookRegistrar(
-        public_base_url=settings.webhook_public_base_url,
+        public_base_url=settings.public_webhook_api_url,
+        api_base_url=settings.telegram_api_base_url,
     )
-    telegram_bot_info_resolver = TelegramBotApiInfoResolver()
+    telegram_bot_info_resolver = TelegramBotApiInfoResolver(
+        api_base_url=settings.telegram_api_base_url,
+    )
     onboarding_jobs = OnboardingJobService(
         onboarding=onboarding,
         tenants=tenants,
@@ -416,6 +424,7 @@ async def create_container(settings: Settings) -> Container:
                 model=settings.llm_model,
                 website_researcher=website_researcher,
                 fetch_timeout_seconds=settings.onboarding_website_fetch_timeout_seconds,
+                base_url=settings.openai_base_url,
             )
     else:
         raise ValueError(
@@ -442,7 +451,10 @@ async def create_container(settings: Settings) -> Container:
             "Unsupported Telegram credential provider: "
             f"{settings.telegram_credential_provider}"
         )
-    telegram_sender = TenantAwareTelegramSender(telegram_credentials)
+    telegram_sender = TenantAwareTelegramSender(
+        telegram_credentials,
+        api_base_url=settings.telegram_api_base_url,
+    )
     whatsapp_credentials = KubernetesSecretWhatsAppCredentialResolver(
         tenant_configs=tenant_configs,
         namespace=settings.whatsapp_secret_namespace,

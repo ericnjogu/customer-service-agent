@@ -156,7 +156,11 @@ class OnboardingJobService:
             )
             provider_projects = await self.provider_project_provisioner.provision_for(
                 business_name=request.business_profile.business_name,
-                website_url=str(request.business_profile.website_url),
+                website_url=(
+                    str(request.business_profile.website_url)
+                    if request.business_profile.website_url
+                    else None
+                ),
                 provider_projects=request.provider_projects,
                 session_id=onboarding_session_id_from_request(request),
             )
@@ -480,26 +484,36 @@ def saas_admin_success_email_text(
 def contact_points_from_request(
     request: OnboardingJobCreate,
 ) -> list[OnboardingContactPoint]:
-    contact_points = [
-        OnboardingContactPoint(
-            kind="phone",
-            label="Business phone",
-            value=request.business_profile.business_phone,
-            is_primary=True,
-        ),
-        OnboardingContactPoint(
-            kind="email",
-            label="Business email",
-            value=request.business_profile.business_email,
-            is_primary=True,
-        ),
-        OnboardingContactPoint(
-            kind="website",
-            label="Website",
-            url=request.business_profile.website_url,
-            is_primary=True,
-        ),
-    ]
+    contact_points = (
+        [
+            OnboardingContactPoint(
+                kind="phone",
+                label="Business phone",
+                value=request.business_profile.business_phone,
+                is_primary=True,
+            )
+        ]
+        if request.business_profile.business_phone
+        else []
+    )
+    if request.business_profile.business_email:
+        contact_points.append(
+            OnboardingContactPoint(
+                kind="email",
+                label="Business email",
+                value=request.business_profile.business_email,
+                is_primary=True,
+            )
+        )
+    if request.business_profile.website_url:
+        contact_points.append(
+            OnboardingContactPoint(
+                kind="website",
+                label="Website",
+                url=request.business_profile.website_url,
+                is_primary=True,
+            )
+        )
     if request.business_profile.google_place_url:
         contact_points.append(
             OnboardingContactPoint(
@@ -525,7 +539,11 @@ def onboarding_knowledge_documents(
         chunk_knowledge_document(
             onboarding_profile_markdown(request),
             source="onboarding:approved-profile",
-            source_url=str(request.business_profile.website_url),
+            source_url=(
+                str(request.business_profile.website_url)
+                if request.business_profile.website_url
+                else None
+            ),
             metadata={
                 "tenant_id": tenant_id,
                 "source_type": "onboarding",
@@ -563,7 +581,11 @@ def onboarding_profile_markdown(request: OnboardingJobCreate) -> str:
             f"# {request.business_profile.business_name}",
             "",
             "## Business profile",
-            f"- Website: {request.business_profile.website_url}",
+            (
+                f"- Website: {request.business_profile.website_url}"
+                if request.business_profile.website_url
+                else "- Website: Not provided"
+            ),
             f"- Location name: {request.business_profile.location_name}",
             f"- Physical location: {request.business_profile.physical_location}",
             f"- Business phone: {request.business_profile.business_phone}",

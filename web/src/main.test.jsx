@@ -44,8 +44,10 @@ vi.mock("@mdxeditor/editor", () => {
 });
 
 import {
+  AnalysisScreen,
   App,
   ContactInfoScreen,
+  EmailVerificationScreen,
   StartScreen,
   TelegramScreen,
   TermsScreen,
@@ -56,6 +58,71 @@ import {
   validateStartForm,
   validateWebsiteVerificationForm,
 } from "./main.jsx";
+
+describe("verification code experience", () => {
+  test("submits an accessible six-digit account verification code", async () => {
+    const user = userEvent.setup();
+    const onVerify = vi.fn();
+    render(
+      <EmailVerificationScreen
+        session={{
+          admin: { username_email: "admin@example.co.ke" },
+          username_email_verified: false,
+          username_email_verification_resend_available_at: null,
+        }}
+        kind="username"
+        onBack={vi.fn()}
+        onVerify={onVerify}
+        onResend={vi.fn()}
+        onContinue={vi.fn()}
+        busy={false}
+        busyAction={null}
+      />,
+    );
+
+    const input = screen.getByLabelText(/six-digit code/i);
+    expect(input).toHaveAttribute("inputmode", "numeric");
+    expect(input).toHaveAttribute("autocomplete", "one-time-code");
+    await user.type(input, "123456");
+    await user.click(screen.getByRole("button", { name: /verify code/i }));
+    expect(onVerify).toHaveBeenCalledWith("123456");
+  });
+
+  test("accepts a fully omitted website pair but rejects either partial value", () => {
+    expect(
+      validateWebsiteVerificationForm({
+        website_url: "",
+        website_verification_email: "",
+      }),
+    ).toEqual({});
+    expect(
+      validateWebsiteVerificationForm({
+        website_url: "https://example.co.ke",
+        website_verification_email: "",
+      }),
+    ).toHaveProperty("website_verification_email");
+  });
+
+  test("shows manual business guidance when no website was supplied", () => {
+    render(
+      <AnalysisScreen
+        session={{
+          website_url: null,
+          business_profile: {},
+          business_summary: "",
+        }}
+        onBack={vi.fn()}
+        onNext={vi.fn()}
+        busy={false}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: /business information/i }))
+      .toBeInTheDocument();
+    expect(screen.getByText(/offerings, customers, service area, hours/i))
+      .toBeInTheDocument();
+  });
+});
 
 function validStartForm(overrides = {}) {
   return {
@@ -159,7 +226,7 @@ describe("website URL validation", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 
     await user.click(
-      screen.getByRole("button", { name: /send account verification email/i }),
+      screen.getByRole("button", { name: /send account verification code/i }),
     );
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
@@ -245,7 +312,7 @@ describe("website URL validation", () => {
     await user.click(screen.getByLabelText(/authorized to configure/i));
     await user.click(screen.getByLabelText(/accept the beta terms of service/i));
     await user.click(
-      screen.getByRole("button", { name: /send account verification email/i }),
+      screen.getByRole("button", { name: /send account verification code/i }),
     );
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
@@ -288,7 +355,7 @@ describe("website URL validation", () => {
     ).toHaveLength(2);
 
     await user.click(
-      screen.getByRole("button", { name: /send website verification email/i }),
+      screen.getByRole("button", { name: /send website verification code/i }),
     );
 
     const summary = screen.getByRole("alert");
@@ -585,7 +652,7 @@ describe("email verification flow", () => {
     expect(await screen.findByRole("heading", { name: /website verification/i }))
       .toBeInTheDocument();
     await user.click(
-      screen.getByRole("button", { name: /send website verification email/i }),
+      screen.getByRole("button", { name: /send website verification code/i }),
     );
 
     expect(await screen.findByLabelText(/business summary \/ faq/i)).toHaveValue(
@@ -733,7 +800,9 @@ describe("contact information form", () => {
     );
     expect(screen.queryByDisplayValue("https://example.co.ke/")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /add another contact/i }));
+    await user.click(
+      screen.getByRole("button", { name: /add a contact or social account/i }),
+    );
 
     const typeInputs = screen.getAllByLabelText(/type/i);
     const labelInputs = screen.getAllByLabelText(/label/i);

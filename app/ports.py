@@ -94,7 +94,7 @@ class ProviderProjectProvisioner(Protocol):
         self,
         *,
         business_name: str,
-        website_url: str,
+        website_url: str | None,
         provider_projects: OnboardingProviderProjects,
         session_id: UUID | None = None,
     ) -> OnboardingProviderProjects: ...
@@ -226,6 +226,8 @@ class OnboardingRepository(Protocol):
         website_verification_email: str,
     ) -> OnboardingSessionRecord: ...
 
+    async def clear_session_website(self, session_id: UUID) -> OnboardingSessionRecord: ...
+
     async def get_active_session_by_website_domain(
         self,
         website_domain: str,
@@ -257,6 +259,7 @@ class OnboardingRepository(Protocol):
         *,
         token_hash: str,
         expires_at: datetime,
+        resend_available_at: datetime,
     ) -> OnboardingSessionRecord: ...
 
     async def consume_username_email_verification_token(
@@ -264,7 +267,15 @@ class OnboardingRepository(Protocol):
         session_id: UUID,
         *,
         token_hash: str,
+        max_attempts: int,
     ) -> bool: ...
+
+    async def record_username_email_verification_failure(
+        self,
+        session_id: UUID,
+        *,
+        max_attempts: int,
+    ) -> int | None: ...
 
     async def inspect_username_email_verification_token(
         self,
@@ -279,6 +290,7 @@ class OnboardingRepository(Protocol):
         *,
         token_hash: str,
         expires_at: datetime,
+        resend_available_at: datetime,
     ) -> OnboardingSessionRecord: ...
 
     async def consume_website_email_verification_token(
@@ -286,7 +298,15 @@ class OnboardingRepository(Protocol):
         session_id: UUID,
         *,
         token_hash: str,
+        max_attempts: int,
     ) -> bool: ...
+
+    async def record_website_email_verification_failure(
+        self,
+        session_id: UUID,
+        *,
+        max_attempts: int,
+    ) -> int | None: ...
 
     async def inspect_website_email_verification_token(
         self,

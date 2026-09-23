@@ -6,7 +6,15 @@ from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
 import phonenumbers
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    HttpUrl,
+    field_validator,
+    model_validator,
+)
 
 from app.tenancy import (
     DEFAULT_TENANT_PLAN,
@@ -339,7 +347,7 @@ class OnboardingAdmin(BaseModel):
 
 class OnboardingBusinessProfile(BaseModel):
     business_name: str = Field(default="", max_length=500)
-    website_url: HttpUrl
+    website_url: HttpUrl | None = None
     location_name: str = Field(default="", max_length=500)
     physical_location: str = Field(default="", max_length=1_000)
     business_phone: str = Field(default="", max_length=100)
@@ -438,7 +446,14 @@ class OnboardingTelegramSetupRequest(BaseModel):
 
 
 class OnboardingEmailVerificationRequest(BaseModel):
-    token: str = Field(min_length=1, max_length=2_000)
+    code: str | None = Field(default=None, pattern=r"^\d{6}$")
+    token: str | None = Field(default=None, min_length=1, max_length=2_000)
+
+    @model_validator(mode="after")
+    def require_exactly_one_credential(self) -> "OnboardingEmailVerificationRequest":
+        if (self.code is None) == (self.token is None):
+            raise ValueError("provide exactly one of code or token")
+        return self
 
 
 class OnboardingEmailVerificationDiagnostic(BaseModel):
@@ -452,11 +467,20 @@ class OnboardingEmailVerificationDiagnostic(BaseModel):
     used_at: datetime | None = None
     submitted_token_fingerprint: str | None = None
     stored_token_fingerprint: str | None = None
+    failed_attempts: int = 0
 
 
 class OnboardingSessionWebsiteRequest(BaseModel):
-    website_url: HttpUrl
-    website_verification_email: EmailStr
+    website_url: HttpUrl | None = None
+    website_verification_email: EmailStr | None = None
+
+    @model_validator(mode="after")
+    def require_complete_pair_or_skip(self) -> "OnboardingSessionWebsiteRequest":
+        if (self.website_url is None) != (self.website_verification_email is None):
+            raise ValueError(
+                "website_url and website_verification_email must both be provided or omitted"
+            )
+        return self
 
 
 class OnboardingSessionRecord(BaseModel):
@@ -470,8 +494,10 @@ class OnboardingSessionRecord(BaseModel):
     terms_accepted_at: datetime | None = None
     username_email_verified: bool = False
     username_email_verification_expires_at: datetime | None = None
+    username_email_verification_resend_available_at: datetime | None = None
     website_email_verified: bool = False
     website_email_verification_expires_at: datetime | None = None
+    website_email_verification_resend_available_at: datetime | None = None
     analysis: WebsiteAnalysisResult | None = None
     business_profile: OnboardingBusinessProfile | None = None
     business_summary: str | None = None
@@ -535,7 +561,7 @@ class OnboardingJobAccepted(BaseModel):
 class BusinessProfileRecord(BaseModel):
     tenant_id: str
     business_name: str
-    website_url: str
+    website_url: str | None
     location_name: str
     physical_location: str
     business_phone: str

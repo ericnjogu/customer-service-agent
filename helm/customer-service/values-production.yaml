@@ -52,9 +52,8 @@ telegram:
 whatsapp:
   secretNamespace: customer-service-production
 
-webhook:
-  publicBaseUrl: https://css.ristoh.co.ke
-  publicBaseUrlSecretName: ""
+onboarding:
+  verificationCodeSecretName: app-configs
 
 email:
   configSecretName: app-configs

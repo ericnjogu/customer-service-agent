@@ -102,36 +102,6 @@ redis:
     username: ""
     region: eu-central-1
 
-n8n:
-  enabled: false
-  image: n8nio/n8n:2.33.7
-  port: 5678
-  storage: 1Gi
-  timezone: Europe/Amsterdam
-  webhookUrl: ""
-  editorBaseUrl: ""
-  encryptionKey:
-    existingSecret: "n8n-owner"
-    secretKey: N8N_ENCRYPTION_KEY
-  owner:
-    managedByEnv: false
-    email: ""
-    firstName: ""
-    lastName: ""
-    existingSecret: ""
-    passwordHashSecretKey: N8N_INSTANCE_OWNER_PASSWORD_HASH
-  email:
-    resendApiKeySecretName: "api-keys"
-    resendApiKeySecretKey: RESEND_API_KEY
-    onboardingEmail: ""
-  code:
-    allowBuiltinModules: url
-  database:
-    type: postgresdb
-    schema: public
-    tablePrefix: n8n_
-  resources: {}
-
 onboarding:
   actionTokenTtlMinutes: 60
   emailVerificationTokenTtlMinutes: 60

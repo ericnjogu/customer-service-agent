@@ -11,9 +11,3 @@ Port-forward the onboarding web app:
 Then open http://localhost:{{ .Values.web.service.port }}.
 Configured public URL for email links: {{ include "customer-service.webPublicBaseUrl" . }}
 {{- end }}
-{{- if .Values.n8n.enabled }}
-
-Port-forward n8n:
-  kubectl port-forward service/{{ include "customer-service.fullname" . }}-n8n {{ .Values.n8n.port }}:{{ .Values.n8n.port }} --namespace {{ .Release.Namespace }}
-Then open http://localhost:{{ .Values.n8n.port }}.
-{{- end }}

@@ -31,22 +31,11 @@ LOG_LEVEL="${LOG_LEVEL:-DEBUG}"
 KUBE_CONTEXT="${KUBE_CONTEXT:-rancher-desktop}"
 APP_DEPLOYMENT="${APP_DEPLOYMENT:-${RELEASE_NAME}-customer-service-app}"
 WEB_DEPLOYMENT="${WEB_DEPLOYMENT:-${RELEASE_NAME}-customer-service-web}"
-N8N_ENABLED="${N8N_ENABLED:-false}"
-N8N_DEPLOYMENT="${N8N_DEPLOYMENT:-${RELEASE_NAME}-customer-service-n8n}"
-N8N_OWNER_MANAGED_BY_ENV="${N8N_OWNER_MANAGED_BY_ENV:-false}"
-N8N_OWNER_EMAIL="${N8N_OWNER_EMAIL:-}"
-N8N_OWNER_FIRST_NAME="${N8N_OWNER_FIRST_NAME:-}"
-N8N_OWNER_LAST_NAME="${N8N_OWNER_LAST_NAME:-}"
-N8N_OWNER_SECRET_NAME="${N8N_OWNER_SECRET_NAME:-n8n-owner}"
-N8N_ENCRYPTION_KEY_SECRET_NAME="${N8N_ENCRYPTION_KEY_SECRET_NAME:-${N8N_OWNER_SECRET_NAME}}"
-N8N_EMAIL_RESEND_API_KEY_SECRET_NAME="${N8N_EMAIL_RESEND_API_KEY_SECRET_NAME:-api-keys}"
-N8N_EMAIL_RESEND_API_KEY_SECRET_KEY="${N8N_EMAIL_RESEND_API_KEY_SECRET_KEY:-RESEND_API_KEY}"
-N8N_ONBOARDING_EMAIL="${N8N_ONBOARDING_EMAIL:-}"
 AGENT_EMAIL_PROVIDER="${AGENT_EMAIL_PROVIDER:-resend}"
 AGENT_EMAIL_FROM="${AGENT_EMAIL_FROM:-}"
-AGENT_ONBOARDING_REVIEW_EMAIL="${AGENT_ONBOARDING_REVIEW_EMAIL:-${N8N_ONBOARDING_EMAIL}}"
-AGENT_EMAIL_RESEND_API_KEY_SECRET_NAME="${AGENT_EMAIL_RESEND_API_KEY_SECRET_NAME:-${N8N_EMAIL_RESEND_API_KEY_SECRET_NAME}}"
-AGENT_EMAIL_RESEND_API_KEY_SECRET_KEY="${AGENT_EMAIL_RESEND_API_KEY_SECRET_KEY:-${N8N_EMAIL_RESEND_API_KEY_SECRET_KEY}}"
+AGENT_ONBOARDING_REVIEW_EMAIL="${AGENT_ONBOARDING_REVIEW_EMAIL:-}"
+AGENT_EMAIL_RESEND_API_KEY_SECRET_NAME="${AGENT_EMAIL_RESEND_API_KEY_SECRET_NAME:-api-keys}"
+AGENT_EMAIL_RESEND_API_KEY_SECRET_KEY="${AGENT_EMAIL_RESEND_API_KEY_SECRET_KEY:-RESEND_API_KEY}"
 AGENT_PLATFORM_WEB_SEARCH_PROVIDER="${AGENT_PLATFORM_WEB_SEARCH_PROVIDER:-tavily}"
 AGENT_PLATFORM_WEB_SEARCH_PROJECT_ID="${AGENT_PLATFORM_WEB_SEARCH_PROJECT_ID:-ristoh-css}"
 AGENT_PLATFORM_WEB_SEARCH_MAX_RESULTS="${AGENT_PLATFORM_WEB_SEARCH_MAX_RESULTS:-3}"
@@ -114,16 +103,6 @@ if [[ "${OTEL_ENABLED}" == "true" ]]; then
     --wait
 fi
 
-if [[ "${N8N_ENABLED}" == "true" && "${N8N_OWNER_MANAGED_BY_ENV}" == "true" ]]; then
-  if [[ -z "${N8N_OWNER_EMAIL}" || -z "${N8N_OWNER_FIRST_NAME}" || -z "${N8N_OWNER_LAST_NAME}" ]]; then
-    echo "N8N_OWNER_EMAIL, N8N_OWNER_FIRST_NAME, and N8N_OWNER_LAST_NAME are required when N8N_OWNER_MANAGED_BY_ENV=true." >&2
-    exit 1
-  fi
-
-  echo "Checking n8n owner Secret exists: ${N8N_OWNER_SECRET_NAME}"
-  kubectl get secret "${N8N_OWNER_SECRET_NAME}" --namespace "${NAMESPACE}" >/dev/null
-fi
-
 echo "Upgrading Helm release: ${RELEASE_NAME}"
 helm_args=(
   upgrade --install "${RELEASE_NAME}" "${CHART_PATH}"
@@ -142,7 +121,6 @@ helm_args=(
   --set "platform.webSearchTimeoutSeconds=${AGENT_PLATFORM_WEB_SEARCH_TIMEOUT_SECONDS}"
   --set "runtime.webSearchProvider=${AGENT_RUNTIME_WEB_SEARCH_PROVIDER}"
   --set "providerProjects.provisioner=${AGENT_PROVIDER_PROJECT_PROVISIONER}"
-  --set "n8n.enabled=${N8N_ENABLED}"
   --set "logging.level=${LOG_LEVEL}"
   --set "telemetry.enabled=${OTEL_ENABLED}"
   --set "telemetry.endpoint=http://otel-collector.${NAMESPACE}:4318"
@@ -184,30 +162,6 @@ if [[ -n "${AGENT_EMAIL_RESEND_API_KEY_SECRET_NAME}" ]]; then
   helm_args+=(
     --set "email.resendApiKeySecretName=${AGENT_EMAIL_RESEND_API_KEY_SECRET_NAME}"
     --set "email.resendApiKeySecretKey=${AGENT_EMAIL_RESEND_API_KEY_SECRET_KEY}"
-  )
-fi
-
-if [[ "${N8N_ENABLED}" == "true" && "${N8N_OWNER_MANAGED_BY_ENV}" == "true" ]]; then
-  helm_args+=(
-    --set "n8n.owner.managedByEnv=true"
-    --set "n8n.owner.email=${N8N_OWNER_EMAIL}"
-    --set "n8n.owner.firstName=${N8N_OWNER_FIRST_NAME}"
-    --set "n8n.owner.lastName=${N8N_OWNER_LAST_NAME}"
-    --set "n8n.owner.existingSecret=${N8N_OWNER_SECRET_NAME}"
-    --set "n8n.encryptionKey.existingSecret=${N8N_ENCRYPTION_KEY_SECRET_NAME}"
-  )
-fi
-
-if [[ -n "${N8N_EMAIL_RESEND_API_KEY_SECRET_NAME}" ]]; then
-  helm_args+=(
-    --set "n8n.email.resendApiKeySecretName=${N8N_EMAIL_RESEND_API_KEY_SECRET_NAME}"
-    --set "n8n.email.resendApiKeySecretKey=${N8N_EMAIL_RESEND_API_KEY_SECRET_KEY}"
-  )
-fi
-
-if [[ -n "${N8N_ONBOARDING_EMAIL}" ]]; then
-  helm_args+=(
-    --set "n8n.email.onboardingEmail=${N8N_ONBOARDING_EMAIL}"
   )
 fi
 

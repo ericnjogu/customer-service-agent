@@ -5,7 +5,7 @@ info:
 
 http:
   method: get
-  url: https://telegram.org/%7Bmy_bot_token%7D/getWebhookInfo
+  url: https://api.telegram.org/bot{{telegram_bot_token}}/getWebhookInfo
   auth: inherit
 
 settings:

@@ -22,6 +22,11 @@ sops encrypt --age "$SOPS_AGE_RECIPIENTS" \
 
 The encrypted output is safe to commit. Confirm it contains no plaintext values.
 
+`app-configs` must include a random value of at least 32 characters under
+`AGENT_ONBOARDING_VERIFICATION_CODE_SECRET`. The application uses it only as the
+HMAC-SHA256 key for onboarding email codes; rotate it only when outstanding
+ten-minute codes may be invalidated.
+
 The `backup-credentials` template uses fil.one S3-compatible credentials. The same
 key may be used during bootstrap, but production should use a rotated key scoped to
 the private `ristoh-css-postgres` bucket.

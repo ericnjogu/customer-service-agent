@@ -105,10 +105,16 @@ def row_to_onboarding_session(row: asyncpg.Record) -> OnboardingSessionRecord:
         username_email_verification_expires_at=data[
             "username_email_verification_expires_at"
         ],
+        username_email_verification_resend_available_at=data.get(
+            "username_email_verification_resend_available_at"
+        ),
         website_email_verified=data["website_email_verified"],
         website_email_verification_expires_at=data[
             "website_email_verification_expires_at"
         ],
+        website_email_verification_resend_available_at=data.get(
+            "website_email_verification_resend_available_at"
+        ),
         analysis=payload.get("analysis"),
         business_profile=payload.get("business_profile"),
         business_summary=payload.get("business_summary"),
@@ -980,7 +986,7 @@ class PostgresOnboardingRepository:
             """,
             tenant_id,
             profile.business_name,
-            str(profile.website_url),
+            str(profile.website_url) if profile.website_url else None,
             profile.location_name,
             profile.physical_location,
             profile.business_phone,
@@ -1078,7 +1084,9 @@ class PostgresOnboardingRepository:
             RETURNING session_id, status, current_step, website_url, admin_email,
                       website_verification_email, session_payload,
                       username_email_verified, username_email_verification_expires_at,
+                      username_email_verification_resend_available_at,
                       website_email_verified, website_email_verification_expires_at,
+                      website_email_verification_resend_available_at,
                       telegram_setup_url,
                       telegram_setup_token_expires_at, submitted_job_id, error,
                       created_at, updated_at
@@ -1096,16 +1104,91 @@ class PostgresOnboardingRepository:
         website_verification_email: str,
     ) -> OnboardingSessionRecord:
         session = await self._require_session(session_id)
-        return await self._update_session_payload(
-            session_id,
-            status="website_verification_pending",
-            current_step="website-email-verification",
-            payload=session_payload(session),
-            website_url=website_url,
-            website_verification_email=website_verification_email.lower(),
-            website_email_verified=False,
-            clear_website_email_verification_token_used_at=True,
+        payload = session_payload(session)
+        payload.update(
+            {
+                "analysis": None,
+                "business_profile": None,
+                "business_summary": None,
+                "contact_info": [],
+                "knowledge_sources": [],
+            }
         )
+        assert self.database.pool
+        row = await self.database.pool.fetchrow(
+            """
+            UPDATE onboarding_sessions
+            SET status = 'website_verification_pending',
+                current_step = 'website-email-verification',
+                website_url = $2,
+                website_verification_email = $3,
+                website_email_verified = false,
+                website_email_verification_token_hash = NULL,
+                website_email_verification_expires_at = NULL,
+                website_email_verification_token_used_at = NULL,
+                website_email_verification_failed_attempts = 0,
+                website_email_verification_resend_available_at = NULL,
+                session_payload = $4::jsonb,
+                updated_at = now()
+            WHERE session_id = $1
+            RETURNING session_id, status, current_step, website_url, admin_email,
+                      website_verification_email, session_payload,
+                      username_email_verified, username_email_verification_expires_at,
+                      username_email_verification_resend_available_at,
+                      website_email_verified, website_email_verification_expires_at,
+                      website_email_verification_resend_available_at,
+                      telegram_setup_url, telegram_setup_token_expires_at,
+                      submitted_job_id, error, created_at, updated_at
+            """,
+            session_id,
+            website_url,
+            website_verification_email.lower(),
+            json.dumps(payload),
+        )
+        return row_to_onboarding_session(row)
+
+    async def clear_session_website(self, session_id: UUID) -> OnboardingSessionRecord:
+        session = await self._require_session(session_id)
+        payload = session_payload(session)
+        payload.update(
+            {
+                "analysis": None,
+                "business_profile": None,
+                "business_summary": None,
+                "contact_info": [],
+                "knowledge_sources": [],
+            }
+        )
+        assert self.database.pool
+        row = await self.database.pool.fetchrow(
+            """
+            UPDATE onboarding_sessions
+            SET status = 'draft',
+                current_step = 'analysis',
+                website_url = NULL,
+                website_verification_email = NULL,
+                website_email_verified = false,
+                website_email_verification_token_hash = NULL,
+                website_email_verification_expires_at = NULL,
+                website_email_verification_token_used_at = NULL,
+                website_email_verification_failed_attempts = 0,
+                website_email_verification_resend_available_at = NULL,
+                session_payload = $2::jsonb,
+                updated_at = now()
+            WHERE session_id = $1
+            RETURNING session_id, status, current_step, website_url, admin_email,
+                      website_verification_email, session_payload,
+                      username_email_verified, username_email_verification_expires_at,
+                      username_email_verification_resend_available_at,
+                      website_email_verified, website_email_verification_expires_at,
+                      website_email_verification_resend_available_at,
+                      telegram_setup_url, telegram_setup_token_expires_at,
+                      submitted_job_id, error, created_at, updated_at
+            """,
+            session_id,
+            json.dumps(payload),
+        )
+        return row_to_onboarding_session(row)
 
     async def get_active_session_by_website_domain(
         self,
@@ -1117,7 +1200,9 @@ class PostgresOnboardingRepository:
             SELECT session_id, status, current_step, website_url, admin_email,
                    website_verification_email, session_payload,
                    username_email_verified, username_email_verification_expires_at,
+                   username_email_verification_resend_available_at,
                    website_email_verified, website_email_verification_expires_at,
+                   website_email_verification_resend_available_at,
                    telegram_setup_url,
                    telegram_setup_token_expires_at, submitted_job_id, error,
                    created_at, updated_at
@@ -1157,7 +1242,9 @@ class PostgresOnboardingRepository:
             SELECT session_id, status, current_step, website_url, admin_email,
                    website_verification_email, session_payload,
                    username_email_verified, username_email_verification_expires_at,
+                   username_email_verification_resend_available_at,
                    website_email_verified, website_email_verification_expires_at,
+                   website_email_verification_resend_available_at,
                    telegram_setup_url,
                    telegram_setup_token_expires_at, submitted_job_id, error,
                    created_at, updated_at
@@ -1223,24 +1310,47 @@ class PostgresOnboardingRepository:
         *,
         token_hash: str,
         expires_at: datetime,
+        resend_available_at: datetime,
     ) -> OnboardingSessionRecord:
         session = await self._require_session(session_id)
-        return await self._update_session_payload(
+        assert self.database.pool
+        row = await self.database.pool.fetchrow(
+            """
+            UPDATE onboarding_sessions
+            SET status = 'username_email_verification_pending',
+                current_step = 'username-email-verification',
+                session_payload = $2::jsonb,
+                username_email_verified = false,
+                username_email_verification_token_hash = $3,
+                username_email_verification_expires_at = $4,
+                username_email_verification_token_used_at = NULL,
+                username_email_verification_failed_attempts = 0,
+                username_email_verification_resend_available_at = $5,
+                updated_at = now()
+            WHERE session_id = $1
+            RETURNING session_id, status, current_step, website_url, admin_email,
+                      website_verification_email, session_payload,
+                      username_email_verified, username_email_verification_expires_at,
+                      username_email_verification_resend_available_at,
+                      website_email_verified, website_email_verification_expires_at,
+                      website_email_verification_resend_available_at,
+                      telegram_setup_url, telegram_setup_token_expires_at,
+                      submitted_job_id, error, created_at, updated_at
+            """,
             session_id,
-            status="username_email_verification_pending",
-            current_step="username-email-verification",
-            payload=session_payload(session),
-            username_email_verified=False,
-            username_email_verification_token_hash=token_hash,
-            username_email_verification_expires_at=expires_at,
-            clear_username_email_verification_token_used_at=True,
+            json.dumps(session_payload(session)),
+            token_hash,
+            expires_at,
+            resend_available_at,
         )
+        return row_to_onboarding_session(row)
 
     async def consume_username_email_verification_token(
         self,
         session_id: UUID,
         *,
         token_hash: str,
+        max_attempts: int,
     ) -> bool:
         assert self.database.pool
         row = await self.database.pool.fetchrow(
@@ -1255,12 +1365,39 @@ class PostgresOnboardingRepository:
               AND username_email_verification_token_hash = $2
               AND username_email_verification_token_used_at IS NULL
               AND username_email_verification_expires_at > now()
+              AND username_email_verification_failed_attempts < $3
             RETURNING session_id
             """,
             session_id,
             token_hash,
+            max_attempts,
         )
         return row is not None
+
+    async def record_username_email_verification_failure(
+        self,
+        session_id: UUID,
+        *,
+        max_attempts: int,
+    ) -> int | None:
+        assert self.database.pool
+        row = await self.database.pool.fetchrow(
+            """
+            UPDATE onboarding_sessions
+            SET username_email_verification_failed_attempts =
+                    username_email_verification_failed_attempts + 1,
+                updated_at = now()
+            WHERE session_id = $1
+              AND username_email_verified = false
+              AND username_email_verification_token_used_at IS NULL
+              AND username_email_verification_expires_at > now()
+              AND username_email_verification_failed_attempts < $2
+            RETURNING username_email_verification_failed_attempts
+            """,
+            session_id,
+            max_attempts,
+        )
+        return row["username_email_verification_failed_attempts"] if row else None
 
     async def inspect_username_email_verification_token(
         self,
@@ -1275,6 +1412,7 @@ class PostgresOnboardingRepository:
                    username_email_verification_token_hash AS token_hash,
                    username_email_verification_expires_at AS expires_at,
                    username_email_verification_token_used_at AS used_at,
+                   username_email_verification_failed_attempts AS failed_attempts,
                    username_email_verification_expires_at <= now() AS token_expired
             FROM onboarding_sessions
             WHERE session_id = $1
@@ -1298,6 +1436,7 @@ class PostgresOnboardingRepository:
             used_at=used_at,
             submitted_token_fingerprint=token_fingerprint(token_hash),
             stored_token_fingerprint=token_fingerprint(stored_token_hash),
+            failed_attempts=row["failed_attempts"],
         )
 
     async def save_website_email_verification_token(
@@ -1306,24 +1445,47 @@ class PostgresOnboardingRepository:
         *,
         token_hash: str,
         expires_at: datetime,
+        resend_available_at: datetime,
     ) -> OnboardingSessionRecord:
         session = await self._require_session(session_id)
-        return await self._update_session_payload(
+        assert self.database.pool
+        row = await self.database.pool.fetchrow(
+            """
+            UPDATE onboarding_sessions
+            SET status = 'website_verification_pending',
+                current_step = 'website-email-verification',
+                session_payload = $2::jsonb,
+                website_email_verified = false,
+                website_email_verification_token_hash = $3,
+                website_email_verification_expires_at = $4,
+                website_email_verification_token_used_at = NULL,
+                website_email_verification_failed_attempts = 0,
+                website_email_verification_resend_available_at = $5,
+                updated_at = now()
+            WHERE session_id = $1
+            RETURNING session_id, status, current_step, website_url, admin_email,
+                      website_verification_email, session_payload,
+                      username_email_verified, username_email_verification_expires_at,
+                      username_email_verification_resend_available_at,
+                      website_email_verified, website_email_verification_expires_at,
+                      website_email_verification_resend_available_at,
+                      telegram_setup_url, telegram_setup_token_expires_at,
+                      submitted_job_id, error, created_at, updated_at
+            """,
             session_id,
-            status="website_verification_pending",
-            current_step="website-email-verification",
-            payload=session_payload(session),
-            website_email_verified=False,
-            website_email_verification_token_hash=token_hash,
-            website_email_verification_expires_at=expires_at,
-            clear_website_email_verification_token_used_at=True,
+            json.dumps(session_payload(session)),
+            token_hash,
+            expires_at,
+            resend_available_at,
         )
+        return row_to_onboarding_session(row)
 
     async def consume_website_email_verification_token(
         self,
         session_id: UUID,
         *,
         token_hash: str,
+        max_attempts: int,
     ) -> bool:
         assert self.database.pool
         row = await self.database.pool.fetchrow(
@@ -1338,12 +1500,39 @@ class PostgresOnboardingRepository:
               AND website_email_verification_token_hash = $2
               AND website_email_verification_token_used_at IS NULL
               AND website_email_verification_expires_at > now()
+              AND website_email_verification_failed_attempts < $3
             RETURNING session_id
             """,
             session_id,
             token_hash,
+            max_attempts,
         )
         return row is not None
+
+    async def record_website_email_verification_failure(
+        self,
+        session_id: UUID,
+        *,
+        max_attempts: int,
+    ) -> int | None:
+        assert self.database.pool
+        row = await self.database.pool.fetchrow(
+            """
+            UPDATE onboarding_sessions
+            SET website_email_verification_failed_attempts =
+                    website_email_verification_failed_attempts + 1,
+                updated_at = now()
+            WHERE session_id = $1
+              AND website_email_verified = false
+              AND website_email_verification_token_used_at IS NULL
+              AND website_email_verification_expires_at > now()
+              AND website_email_verification_failed_attempts < $2
+            RETURNING website_email_verification_failed_attempts
+            """,
+            session_id,
+            max_attempts,
+        )
+        return row["website_email_verification_failed_attempts"] if row else None
 
     async def inspect_website_email_verification_token(
         self,
@@ -1358,6 +1547,7 @@ class PostgresOnboardingRepository:
                    website_email_verification_token_hash AS token_hash,
                    website_email_verification_expires_at AS expires_at,
                    website_email_verification_token_used_at AS used_at,
+                   website_email_verification_failed_attempts AS failed_attempts,
                    website_email_verification_expires_at <= now() AS token_expired
             FROM onboarding_sessions
             WHERE session_id = $1
@@ -1381,6 +1571,7 @@ class PostgresOnboardingRepository:
             used_at=used_at,
             submitted_token_fingerprint=token_fingerprint(token_hash),
             stored_token_fingerprint=token_fingerprint(stored_token_hash),
+            failed_attempts=row["failed_attempts"],
         )
 
     async def save_telegram_setup_token(
@@ -1593,7 +1784,9 @@ class PostgresOnboardingRepository:
             RETURNING session_id, status, current_step, website_url, admin_email,
                       website_verification_email, session_payload,
                       username_email_verified, username_email_verification_expires_at,
+                      username_email_verification_resend_available_at,
                       website_email_verified, website_email_verification_expires_at,
+                      website_email_verification_resend_available_at,
                       telegram_setup_url,
                       telegram_setup_token_expires_at, submitted_job_id, error,
                       created_at, updated_at
@@ -1742,10 +1935,14 @@ CREATE TABLE IF NOT EXISTS onboarding_sessions (
     username_email_verification_token_hash text,
     username_email_verification_expires_at timestamptz,
     username_email_verification_token_used_at timestamptz,
+    username_email_verification_failed_attempts integer NOT NULL DEFAULT 0,
+    username_email_verification_resend_available_at timestamptz,
     website_email_verified boolean NOT NULL DEFAULT false,
     website_email_verification_token_hash text,
     website_email_verification_expires_at timestamptz,
     website_email_verification_token_used_at timestamptz,
+    website_email_verification_failed_attempts integer NOT NULL DEFAULT 0,
+    website_email_verification_resend_available_at timestamptz,
     telegram_setup_url text,
     telegram_setup_token_hash text,
     telegram_setup_token_expires_at timestamptz,
@@ -1769,7 +1966,7 @@ CREATE TABLE IF NOT EXISTS tenant_memberships (
 CREATE TABLE IF NOT EXISTS business_profiles (
     tenant_id text PRIMARY KEY REFERENCES tenants(tenant_id) ON DELETE CASCADE,
     business_name text NOT NULL,
-    website_url text NOT NULL,
+    website_url text,
     location_name text NOT NULL,
     physical_location text NOT NULL,
     business_phone text NOT NULL,
@@ -1936,6 +2133,13 @@ ALTER TABLE onboarding_sessions
 ADD COLUMN IF NOT EXISTS username_email_verification_token_used_at timestamptz;
 
 ALTER TABLE onboarding_sessions
+ADD COLUMN IF NOT EXISTS username_email_verification_failed_attempts integer
+NOT NULL DEFAULT 0;
+
+ALTER TABLE onboarding_sessions
+ADD COLUMN IF NOT EXISTS username_email_verification_resend_available_at timestamptz;
+
+ALTER TABLE onboarding_sessions
 ADD COLUMN IF NOT EXISTS website_email_verified boolean NOT NULL DEFAULT false;
 
 ALTER TABLE onboarding_sessions
@@ -1946,6 +2150,16 @@ ADD COLUMN IF NOT EXISTS website_email_verification_expires_at timestamptz;
 
 ALTER TABLE onboarding_sessions
 ADD COLUMN IF NOT EXISTS website_email_verification_token_used_at timestamptz;
+
+ALTER TABLE onboarding_sessions
+ADD COLUMN IF NOT EXISTS website_email_verification_failed_attempts integer
+NOT NULL DEFAULT 0;
+
+ALTER TABLE onboarding_sessions
+ADD COLUMN IF NOT EXISTS website_email_verification_resend_available_at timestamptz;
+
+ALTER TABLE business_profiles
+ALTER COLUMN website_url DROP NOT NULL;
 
 ALTER TABLE onboarding_sessions
 ADD COLUMN IF NOT EXISTS admin_email_verified boolean NOT NULL DEFAULT false;

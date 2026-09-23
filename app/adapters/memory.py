@@ -400,8 +400,10 @@ class MemoryOnboardingRepository:
         self.sessions: dict[UUID, OnboardingSessionRecord] = {}
         self.session_username_email_token_hashes: dict[UUID, str] = {}
         self.session_username_email_token_used_at: dict[UUID, datetime] = {}
+        self.session_username_email_failed_attempts: dict[UUID, int] = {}
         self.session_website_email_token_hashes: dict[UUID, str] = {}
         self.session_website_email_token_used_at: dict[UUID, datetime] = {}
+        self.session_website_email_failed_attempts: dict[UUID, int] = {}
         self.session_token_hashes: dict[UUID, str] = {}
         self.session_token_used_at: dict[UUID, datetime] = {}
 
@@ -493,7 +495,7 @@ class MemoryOnboardingRepository:
         record = BusinessProfileRecord(
             tenant_id=tenant_id,
             business_name=profile.business_name,
-            website_url=str(profile.website_url),
+            website_url=str(profile.website_url) if profile.website_url else None,
             location_name=profile.location_name,
             physical_location=profile.physical_location,
             business_phone=profile.business_phone,
@@ -506,7 +508,7 @@ class MemoryOnboardingRepository:
                 BusinessProfileRecord(
                     tenant_id=tenant_id,
                     business_name=profile.business_name,
-                    website_url=str(profile.website_url),
+                    website_url=str(profile.website_url) if profile.website_url else None,
                     location_name=profile.location_name,
                     physical_location=profile.physical_location,
                     business_phone=profile.business_phone,
@@ -591,8 +593,39 @@ class MemoryOnboardingRepository:
                 "website_url": website_url,
                 "website_verification_email": website_verification_email,
                 "website_email_verified": False,
+                "website_email_verification_resend_available_at": None,
+                "analysis": None,
+                "business_profile": None,
+                "business_summary": None,
+                "contact_info": [],
+                "knowledge_sources": [],
                 "status": "website_verification_pending",
                 "current_step": "website-email-verification",
+                "updated_at": datetime.now(timezone.utc),
+            }
+        )
+        self.sessions[session_id] = updated
+        return updated
+
+    async def clear_session_website(self, session_id: UUID) -> OnboardingSessionRecord:
+        session = self._require_session(session_id)
+        self.session_website_email_token_hashes.pop(session_id, None)
+        self.session_website_email_token_used_at.pop(session_id, None)
+        self.session_website_email_failed_attempts.pop(session_id, None)
+        updated = session.model_copy(
+            update={
+                "website_url": None,
+                "website_verification_email": None,
+                "website_email_verified": False,
+                "website_email_verification_expires_at": None,
+                "website_email_verification_resend_available_at": None,
+                "analysis": None,
+                "business_profile": None,
+                "business_summary": None,
+                "contact_info": [],
+                "knowledge_sources": [],
+                "status": "draft",
+                "current_step": "analysis",
                 "updated_at": datetime.now(timezone.utc),
             }
         )
@@ -624,7 +657,8 @@ class MemoryOnboardingRepository:
             (
                 profile
                 for profile in self.business_profiles.values()
-                if normalize_website_domain(profile.website_url) == normalized_domain
+                if profile.website_url
+                and normalize_website_domain(profile.website_url) == normalized_domain
             ),
             None,
         )
@@ -680,16 +714,19 @@ class MemoryOnboardingRepository:
         *,
         token_hash: str,
         expires_at: datetime,
+        resend_available_at: datetime,
     ) -> OnboardingSessionRecord:
         session = self._require_session(session_id)
         self.session_username_email_token_hashes[session_id] = token_hash
         self.session_username_email_token_used_at.pop(session_id, None)
+        self.session_username_email_failed_attempts[session_id] = 0
         updated = session.model_copy(
             update={
                 "status": "username_email_verification_pending",
                 "current_step": "username-email-verification",
                 "username_email_verified": False,
                 "username_email_verification_expires_at": expires_at,
+                "username_email_verification_resend_available_at": resend_available_at,
                 "updated_at": datetime.now(timezone.utc),
             }
         )
@@ -701,6 +738,7 @@ class MemoryOnboardingRepository:
         session_id: UUID,
         *,
         token_hash: str,
+        max_attempts: int,
     ) -> bool:
         session = self._require_session(session_id)
         if session.username_email_verification_expires_at is None:
@@ -708,6 +746,8 @@ class MemoryOnboardingRepository:
         if session.username_email_verification_expires_at <= datetime.now(timezone.utc):
             return False
         if self.session_username_email_token_used_at.get(session_id):
+            return False
+        if self.session_username_email_failed_attempts.get(session_id, 0) >= max_attempts:
             return False
         if self.session_username_email_token_hashes.get(session_id) != token_hash:
             return False
@@ -722,6 +762,28 @@ class MemoryOnboardingRepository:
         )
         self.sessions[session_id] = updated
         return True
+
+    async def record_username_email_verification_failure(
+        self,
+        session_id: UUID,
+        *,
+        max_attempts: int,
+    ) -> int | None:
+        session = self._require_session(session_id)
+        now = datetime.now(timezone.utc)
+        if (
+            session.username_email_verified
+            or session.username_email_verification_expires_at is None
+            or session.username_email_verification_expires_at <= now
+            or self.session_username_email_token_used_at.get(session_id)
+        ):
+            return None
+        attempts = min(
+            self.session_username_email_failed_attempts.get(session_id, 0) + 1,
+            max_attempts,
+        )
+        self.session_username_email_failed_attempts[session_id] = attempts
+        return attempts
 
     async def inspect_username_email_verification_token(
         self,
@@ -744,6 +806,7 @@ class MemoryOnboardingRepository:
             used_at=used_at,
             submitted_token_fingerprint=token_fingerprint(token_hash),
             stored_token_fingerprint=token_fingerprint(stored_token_hash),
+            failed_attempts=self.session_username_email_failed_attempts.get(session_id, 0),
         )
 
     async def save_website_email_verification_token(
@@ -752,16 +815,19 @@ class MemoryOnboardingRepository:
         *,
         token_hash: str,
         expires_at: datetime,
+        resend_available_at: datetime,
     ) -> OnboardingSessionRecord:
         session = self._require_session(session_id)
         self.session_website_email_token_hashes[session_id] = token_hash
         self.session_website_email_token_used_at.pop(session_id, None)
+        self.session_website_email_failed_attempts[session_id] = 0
         updated = session.model_copy(
             update={
                 "status": "website_verification_pending",
                 "current_step": "website-email-verification",
                 "website_email_verified": False,
                 "website_email_verification_expires_at": expires_at,
+                "website_email_verification_resend_available_at": resend_available_at,
                 "updated_at": datetime.now(timezone.utc),
             }
         )
@@ -773,6 +839,7 @@ class MemoryOnboardingRepository:
         session_id: UUID,
         *,
         token_hash: str,
+        max_attempts: int,
     ) -> bool:
         session = self._require_session(session_id)
         if session.website_email_verification_expires_at is None:
@@ -780,6 +847,8 @@ class MemoryOnboardingRepository:
         if session.website_email_verification_expires_at <= datetime.now(timezone.utc):
             return False
         if self.session_website_email_token_used_at.get(session_id):
+            return False
+        if self.session_website_email_failed_attempts.get(session_id, 0) >= max_attempts:
             return False
         if self.session_website_email_token_hashes.get(session_id) != token_hash:
             return False
@@ -794,6 +863,28 @@ class MemoryOnboardingRepository:
         )
         self.sessions[session_id] = updated
         return True
+
+    async def record_website_email_verification_failure(
+        self,
+        session_id: UUID,
+        *,
+        max_attempts: int,
+    ) -> int | None:
+        session = self._require_session(session_id)
+        now = datetime.now(timezone.utc)
+        if (
+            session.website_email_verified
+            or session.website_email_verification_expires_at is None
+            or session.website_email_verification_expires_at <= now
+            or self.session_website_email_token_used_at.get(session_id)
+        ):
+            return None
+        attempts = min(
+            self.session_website_email_failed_attempts.get(session_id, 0) + 1,
+            max_attempts,
+        )
+        self.session_website_email_failed_attempts[session_id] = attempts
+        return attempts
 
     async def inspect_website_email_verification_token(
         self,
@@ -816,6 +907,7 @@ class MemoryOnboardingRepository:
             used_at=used_at,
             submitted_token_fingerprint=token_fingerprint(token_hash),
             stored_token_fingerprint=token_fingerprint(stored_token_hash),
+            failed_attempts=self.session_website_email_failed_attempts.get(session_id, 0),
         )
 
     async def save_telegram_setup_token(

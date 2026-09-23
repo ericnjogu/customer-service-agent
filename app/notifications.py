@@ -30,9 +30,16 @@ class LoggingEmailSender:
 
 
 class ResendEmailSender:
-    def __init__(self, *, api_key: str, from_email: str) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        from_email: str,
+        api_base_url: str = "https://api.resend.com",
+    ) -> None:
         self.api_key = api_key
         self.from_email = from_email
+        self.api_base_url = api_base_url.rstrip("/")
 
     async def send_email(self, *, to: list[str], subject: str, text: str) -> None:
         started_at = time.perf_counter()
@@ -46,7 +53,7 @@ class ResendEmailSender:
             response: httpx.Response | None = None
             try:
                 response = await client.post(
-                    "https://api.resend.com/emails",
+                    f"{self.api_base_url}/emails",
                     headers={
                         "Authorization": f"Bearer {self.api_key}",
                         "Content-Type": "application/json",

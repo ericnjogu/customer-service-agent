@@ -44,7 +44,9 @@ web:
     type: ClusterIP
     port: 8080
     annotations: {}
-  publicBaseUrl: "http://localhost:5173"
+  # Empty: http://localhost:<web.service.port>. Use the same local forwarding port.
+  # Set the complete external URL for ngrok/ingress; its port is independent.
+  publicBaseUrl: ""
   apiBaseUrl: "/api"
   resources: {}
 
@@ -133,6 +135,11 @@ n8n:
 onboarding:
   actionTokenTtlMinutes: 60
   emailVerificationTokenTtlMinutes: 60
+  emailVerificationCodeTtlMinutes: 10
+  emailVerificationMaxAttempts: 5
+  emailVerificationResendCooldownSeconds: 60
+  verificationCodeSecretName: ""
+  verificationCodeSecretKey: AGENT_ONBOARDING_VERIFICATION_CODE_SECRET
   requireAdminEmailDomainMatch: true
   websiteAnalysisProvider: openai
   websiteFetchTimeoutSeconds: 10
@@ -199,11 +206,6 @@ telegram:
     create: true
   botTokenSecretKey: TELEGRAM_BOT_TOKEN
   webhookSecretTokenSecretKey: TELEGRAM_WEBHOOK_SECRET_TOKEN
-
-webhook:
-  publicBaseUrl: ""
-  publicBaseUrlSecretName: "app-configs"
-  publicBaseUrlSecretKey: AGENT_WEBHOOK_PUBLIC_BASE_URL
 
 whatsapp:
   secretNamespace: ""

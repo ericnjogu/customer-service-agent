@@ -27,12 +27,23 @@ const REQUIRE_ADMIN_EMAIL_DOMAIN_MATCH = parseBooleanEnv(
 const TERMS_PATH = "/terms";
 const TERMS_VERSION = "beta-2026-08-28";
 
-const steps = [
+const websiteSteps = [
   "account",
   "username-email-verification",
   "website",
   "website-email-verification",
   "analyzing",
+  "analysis",
+  "contact",
+  "awaiting-review",
+  "telegram",
+  "complete",
+];
+
+const noWebsiteSteps = [
+  "account",
+  "username-email-verification",
+  "website",
   "analysis",
   "contact",
   "awaiting-review",
@@ -88,7 +99,9 @@ function App() {
               replaceUrlWithResumeLink(loaded.session_id);
               return loaded;
             }
-            return verifyUsernameEmail(loaded.session_id, actionParams.token);
+            return verifyUsernameEmail(loaded.session_id, {
+              token: actionParams.token,
+            });
           }
           if (actionParams.isWebsiteEmailVerification && actionParams.token) {
             if (loaded.website_email_verified) {
@@ -96,7 +109,9 @@ function App() {
               setStep("analyzing");
               return analyzeWebsiteForSession(loaded.session_id);
             }
-            return verifyWebsiteEmail(loaded.session_id, actionParams.token);
+            return verifyWebsiteEmail(loaded.session_id, {
+              token: actionParams.token,
+            });
           }
           return loaded;
         })
@@ -204,7 +219,7 @@ function App() {
       setSession(created);
       setStep("username-email-verification");
       showInfo(
-        "Account email verification sent. Please check your inbox to continue.",
+        "Account verification code sent. Please check your inbox to continue.",
       );
       console.info("Onboarding account setup submitted", {
         sessionId: created.session_id,
@@ -222,7 +237,7 @@ function App() {
     }
   }
 
-  async function verifyUsernameEmail(sessionId, token) {
+  async function verifyUsernameEmail(sessionId, credential) {
     setBusyAction("verify-username-email");
     setAlert(null);
     try {
@@ -230,13 +245,13 @@ function App() {
         `/onboarding/sessions/${sessionId}/verify-username-email`,
         {
           method: "POST",
-          body: JSON.stringify({ token }),
+          body: JSON.stringify(credential),
         },
       );
       replaceUrlWithResumeLink(verified.session_id);
       setSession(verified);
       setStep("website");
-      showInfo("Account email verified. Continue with website verification.");
+      showInfo("Account email verified. Add a website or continue without one.");
       return verified;
     } catch (error) {
       showError(error.message);
@@ -256,7 +271,7 @@ function App() {
         { method: "POST" },
       );
       setSession(updated);
-      showInfo("Account email verification sent again. Please check your inbox.");
+      showInfo("A new account verification code was sent. Please check your inbox.");
     } catch (error) {
       showError(error.message);
     } finally {
@@ -285,8 +300,30 @@ function App() {
       setSession(updated);
       setStep("website-email-verification");
       showInfo(
-        "Website verification email sent. Please check that inbox to continue.",
+        "Website verification code sent. Please check that inbox to continue.",
       );
+    } catch (error) {
+      showError(error.message);
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function skipWebsite() {
+    setBusyAction("skip-website");
+    setAlert(null);
+    try {
+      const updated = await api(`/onboarding/sessions/${session.session_id}/website`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          website_url: null,
+          website_verification_email: null,
+        }),
+      });
+      setWebsiteForm({ website_url: "", website_verification_email: "" });
+      setSession(updated);
+      setStep("analysis");
+      showInfo("Continue by entering the business information manually.");
     } catch (error) {
       showError(error.message);
     } finally {
@@ -322,7 +359,7 @@ function App() {
         { method: "POST" },
       );
       setSession(updated);
-      showInfo("Website verification email sent again. Please check your inbox.");
+      showInfo("A new website verification code was sent. Please check your inbox.");
     } catch (error) {
       showError(error.message);
     } finally {
@@ -330,7 +367,7 @@ function App() {
     }
   }
 
-  async function verifyWebsiteEmail(sessionId, token) {
+  async function verifyWebsiteEmail(sessionId, credential) {
     setBusyAction("verify-website-email");
     setAlert(null);
     try {
@@ -338,7 +375,7 @@ function App() {
         `/onboarding/sessions/${sessionId}/verify-website-email`,
         {
           method: "POST",
-          body: JSON.stringify({ token }),
+          body: JSON.stringify(credential),
         },
       );
       replaceUrlWithResumeLink(verified.session_id);
@@ -492,7 +529,7 @@ function App() {
           </p>
         </header>
 
-        <Progress step={step} />
+        <Progress step={step} session={session} />
 
         {alert && (
           <div className={`alert ${alert.type}`}>
@@ -517,7 +554,9 @@ function App() {
             session={session}
             kind="username"
             onBack={() => setStep("account")}
-            onReload={() => loadSession(session.session_id)}
+            onVerify={(code) =>
+              verifyUsernameEmail(session.session_id, { code })
+            }
             onResend={resendUsernameEmailVerification}
             onContinue={() => setStep("website")}
             busy={busy}
@@ -530,6 +569,7 @@ function App() {
             form={websiteForm}
             setForm={setWebsiteForm}
             onSubmit={continueFromWebsite}
+            onSkip={skipWebsite}
             onBack={() => setStep("username-email-verification")}
             busy={busy}
           />
@@ -540,7 +580,9 @@ function App() {
             session={session}
             kind="website"
             onBack={() => setStep("website")}
-            onReload={() => loadSession(session.session_id)}
+            onVerify={(code) =>
+              verifyWebsiteEmail(session.session_id, { code })
+            }
             onResend={resendWebsiteEmailVerification}
             onContinue={reanalyzeWebsite}
             busy={busy}
@@ -557,17 +599,6 @@ function App() {
             session={session}
             onBack={() => setStep("website")}
             onNext={(draft) => patchSession(draft, "contact")}
-            busy={busy}
-          />
-        )}
-
-        {session && step === "business" && (
-          <BusinessScreen
-            session={session}
-            onBack={() => setStep("analysis")}
-            onNext={(business_profile) =>
-              patchSession({ business_profile }, "contact")
-            }
             busy={busy}
           />
         )}
@@ -725,7 +756,12 @@ function TermsScreen() {
   );
 }
 
-function Progress({ step }) {
+function Progress({ step, session }) {
+  const websiteWasSkipped =
+    session &&
+    !session.website_url &&
+    !["account", "username-email-verification", "website"].includes(step);
+  const steps = websiteWasSkipped ? noWebsiteSteps : websiteSteps;
   const index = Math.max(0, steps.indexOf(step));
   return (
     <div className="progress">
@@ -753,7 +789,7 @@ function StartScreen({ form, setForm, onSubmit, busy }) {
         label="Username email"
         name="username_email"
         error={validation.errorFor("username_email")}
-        help="This will become the admin's dashboard login email later, so we verify it separately from the website contact."
+        help="This email will be used as a username for login to the admin dashboard."
       >
         <input
           type="email"
@@ -771,7 +807,7 @@ function StartScreen({ form, setForm, onSubmit, busy }) {
         label="Given name"
         name="given_name"
         error={validation.errorFor("given_name")}
-        help="This is used to identify and greet the onboarding admin."
+        help="Your first name."
       >
         <input
           aria-invalid={Boolean(validation.errorFor("given_name"))}
@@ -787,7 +823,7 @@ function StartScreen({ form, setForm, onSubmit, busy }) {
         label="Family name"
         name="family_name"
         error={validation.errorFor("family_name")}
-        help="This keeps future dashboard identity structured and auditable."
+        help="Your last name."
       >
         <input
           aria-invalid={Boolean(validation.errorFor("family_name"))}
@@ -881,13 +917,20 @@ function StartScreen({ form, setForm, onSubmit, busy }) {
         </div>
       </Field>
       <button disabled={busy}>
-        {busy ? "Sending..." : "Send account verification email"}
+        {busy ? "Sending..." : "Send account verification code"}
       </button>
     </form>
   );
 }
 
-function WebsiteVerificationScreen({ form, setForm, onSubmit, onBack, busy }) {
+function WebsiteVerificationScreen({
+  form,
+  setForm,
+  onSubmit,
+  onSkip,
+  onBack,
+  busy,
+}) {
   const validation = useFormValidation(
     form,
     (values) =>
@@ -898,22 +941,25 @@ function WebsiteVerificationScreen({ form, setForm, onSubmit, onBack, busy }) {
   function handleSubmit(event) {
     event.preventDefault();
     if (!validation.validateForSubmit()) return;
-    onSubmit();
+    if (!form.website_url.trim() && !form.website_verification_email.trim()) {
+      onSkip();
+    } else {
+      onSubmit();
+    }
   }
 
   return (
     <form className="card form" onSubmit={handleSubmit} noValidate>
       <h2>Website verification</h2>
       <p>
-        Verify a website-domain email so we know the onboarding request is tied to
-        the business website.
+        If you have a website, provide the details below. Otherwise, continue and provide the business information manually in the next step.
       </p>
       <FormErrorSummary errors={validation.errors} ref={validation.summaryRef} />
       <Field
         label="Website URL"
         name="website_url"
         error={validation.errorFor("website_url")}
-        help="We use this to identify the business, check for duplicate onboarding, and prepare an initial business profile."
+        help="Your website will be used as knowledge base for the chatbot."
       >
         <input
           aria-invalid={Boolean(validation.errorFor("website_url"))}
@@ -930,7 +976,7 @@ function WebsiteVerificationScreen({ form, setForm, onSubmit, onBack, busy }) {
         label="Website verification email"
         name="website_verification_email"
         error={validation.errorFor("website_verification_email")}
-        help="We send a verification link here to confirm control of the website domain. This can also act as a secondary onboarding contact."
+        help="We send a six-digit code here to confirm control of the website domain."
       >
         <input
           type="email"
@@ -944,11 +990,17 @@ function WebsiteVerificationScreen({ form, setForm, onSubmit, onBack, busy }) {
           placeholder="admin@example.com"
         />
       </Field>
-      <NavButtons
-        onBack={onBack}
-        busy={busy}
-        submitLabel="Send website verification email"
-      />
+      <div className="nav">
+        <button type="button" className="secondary" onClick={onBack} disabled={busy}>
+          Back
+        </button>
+        <button type="button" className="secondary" onClick={onSkip} disabled={busy}>
+          Continue without a website
+        </button>
+        <button disabled={busy}>
+          {busy ? "Working..." : "Send website verification code"}
+        </button>
+      </div>
     </form>
   );
 }
@@ -957,12 +1009,14 @@ function EmailVerificationScreen({
   session,
   kind,
   onBack,
-  onReload,
+  onVerify,
   onResend,
   onContinue,
   busy,
   busyAction,
 }) {
+  const [code, setCode] = useState("");
+  const [now, setNow] = useState(Date.now());
   const isUsername = kind === "username";
   const verified = isUsername
     ? session.username_email_verified
@@ -972,38 +1026,82 @@ function EmailVerificationScreen({
     : session.website_verification_email;
   const title = isUsername ? "Verify account email" : "Verify website email";
   const verifiedCopy = isUsername
-    ? `${email} has been verified. Continue to website verification.`
+    ? `${email} has been verified. Continue to the website choice.`
     : `${email} has been verified. Continue to analyze the business website.`;
   const pendingCopy = isUsername
-    ? `We sent a verification link to ${email}. This wizard is paused until that inbox link is opened.`
-    : `We sent a website verification link to ${email}. This wizard is paused until that inbox link is opened.`;
+    ? `Enter the six-digit code sent to ${email}.`
+    : `Enter the six-digit website verification code sent to ${email}.`;
   const resendAction = isUsername ? "resend-username-email" : "resend-website-email";
+  const resendAvailableAt = isUsername
+    ? session.username_email_verification_resend_available_at
+    : session.website_email_verification_resend_available_at;
+  const resendWaitSeconds = resendAvailableAt
+    ? Math.max(0, Math.ceil((new Date(resendAvailableAt).getTime() - now) / 1000))
+    : 0;
   const continueLabel = isUsername ? "Continue" : "Continue";
+
+  useEffect(() => {
+    if (verified || !resendWaitSeconds) return undefined;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [verified, resendWaitSeconds]);
+
+  function handleVerify(event) {
+    event.preventDefault();
+    if (/^\d{6}$/.test(code)) onVerify(code);
+  }
+
   return (
-    <section className="card">
+    <form className="card form" onSubmit={handleVerify}>
       <h2>{title}</h2>
       <p>{verified ? verifiedCopy : pendingCopy}</p>
+      {!verified && (
+        <Field
+          label="Verification code"
+          name={`${kind}_verification_code`}
+          help="The code expires after ten minutes and allows five attempts."
+        >
+          <input
+            value={code}
+            onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            pattern="[0-9]{6}"
+            maxLength="6"
+            aria-label={`${title} six-digit code`}
+            required
+          />
+        </Field>
+      )}
       <div className="nav">
         <button type="button" className="secondary" onClick={onBack} disabled={busy}>
           Back
         </button>
-        <button type="button" className="secondary" onClick={onReload} disabled={busy}>
-          Refresh status
-        </button>
         {!verified && (
-          <button type="button" className="secondary" onClick={onResend} disabled={busy}>
-            {busyAction === resendAction ? "Sending..." : "Resend email"}
+          <button
+            type="button"
+            className="secondary"
+            onClick={onResend}
+            disabled={busy || resendWaitSeconds > 0}
+          >
+            {busyAction === resendAction
+              ? "Sending..."
+              : resendWaitSeconds > 0
+                ? `Resend in ${resendWaitSeconds}s`
+                : "Resend code"}
           </button>
         )}
-        <button
-          type="button"
-          onClick={onContinue}
-          disabled={busy || !verified}
-        >
-          {busyAction === "analyze-website" ? "Working..." : continueLabel}
-        </button>
+        {verified ? (
+          <button type="button" onClick={onContinue} disabled={busy}>
+            {busyAction === "analyze-website" ? "Working..." : continueLabel}
+          </button>
+        ) : (
+          <button disabled={busy || !/^\d{6}$/.test(code)}>
+            {busyAction === `verify-${kind}-email` ? "Verifying..." : "Verify code"}
+          </button>
+        )}
       </div>
-    </section>
+    </form>
   );
 }
 
@@ -1054,14 +1152,19 @@ function AnalysisScreen({ session, onBack, onNext, busy }) {
 
   return (
     <form className="card form" onSubmit={handleSubmit} noValidate>
-      <h2>Analysis summary</h2>
-      <p>This is the editable draft generated from the website.</p>
+      <h2>Business information</h2>
+      <p>
+        {session.website_url
+          ? "Review and edit business information as retrieved from the website. Add any additional relevant information."
+          : "Describe the business offerings, customers, service area, hours, policies, FAQs, and any other facts."}
+      </p>
+      <p>The business name, information will be used as the initial knowledge base for the chatbot.</p>
       <FormErrorSummary errors={validation.errors} ref={validation.summaryRef} />
       <Field
         label="Business name"
         name="business_profile.business_name"
         error={validation.errorFor("business_profile.business_name")}
-        help="This becomes the tenant display name and the public business name used by the assistant."
+        help="Your business name."
       >
         <input
           aria-invalid={Boolean(
@@ -1077,7 +1180,7 @@ function AnalysisScreen({ session, onBack, onNext, busy }) {
         label="Business summary / FAQ"
         name="business_summary"
         error={validation.errorFor("business_summary")}
-        help="This Markdown summary becomes business context for customer answers and can include frequently asked questions."
+        help="This Markdown summary becomes business context for customer answers. It may contain up to 10,000 characters"
       >
         <MarkdownRichEditor
           id="business-summary-faq-editor"
@@ -1140,59 +1243,6 @@ function MarkdownRichEditor({
   );
 }
 
-function BusinessScreen({ session, onBack, onNext, busy }) {
-  const [profile, setProfile] = useState(session.business_profile);
-  const validation = useFormValidation(profile || {}, validateBusinessProfile);
-  function handleSubmit(event) {
-    event.preventDefault();
-    if (!validation.validateForSubmit()) return;
-    onNext(profile);
-  }
-
-  return (
-    <form className="card form" onSubmit={handleSubmit} noValidate>
-      <h2>Business details</h2>
-      <FormErrorSummary errors={validation.errors} ref={validation.summaryRef} />
-      {["business_name", "location_name", "physical_location", "business_phone", "business_email"].map((field) => (
-        <Field
-          key={field}
-          label={field.replaceAll("_", " ")}
-          name={field}
-          error={validation.errorFor(field)}
-          help={businessFieldHelp(field)}
-        >
-          <input
-            aria-invalid={Boolean(validation.errorFor(field))}
-            aria-describedby={fieldErrorId(field)}
-            value={profile?.[field] || ""}
-            onChange={(event) =>
-              setProfile({ ...profile, [field]: event.target.value })
-            }
-            onBlur={() => validation.validateField(field)}
-          />
-        </Field>
-      ))}
-      <Field
-        label="Google place URL"
-        name="google_place_url"
-        error={validation.errorFor("google_place_url")}
-        help="This lets the assistant share the approved map/location link without guessing."
-      >
-        <input
-          aria-invalid={Boolean(validation.errorFor("google_place_url"))}
-          aria-describedby={fieldErrorId("google_place_url")}
-          value={profile?.google_place_url || ""}
-          onChange={(event) =>
-            setProfile({ ...profile, google_place_url: event.target.value || null })
-          }
-          onBlur={() => validation.validateField("google_place_url")}
-        />
-      </Field>
-      <NavButtons onBack={onBack} busy={busy} submitLabel="Save contact information" />
-    </form>
-  );
-}
-
 function ContactInfoScreen({ session, onBack, onNext, busy }) {
   const [links, setLinks] = useState(() =>
     normalizeContactInfo(session.contact_info || [], session.website_url),
@@ -1235,9 +1285,11 @@ function ContactInfoScreen({ session, onBack, onNext, busy }) {
       <h2>Contact information</h2>
       <FormErrorSummary errors={validation.errors} ref={validation.summaryRef} />
       <p>
-        Review the contact details found on the website, correct them, or add more
-        manually.
+        Review or add contact and social accounts. You can include Instagram,
+        Facebook, TikTok, LinkedIn, X, WhatsApp, Google Maps, phone numbers,
+        email addresses, and other approved customer channels.
       </p>
+      <p>The contact information will be provided to the customer to contact the business.</p>
       <div className="repeater">
         {links.map((link, index) => {
           const baseName = `contact_info.${index}`;
@@ -1307,7 +1359,7 @@ function ContactInfoScreen({ session, onBack, onNext, busy }) {
         })}
       </div>
       <button type="button" className="secondary" onClick={addLink} disabled={busy}>
-        Add another contact
+        Add a contact or social account
       </button>
       <NavButtons onBack={onBack} busy={busy} submitLabel="Submit for review" />
     </form>
@@ -1625,9 +1677,13 @@ function validateWebsiteVerificationForm(
   { requireAdminEmailDomainMatch = true } = {},
 ) {
   const errors = {};
+  const hasWebsite = Boolean(form.website_url.trim());
+  const hasEmail = Boolean(form.website_verification_email.trim());
+  if (!hasWebsite && !hasEmail) return errors;
+
   let parsedWebsiteUrl = null;
-  if (!form.website_url.trim()) {
-    errors.website_url = "Website URL is required.";
+  if (!hasWebsite) {
+    errors.website_url = "Website URL is required when an email is supplied.";
   } else {
     try {
       parsedWebsiteUrl = new URL(normalizeWebsiteUrl(form.website_url));
@@ -1639,8 +1695,9 @@ function validateWebsiteVerificationForm(
     }
   }
 
-  if (!form.website_verification_email.trim()) {
-    errors.website_verification_email = "Website verification email is required.";
+  if (!hasEmail) {
+    errors.website_verification_email =
+      "Website verification email is required when a website is supplied.";
   } else if (!isValidEmail(form.website_verification_email)) {
     errors.website_verification_email = "Website verification email must be valid.";
   } else if (
@@ -1665,31 +1722,6 @@ const validateStartForm = validateWebsiteVerificationForm;
 function parseBooleanEnv(value, defaultValue) {
   if (value === undefined || value === null || value === "") return defaultValue;
   return !["0", "false", "no", "off"].includes(String(value).toLowerCase());
-}
-
-function validateBusinessProfile(profile) {
-  const errors = {};
-  for (const field of [
-    "business_name",
-    "location_name",
-    "physical_location",
-    "business_phone",
-    "business_email",
-  ]) {
-    if (!String(profile?.[field] || "").trim()) {
-      errors[field] = `${field.replaceAll("_", " ")} is required.`;
-    }
-  }
-
-  if (profile?.business_email && !isValidEmail(profile.business_email)) {
-    errors.business_email = "Business email must be valid.";
-  }
-
-  if (profile?.google_place_url && !isValidHttpUrl(profile.google_place_url)) {
-    errors.google_place_url = "Google place URL must be a valid HTTP/HTTPS URL.";
-  }
-
-  return errors;
 }
 
 function validateAnalysisDraft(draft) {
@@ -1936,17 +1968,6 @@ function readApiError(body) {
   return "Request failed.";
 }
 
-function businessFieldHelp(field) {
-  const help = {
-    business_name: "The approved business name the assistant uses with customers.",
-    location_name: "A short name for the business location, branch, or service area.",
-    physical_location: "The address or location description customers can rely on.",
-    business_phone: "The approved phone number the assistant may share with customers.",
-    business_email: "The approved business email the assistant may share with customers.",
-  };
-  return help[field] || "Review and correct this business profile field.";
-}
-
 function stepFromSession(session) {
   if (session.current_step === "business") return "contact";
   if (session.current_step === "social") return "contact";
@@ -1968,8 +1989,10 @@ if (root) {
 }
 
 export {
+  AnalysisScreen,
   App,
   ContactInfoScreen,
+  EmailVerificationScreen,
   StartScreen,
   TelegramScreen,
   TermsScreen,

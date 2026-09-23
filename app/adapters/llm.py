@@ -318,6 +318,7 @@ async def traced_tavily_runtime_search(
     question: str,
     tenant_config: TenantConfig | None,
     website_url: str | None = None,
+    api_base_url: str = "https://api.tavily.com",
 ) -> RuntimeWebSearchResult:
     project_id = tavily_project_id(tenant_config)
     domain = urlparse(website_url or "").netloc.removeprefix("www.")
@@ -343,7 +344,7 @@ async def traced_tavily_runtime_search(
     try:
         async with httpx.AsyncClient(timeout=timeout_seconds) as client:
             response = await client.post(
-                "https://api.tavily.com/search",
+                f"{api_base_url.rstrip('/')}/search",
                 headers={
                     "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
@@ -381,10 +382,12 @@ class TavilyRuntimeWebSearch:
         api_key: str,
         max_results: int,
         timeout_seconds: float,
+        api_base_url: str = "https://api.tavily.com",
     ) -> None:
         self.api_key = api_key
         self.max_results = max_results
         self.timeout_seconds = timeout_seconds
+        self.api_base_url = api_base_url.rstrip("/")
 
     async def search_answer(
         self,
@@ -399,6 +402,7 @@ class TavilyRuntimeWebSearch:
             question=question,
             tenant_config=tenant_config,
             website_url=website_url,
+            api_base_url=self.api_base_url,
         )
 
 
@@ -425,6 +429,7 @@ async def traced_tavily_website_research(
     max_results: int,
     timeout_seconds: float,
     website_url: str,
+    api_base_url: str = "https://api.tavily.com",
 ) -> WebsiteResearchResult:
     started_at = time.perf_counter()
     domain = urlparse(website_url).netloc.removeprefix("www.")
@@ -449,7 +454,7 @@ async def traced_tavily_website_research(
     async with httpx.AsyncClient(timeout=timeout_seconds) as client:
         request_started_at = time.perf_counter()
         response = await client.post(
-            "https://api.tavily.com/search",
+            f"{api_base_url.rstrip('/')}/search",
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
@@ -487,11 +492,13 @@ class TavilyWebsiteResearcher:
         project_id: str,
         max_results: int,
         timeout_seconds: float,
+        api_base_url: str = "https://api.tavily.com",
     ) -> None:
         self.api_key = api_key
         self.project_id = project_id
         self.max_results = max_results
         self.timeout_seconds = timeout_seconds
+        self.api_base_url = api_base_url.rstrip("/")
 
     async def research(self, website_url: str) -> WebsiteResearchResult:
         return await traced_tavily_website_research(
@@ -500,6 +507,7 @@ class TavilyWebsiteResearcher:
             max_results=self.max_results,
             timeout_seconds=self.timeout_seconds,
             website_url=website_url,
+            api_base_url=self.api_base_url,
         )
 
 
@@ -689,11 +697,12 @@ class LiteLLMChatModel:
         model: str,
         temperature: float | None,
         tenant_config: TenantConfig | None = None,
+        base_url: str | None = None,
     ) -> None:
         self.api_key = api_key
         self.model = litellm_model_name(model, tenant_config)
         self.temperature = temperature
-        self.base_url = litellm_base_url(tenant_config)
+        self.base_url = litellm_base_url(tenant_config) or base_url
         self.extra_headers = openai_project_headers(tenant_config)
 
     async def ainvoke(
@@ -1326,6 +1335,7 @@ def create_openai_answer_generator(
     api_key: str,
     model: str,
     temperature: float,
+    base_url: str | None = None,
 ) -> LlmAnswerGenerator:
     def build_chat_model(tenant_config: TenantConfig | None = None) -> Any:
         return LiteLLMChatModel(
@@ -1333,6 +1343,7 @@ def create_openai_answer_generator(
             model=model,
             temperature=temperature,
             tenant_config=tenant_config,
+            base_url=base_url,
         )
 
     return LlmAnswerGenerator(build_chat_model(), chat_model_factory=build_chat_model)
@@ -1343,6 +1354,7 @@ def create_openai_question_planner(
     api_key: str,
     model: str,
     temperature: float,
+    base_url: str | None = None,
 ) -> LlmQuestionPlanner:
     def build_chat_model(tenant_config: TenantConfig | None = None) -> Any:
         return LiteLLMChatModel(
@@ -1350,6 +1362,7 @@ def create_openai_question_planner(
             model=model,
             temperature=temperature,
             tenant_config=tenant_config,
+            base_url=base_url,
         )
 
     return LlmQuestionPlanner(build_chat_model(), chat_model_factory=build_chat_model)
@@ -1362,11 +1375,13 @@ def create_openai_website_analyzer(
     temperature: float | None = None,
     website_researcher: Any | None = None,
     fetch_timeout_seconds: float = 10,
+    base_url: str | None = None,
 ) -> OpenAIWebsiteAnalyzer:
     from openai import AsyncOpenAI
 
     client = AsyncOpenAI(
         api_key=api_key,
+        base_url=base_url,
     )
     return OpenAIWebsiteAnalyzer(
         client.responses,

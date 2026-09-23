@@ -18,3 +18,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{ printf "%s:%s" .repository .tag }}
 {{- end -}}
 {{- end }}
+
+{{- define "customer-service.webPublicBaseUrl" -}}
+{{- .Values.web.publicBaseUrl | default (printf "http://localhost:%v" .Values.web.service.port) -}}
+{{- end }}

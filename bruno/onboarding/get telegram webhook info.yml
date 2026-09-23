@@ -1,0 +1,15 @@
+info:
+  name: get telegram webhook info
+  type: http
+  seq: 10
+
+http:
+  method: get
+  url: https://api.telegram.org/bot{{telegram_bot_token}}/getWebhookInfo
+  auth: inherit
+
+settings:
+  encodeUrl: false
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

@@ -146,16 +146,6 @@ spec:
               value: {{ .Values.telegram.botTokenSecretKey | quote }}
             - name: AGENT_TELEGRAM_WEBHOOK_SECRET_TOKEN_SECRET_KEY
               value: {{ .Values.telegram.webhookSecretTokenSecretKey | quote }}
-            {{- if .Values.webhook.publicBaseUrl }}
-            - name: AGENT_WEBHOOK_PUBLIC_BASE_URL
-              value: {{ .Values.webhook.publicBaseUrl | quote }}
-            {{- else if .Values.webhook.publicBaseUrlSecretName }}
-            - name: AGENT_WEBHOOK_PUBLIC_BASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.webhook.publicBaseUrlSecretName | quote }}
-                  key: {{ .Values.webhook.publicBaseUrlSecretKey | quote }}
-            {{- end }}
             {{- if .Values.whatsapp.secretNamespace }}
             - name: AGENT_WHATSAPP_SECRET_NAMESPACE
               value: {{ .Values.whatsapp.secretNamespace | quote }}
@@ -176,11 +166,24 @@ spec:
             - name: AGENT_WHATSAPP_GRAPH_API_VERSION
               value: {{ .Values.whatsapp.graphApiVersion | quote }}
             - name: AGENT_WEB_PUBLIC_BASE_URL
-              value: {{ .Values.web.publicBaseUrl | quote }}
+              value: {{ include "customer-service.webPublicBaseUrl" . | quote }}
             - name: AGENT_ONBOARDING_ACTION_TOKEN_TTL_MINUTES
               value: {{ .Values.onboarding.actionTokenTtlMinutes | quote }}
             - name: AGENT_ONBOARDING_EMAIL_VERIFICATION_TOKEN_TTL_MINUTES
               value: {{ .Values.onboarding.emailVerificationTokenTtlMinutes | quote }}
+            - name: AGENT_ONBOARDING_EMAIL_VERIFICATION_CODE_TTL_MINUTES
+              value: {{ .Values.onboarding.emailVerificationCodeTtlMinutes | quote }}
+            - name: AGENT_ONBOARDING_EMAIL_VERIFICATION_MAX_ATTEMPTS
+              value: {{ .Values.onboarding.emailVerificationMaxAttempts | quote }}
+            - name: AGENT_ONBOARDING_EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS
+              value: {{ .Values.onboarding.emailVerificationResendCooldownSeconds | quote }}
+            {{- if .Values.onboarding.verificationCodeSecretName }}
+            - name: AGENT_ONBOARDING_VERIFICATION_CODE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.onboarding.verificationCodeSecretName | quote }}
+                  key: {{ .Values.onboarding.verificationCodeSecretKey | quote }}
+            {{- end }}
             - name: AGENT_ONBOARDING_REQUIRE_ADMIN_EMAIL_DOMAIN_MATCH
               value: {{ .Values.onboarding.requireAdminEmailDomainMatch | quote }}
             - name: AGENT_ONBOARDING_WEBSITE_ANALYSIS_PROVIDER
@@ -245,7 +248,7 @@ spec:
                   optional: true
             {{- end }}
             - name: AGENT_CORS_ALLOW_ORIGINS
-              value: {{- if hasPrefix "http" .Values.web.apiBaseUrl }} {{ printf "%s,%s" .Values.web.publicBaseUrl .Values.web.apiBaseUrl | quote }}{{- else }} {{ .Values.web.publicBaseUrl | quote }}{{- end }}
+              value: {{- if hasPrefix "http" .Values.web.apiBaseUrl }} {{ printf "%s,%s" (include "customer-service.webPublicBaseUrl" .) .Values.web.apiBaseUrl | quote }}{{- else }} {{ include "customer-service.webPublicBaseUrl" . | quote }}{{- end }}
             - name: AGENT_LLM_MODEL
               value: {{ .Values.llm.model | quote }}
             - name: AGENT_LLM_TEMPERATURE

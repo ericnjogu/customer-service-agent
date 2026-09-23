@@ -30,7 +30,7 @@ def default_provider_project_name(session: OnboardingSessionRecord) -> str:
     business_name = (
         session.business_profile.business_name
         if session.business_profile
-        else str(session.website_url)
+        else "business"
     )
     return default_provider_project_name_for_business(business_name)
 
@@ -44,9 +44,9 @@ class MetadataOnlyProviderProjectProvisioner:
             business_name=(
                 session.business_profile.business_name
                 if session.business_profile
-                else str(session.website_url)
+                else "business"
             ),
-            website_url=str(session.website_url),
+            website_url=session.website_url,
             provider_projects=session.provider_projects,
             session_id=session.session_id,
         )
@@ -55,7 +55,7 @@ class MetadataOnlyProviderProjectProvisioner:
         self,
         *,
         business_name: str,
-        website_url: str,
+        website_url: str | None,
         provider_projects: OnboardingProviderProjects,
         session_id: UUID | None = None,
     ) -> OnboardingProviderProjects:
@@ -89,9 +89,9 @@ class OpenAILangSmithProviderProjectProvisioner:
             business_name=(
                 session.business_profile.business_name
                 if session.business_profile
-                else str(session.website_url)
+                else "business"
             ),
-            website_url=str(session.website_url),
+            website_url=session.website_url,
             provider_projects=session.provider_projects,
             session_id=session.session_id,
         )
@@ -100,7 +100,7 @@ class OpenAILangSmithProviderProjectProvisioner:
         self,
         *,
         business_name: str,
-        website_url: str,
+        website_url: str | None,
         provider_projects: OnboardingProviderProjects,
         session_id: UUID | None = None,
     ) -> OnboardingProviderProjects:
@@ -221,7 +221,7 @@ async def upsert_langsmith_project(
     workspace_id: str | None,
     project_name: str,
     session_id: UUID | None,
-    website_url: str,
+    website_url: str | None,
 ) -> None:
     def create_project() -> None:
         client = LangSmithClient(

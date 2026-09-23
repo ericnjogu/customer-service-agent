@@ -1,6 +1,8 @@
 import asyncio
 import re
+from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -17,6 +19,7 @@ from app.models import (
     WebsiteAnalysisResult,
     WebsiteResearchSource,
 )
+from app.onboarding_sessions import token_hash
 from app.provider_projects import MetadataOnlyProviderProjectProvisioner
 
 
@@ -259,7 +262,7 @@ def clear_settings_cache(monkeypatch: pytest.MonkeyPatch):
     )
     monkeypatch.setattr(
         "app.container.TelegramBotApiInfoResolver",
-        lambda: FakeTelegramBotInfoResolver(),
+        lambda **_kwargs: FakeTelegramBotInfoResolver(),
     )
     get_settings.cache_clear()
     yield
@@ -528,31 +531,33 @@ def token_from_setup_url(setup_url: str) -> str:
     return parse_qs(parsed.query)["token"][0]
 
 
-def token_from_latest_email(client: TestClient) -> tuple[str, str]:
+def verification_code_from_latest_email(client: TestClient) -> tuple[str, str]:
     email_sender = client.app.state.container.email_sender
     latest = email_sender.sent_messages[-1]
-    match = re.search(r"/verify-[^?\s]+\?session_id=([^&\s]+)&token=([^\s]+)", latest.text)
-    assert match
-    return match.group(1), match.group(2)
+    session_match = re.search(r"[?&]session_id=([^&\s]+)", latest.text)
+    code_match = re.search(r"(?:^|\n)(\d{6})(?:\n|$)", latest.text)
+    assert session_match
+    assert code_match
+    return session_match.group(1), code_match.group(1)
 
 
 def verify_onboarding_username_email(client: TestClient, session_id: str) -> dict:
-    link_session_id, token = token_from_latest_email(client)
+    link_session_id, code = verification_code_from_latest_email(client)
     assert link_session_id == session_id
     response = client.post(
         f"/onboarding/sessions/{session_id}/verify-username-email",
-        json={"token": token},
+        json={"code": code},
     )
     assert response.status_code == 200
     return response.json()
 
 
 def verify_onboarding_website_email(client: TestClient, session_id: str) -> dict:
-    link_session_id, token = token_from_latest_email(client)
+    link_session_id, code = verification_code_from_latest_email(client)
     assert link_session_id == session_id
     response = client.post(
         f"/onboarding/sessions/{session_id}/verify-website-email",
-        json={"token": token},
+        json={"code": code},
     )
     assert response.status_code == 200
     return response.json()
@@ -578,9 +583,263 @@ def test_onboarding_session_accepts_valid_start_fields() -> None:
     assert response.json()["terms_accepted_at"]
     assert sent_email.to == ["admin@hustlehq.example"]
     assert (
-        f"http://localhost:5173?session_id={response.json()['session_id']}"
+        f"http://localhost:8080?session_id={response.json()['session_id']}"
         in sent_email.text
     )
+
+
+def test_onboarding_verification_code_is_six_digits_and_only_hmac_is_stored() -> None:
+    with TestClient(app) as client:
+        response = client.post(
+            "/onboarding/sessions",
+            json=onboarding_session_payload(),
+        )
+        session_id = response.json()["session_id"]
+        _email_session_id, code = verification_code_from_latest_email(client)
+        repository = client.app.state.container.onboarding
+        stored_hash = repository.session_username_email_token_hashes[UUID(session_id)]
+        sent_text = client.app.state.container.email_sender.sent_messages[-1].text
+
+    assert re.fullmatch(r"\d{6}", code)
+    assert stored_hash.startswith("code:")
+    assert code not in stored_hash
+    assert "token=" not in sent_text
+    assert session_id in sent_text
+
+
+def test_onboarding_verification_resend_is_rate_limited() -> None:
+    with TestClient(app) as client:
+        response = client.post(
+            "/onboarding/sessions",
+            json=onboarding_session_payload(),
+        )
+        resend = client.post(
+            f"/onboarding/sessions/{response.json()['session_id']}"
+            "/send-username-email-verification",
+        )
+
+    assert resend.status_code == 429
+    assert int(resend.headers["Retry-After"]) > 0
+
+
+def test_resaving_same_website_cannot_bypass_resend_cooldown() -> None:
+    with TestClient(app) as client:
+        response = client.post(
+            "/onboarding/sessions",
+            json=onboarding_session_payload(),
+        )
+        session_id = response.json()["session_id"]
+        verify_onboarding_username_email(client, session_id)
+        first = client.patch(
+            f"/onboarding/sessions/{session_id}/website",
+            json=onboarding_website_payload(),
+        )
+        repeated = client.patch(
+            f"/onboarding/sessions/{session_id}/website",
+            json=onboarding_website_payload(),
+        )
+
+    assert first.status_code == 200
+    assert repeated.status_code == 429
+    assert int(repeated.headers["Retry-After"]) > 0
+
+
+def test_onboarding_resend_invalidates_previous_code_and_resets_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generated_codes = iter([123456, 654321])
+    monkeypatch.setattr(
+        "app.onboarding_sessions.secrets.randbelow",
+        lambda _limit: next(generated_codes),
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/onboarding/sessions",
+            json=onboarding_session_payload(),
+        )
+        session_id = response.json()["session_id"]
+        _email_session_id, old_code = verification_code_from_latest_email(client)
+        repository = client.app.state.container.onboarding
+        session_uuid = UUID(session_id)
+        repository.sessions[session_uuid] = repository.sessions[session_uuid].model_copy(
+            update={
+                "username_email_verification_resend_available_at": (
+                    datetime.now(timezone.utc) - timedelta(seconds=1)
+                )
+            }
+        )
+        repository.session_username_email_failed_attempts[session_uuid] = 3
+        resent = client.post(
+            f"/onboarding/sessions/{session_id}/send-username-email-verification",
+        )
+        _email_session_id, new_code = verification_code_from_latest_email(client)
+        old_result = client.post(
+            f"/onboarding/sessions/{session_id}/verify-username-email",
+            json={"code": old_code},
+        )
+        new_result = client.post(
+            f"/onboarding/sessions/{session_id}/verify-username-email",
+            json={"code": new_code},
+        )
+
+    assert resent.status_code == 200
+    assert old_code != new_code
+    assert old_result.status_code == 422
+    assert new_result.status_code == 200
+
+
+def test_onboarding_rejects_expired_verification_code() -> None:
+    with TestClient(app) as client:
+        response = client.post(
+            "/onboarding/sessions",
+            json=onboarding_session_payload(),
+        )
+        session_id = response.json()["session_id"]
+        _email_session_id, code = verification_code_from_latest_email(client)
+        repository = client.app.state.container.onboarding
+        session_uuid = UUID(session_id)
+        repository.sessions[session_uuid] = repository.sessions[session_uuid].model_copy(
+            update={
+                "username_email_verification_expires_at": (
+                    datetime.now(timezone.utc) - timedelta(seconds=1)
+                )
+            }
+        )
+        expired = client.post(
+            f"/onboarding/sessions/{session_id}/verify-username-email",
+            json={"code": code},
+        )
+
+    assert expired.status_code == 422
+
+
+def test_onboarding_verification_locks_after_five_incorrect_codes() -> None:
+    with TestClient(app) as client:
+        response = client.post(
+            "/onboarding/sessions",
+            json=onboarding_session_payload(),
+        )
+        session_id = response.json()["session_id"]
+        _email_session_id, issued_code = verification_code_from_latest_email(client)
+        attempts = [
+            client.post(
+                f"/onboarding/sessions/{session_id}/verify-username-email",
+                json={"code": f"{(int(issued_code) + index + 1) % 1_000_000:06d}"},
+            )
+            for index in range(1, 7)
+        ]
+
+    assert [response.status_code for response in attempts[:4]] == [422] * 4
+    assert attempts[4].status_code == 429
+    assert attempts[5].status_code == 429
+    assert int(attempts[4].headers["Retry-After"]) > 0
+
+
+def test_onboarding_legacy_email_token_remains_compatible() -> None:
+    legacy_token = "legacy-link-token"
+    with TestClient(app) as client:
+        response = client.post(
+            "/onboarding/sessions",
+            json=onboarding_session_payload(),
+        )
+        session_id = response.json()["session_id"]
+        repository = client.app.state.container.onboarding
+        asyncio.run(
+            repository.save_username_email_verification_token(
+                UUID(session_id),
+                token_hash=token_hash(legacy_token),
+                expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+                resend_available_at=datetime.now(timezone.utc),
+            )
+        )
+        verified = client.post(
+            f"/onboarding/sessions/{session_id}/verify-username-email",
+            json={"token": legacy_token},
+        )
+
+    assert verified.status_code == 200
+    assert verified.json()["username_email_verified"] is True
+
+
+def test_onboarding_verification_code_can_only_be_consumed_once_concurrently() -> None:
+    async def consume_twice(repository, session_id: UUID, stored_hash: str) -> list[bool]:
+        return await asyncio.gather(
+            repository.consume_username_email_verification_token(
+                session_id,
+                token_hash=stored_hash,
+                max_attempts=5,
+            ),
+            repository.consume_username_email_verification_token(
+                session_id,
+                token_hash=stored_hash,
+                max_attempts=5,
+            ),
+        )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/onboarding/sessions",
+            json=onboarding_session_payload(),
+        )
+        session_uuid = UUID(response.json()["session_id"])
+        repository = client.app.state.container.onboarding
+        results = asyncio.run(
+            consume_twice(
+                repository,
+                session_uuid,
+                repository.session_username_email_token_hashes[session_uuid],
+            )
+        )
+
+    assert sorted(results) == [False, True]
+
+
+def test_onboarding_can_skip_and_clear_website_state() -> None:
+    with TestClient(app) as client:
+        response = client.post(
+            "/onboarding/sessions",
+            json=onboarding_session_payload(),
+        )
+        session_id = response.json()["session_id"]
+        verify_onboarding_username_email(client, session_id)
+        saved = client.patch(
+            f"/onboarding/sessions/{session_id}/website",
+            json=onboarding_website_payload(),
+        )
+        skipped = client.patch(
+            f"/onboarding/sessions/{session_id}/website",
+            json={"website_url": None, "website_verification_email": None},
+        )
+
+    assert saved.status_code == 200
+    assert skipped.status_code == 200
+    assert skipped.json()["website_url"] is None
+    assert skipped.json()["website_verification_email"] is None
+    assert skipped.json()["website_email_verified"] is False
+    assert skipped.json()["current_step"] == "analysis"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"website_url": "https://hustlehq.example", "website_verification_email": None},
+        {"website_url": None, "website_verification_email": "admin@hustlehq.example"},
+    ],
+)
+def test_onboarding_rejects_partial_website_pair(payload: dict) -> None:
+    with TestClient(app) as client:
+        response = client.post(
+            "/onboarding/sessions",
+            json=onboarding_session_payload(),
+        )
+        session_id = response.json()["session_id"]
+        verify_onboarding_username_email(client, session_id)
+        patched = client.patch(
+            f"/onboarding/sessions/{session_id}/website",
+            json=payload,
+        )
+
+    assert patched.status_code == 422
 
 
 def test_onboarding_session_blocks_analysis_until_both_emails_are_verified() -> None:
@@ -694,20 +953,20 @@ def test_onboarding_session_rejects_used_username_email_verification_token() -> 
             json=onboarding_session_payload(),
         )
         session_id = create_response.json()["session_id"]
-        _link_session_id, token = token_from_latest_email(client)
+        _link_session_id, code = verification_code_from_latest_email(client)
         first_response = client.post(
             f"/onboarding/sessions/{session_id}/verify-username-email",
-            json={"token": token},
+            json={"code": code},
         )
         second_response = client.post(
             f"/onboarding/sessions/{session_id}/verify-username-email",
-            json={"token": token},
+            json={"code": code},
         )
 
     assert first_response.status_code == 200
     assert second_response.status_code == 422
     assert second_response.json()["detail"] == (
-        "Email verification link is missing, expired, invalid, or already used"
+        "Email verification code is missing, expired, invalid, or already used"
     )
 
 
@@ -1078,6 +1337,50 @@ def test_onboarding_session_submits_completed_session_into_job_flow() -> None:
     assert "https://t.me/hustle_hq_bot" in sent_email.text
     assert "Tenant ID:" not in sent_email.text
     assert "Tenant slug:" not in sent_email.text
+
+
+def test_no_website_onboarding_provisions_without_website_contact_or_metadata() -> None:
+    with TestClient(app) as client:
+        created = client.post(
+            "/onboarding/sessions",
+            json=onboarding_session_payload(),
+        ).json()
+        session_id = created["session_id"]
+        verify_onboarding_username_email(client, session_id)
+        skipped = client.patch(
+            f"/onboarding/sessions/{session_id}/website",
+            json={"website_url": None, "website_verification_email": None},
+        )
+        reviewed = client.patch(
+            f"/onboarding/sessions/{session_id}",
+            json={
+                "business_profile": {
+                    "business_name": "Manual Bakery",
+                    "website_url": None,
+                },
+                "business_summary": "A neighborhood bakery open daily from 7am to 6pm.",
+                "contact_info": [],
+            },
+        )
+        setup = client.post(
+            f"/onboarding/sessions/{session_id}/request-telegram-setup",
+        )
+        token = token_from_setup_url(setup.json()["telegram_setup_url"])
+        telegram = client.post(
+            f"/onboarding/sessions/{session_id}/telegram-setup",
+            json={"token": token, "bot_token": "123456:telegram-token"},
+        )
+        submitted = client.post(f"/onboarding/sessions/{session_id}/submit")
+        job_id = UUID(submitted.json()["job_id"])
+        job_payload = client.app.state.container.onboarding.job_payloads[job_id]
+
+    assert skipped.status_code == 200
+    assert reviewed.status_code == 200
+    assert setup.status_code == 200
+    assert telegram.status_code == 200
+    assert submitted.status_code == 202
+    assert job_payload["business_profile"]["website_url"] is None
+    assert all(point["kind"] != "website" for point in job_payload["contact_info"])
 
 
 def test_onboarding_job_success_email_sends_bot_link_to_tenant_and_saas_admin(

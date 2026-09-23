@@ -21,7 +21,11 @@ jobs:
         with: { enable-cache: true }
       - run: uv sync --locked
       - run: uv run ruff check app tests
-      - run: uv run pytest -q
+      - name: Run unit and application tests
+        run: uv run pytest -q
+
+  onboarding-browser-qa:
+    uses: ./.github/workflows/onboarding-browser-qa.yml
 
   frontend:
     runs-on: ubuntu-latest

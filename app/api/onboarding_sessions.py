@@ -14,7 +14,7 @@ from app.models import (
     OnboardingSessionWebsiteRequest,
     OnboardingTelegramSetupRequest,
 )
-from app.onboarding_sessions import OnboardingValidationError
+from app.onboarding_sessions import OnboardingRateLimitError, OnboardingValidationError
 
 router = APIRouter(prefix="/onboarding/sessions", tags=["onboarding-sessions"])
 logger = logging.getLogger(__name__)
@@ -103,6 +103,12 @@ async def save_onboarding_session_website(
         return await service.save_website(session_id, payload)
     except KeyError:
         raise HTTPException(status_code=404, detail="Onboarding session not found") from None
+    except OnboardingRateLimitError as error:
+        raise HTTPException(
+            status_code=429,
+            detail=str(error),
+            headers={"Retry-After": str(error.retry_after_seconds)},
+        ) from error
     except OnboardingValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
@@ -143,6 +149,12 @@ async def send_username_email_verification(
         return session
     except KeyError:
         raise HTTPException(status_code=404, detail="Onboarding session not found") from None
+    except OnboardingRateLimitError as error:
+        raise HTTPException(
+            status_code=429,
+            detail=str(error),
+            headers={"Retry-After": str(error.retry_after_seconds)},
+        ) from error
     except Exception:
         logger.exception(
             "Failed to resend onboarding username email verification session_id=%s "
@@ -174,6 +186,12 @@ async def send_website_email_verification(
         return session
     except KeyError:
         raise HTTPException(status_code=404, detail="Onboarding session not found") from None
+    except OnboardingRateLimitError as error:
+        raise HTTPException(
+            status_code=429,
+            detail=str(error),
+            headers={"Retry-After": str(error.retry_after_seconds)},
+        ) from error
     except OnboardingValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except Exception:
@@ -197,6 +215,12 @@ async def verify_username_email(
         return await service.verify_username_email(session_id, payload)
     except KeyError:
         raise HTTPException(status_code=404, detail="Onboarding session not found") from None
+    except OnboardingRateLimitError as error:
+        raise HTTPException(
+            status_code=429,
+            detail=str(error),
+            headers={"Retry-After": str(error.retry_after_seconds)},
+        ) from error
     except OnboardingValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
@@ -212,6 +236,12 @@ async def verify_website_email(
         return await service.verify_website_email(session_id, payload)
     except KeyError:
         raise HTTPException(status_code=404, detail="Onboarding session not found") from None
+    except OnboardingRateLimitError as error:
+        raise HTTPException(
+            status_code=429,
+            detail=str(error),
+            headers={"Retry-After": str(error.retry_after_seconds)},
+        ) from error
     except OnboardingValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 

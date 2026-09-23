@@ -67,27 +67,39 @@ class TelegramSecretWriter(Protocol):
 
 
 class TelegramBotClient:
-    def __init__(self, bot_token: str) -> None:
+    def __init__(
+        self,
+        bot_token: str,
+        *,
+        api_base_url: str = "https://api.telegram.org",
+    ) -> None:
         self.bot_token = bot_token
+        self.api_base_url = api_base_url.rstrip("/")
 
     async def send_message(self, chat_id: str, text: str) -> None:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
-                f"https://api.telegram.org/bot{self.bot_token}/sendMessage",
+                f"{self.api_base_url}/bot{self.bot_token}/sendMessage",
                 json={"chat_id": chat_id, "text": text},
             )
             response.raise_for_status()
 
 
 class TelegramBotApiInfoResolver:
-    def __init__(self, *, timeout_seconds: float = 10.0) -> None:
+    def __init__(
+        self,
+        *,
+        timeout_seconds: float = 10.0,
+        api_base_url: str = "https://api.telegram.org",
+    ) -> None:
         self.timeout_seconds = timeout_seconds
+        self.api_base_url = api_base_url.rstrip("/")
 
     async def get_bot_info(self, *, bot_token: str) -> TelegramBotInfo:
         logger.info("Fetching Telegram bot info via getMe")
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
             response = await client.get(
-                f"https://api.telegram.org/bot{bot_token}/getMe",
+                f"{self.api_base_url}/bot{bot_token}/getMe",
             )
             response.raise_for_status()
 
@@ -117,9 +129,11 @@ class TelegramBotWebhookRegistrar:
         *,
         public_base_url: str | None,
         timeout_seconds: float = 10.0,
+        api_base_url: str = "https://api.telegram.org",
     ) -> None:
         self.public_base_url = public_base_url.strip().rstrip("/") if public_base_url else ""
         self.timeout_seconds = timeout_seconds
+        self.api_base_url = api_base_url.rstrip("/")
 
     async def register_webhook(
         self,
@@ -147,7 +161,7 @@ class TelegramBotWebhookRegistrar:
         )
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
             response = await client.post(
-                f"https://api.telegram.org/bot{bot_token}/setWebhook",
+                f"{self.api_base_url}/bot{bot_token}/setWebhook",
                 json={
                     "url": webhook_url,
                     "secret_token": webhook_secret_token,
@@ -362,8 +376,14 @@ class KubernetesSecretTelegramCredentialResolver:
 
 
 class TenantAwareTelegramSender:
-    def __init__(self, credentials: TelegramCredentialResolver) -> None:
+    def __init__(
+        self,
+        credentials: TelegramCredentialResolver,
+        *,
+        api_base_url: str = "https://api.telegram.org",
+    ) -> None:
         self.credentials = credentials
+        self.api_base_url = api_base_url.rstrip("/")
         self.clients: dict[str, TelegramBotClient] = {}
 
     async def send_message(self, chat_id: str, text: str, tenant_id: str = "default") -> None:
@@ -373,7 +393,10 @@ class TenantAwareTelegramSender:
             return
         client = self.clients.get(credentials.bot_token)
         if client is None:
-            client = TelegramBotClient(credentials.bot_token)
+            client = TelegramBotClient(
+                credentials.bot_token,
+                api_base_url=self.api_base_url,
+            )
             self.clients[credentials.bot_token] = client
         await client.send_message(chat_id, text)
 

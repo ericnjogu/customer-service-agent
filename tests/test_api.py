@@ -384,7 +384,7 @@ def test_tenant_can_be_read_by_slug() -> None:
 def onboarding_job_payload() -> dict:
     return {
         "idempotency_key": "onboarding-hustle-hq-001",
-        "callback_url": "https://n8n.example/webhook/onboarding-result",
+        "callback_url": "https://callback.example/webhook/onboarding-result",
         "selected_plan": "sme",
         "admin": {
             "username_email": "admin@hustlehq.example",

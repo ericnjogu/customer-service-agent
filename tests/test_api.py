@@ -2098,7 +2098,8 @@ def test_explicit_human_request_updates_conversation_state() -> None:
 
     assert response.status_code == 200
     assert response.json()["state"] == "HUMAN_REQUESTED"
-    assert response.json()["low_confidence"] is True
+    assert response.json()["low_confidence"] is False
+    assert "recorded your request" in response.json()["answer"]
 
 
 def test_telegram_webhook_receives_customer_message_and_sends_reply() -> None:

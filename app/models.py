@@ -105,6 +105,7 @@ class ConversationRecord(BaseModel):
 
 
 class StoredMessage(BaseModel):
+    issue_id: UUID | None = None
     tenant_id: str = "default"
     conversation_id: UUID
     event_id: str

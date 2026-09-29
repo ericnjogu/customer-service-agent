@@ -382,8 +382,8 @@ class RuntimeWebSearch(Protocol):
     async def search_answer(
         self,
         question: str,
-        tenant_config: TenantConfig | None = None,
-        website_url: str | None = None,
+        tenant_config: TenantConfig | None,
+        website_urls: list[str],
     ) -> RuntimeWebSearchResult: ...
 
 

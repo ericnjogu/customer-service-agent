@@ -1,6 +1,9 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
+import pytest
 from langchain_core.documents import Document
 
 from app.adapters.llm import langsmith_client
@@ -68,15 +71,15 @@ class StaticAnswerGenerator(RecordingAnswerGenerator):
 class RecordingRuntimeWebSearch:
     def __init__(self, result: RuntimeWebSearchResult) -> None:
         self.result = result
-        self.calls: list[tuple[str, TenantConfig | None, str | None]] = []
+        self.calls: list[tuple[str, TenantConfig | None, list[str]]] = []
 
     async def search_answer(
         self,
         question: str,
-        tenant_config: TenantConfig | None = None,
-        website_url: str | None = None,
+        tenant_config: TenantConfig | None,
+        website_urls: list[str],
     ) -> RuntimeWebSearchResult:
-        self.calls.append((question, tenant_config, website_url))
+        self.calls.append((question, tenant_config, website_urls))
         return self.result
 
 
@@ -264,10 +267,7 @@ async def test_unknown_question_is_marked_low_confidence() -> None:
 async def test_service_graph_contains_search_tenant_website_node() -> None:
     container = await create_container(Settings())
     graph = container.graph.get_graph()
-    edges = {
-        (edge.source, edge.target, edge.data, edge.conditional)
-        for edge in graph.edges
-    }
+    edges = {(edge.source, edge.target, edge.data, edge.conditional) for edge in graph.edges}
 
     assert "search_tenant_website" in graph.nodes
     assert ("answer", "search_tenant_website", "search", True) in edges
@@ -412,9 +412,9 @@ async def test_answer_not_found_calls_runtime_web_search_even_with_high_confiden
     assert runtime_search.calls[0][0] == "Who works at Hustle HQ?"
     assert runtime_search.calls[0][1] is not None
     assert runtime_search.calls[0][1].web_search_project_name == "tenant-a-project"
-    assert runtime_search.calls[0][2] == "https://hustlehq.example"
-    assert reply.answer == "Hustle HQ team details are listed on the company website."
-    assert reply.low_confidence is False
+    assert runtime_search.calls[0][2] == ["https://hustlehq.example"]
+    assert reply.answer.startswith("I do not have team-member names")
+    assert reply.low_confidence is True
     assert reply.citations == ["https://hustlehq.example/team"]
     refreshed = await container.retrieval.search(
         "team details",
@@ -427,7 +427,7 @@ async def test_answer_not_found_calls_runtime_web_search_even_with_high_confiden
     )
 
 
-async def test_runtime_web_search_empty_answer_preserves_low_confidence_kb_answer() -> None:
+async def test_missing_websites_bypasses_search_preserving_low_confidence_kb_answer() -> None:
     container = await create_container(Settings())
     await container.retrieval.upsert(
         [
@@ -474,7 +474,7 @@ async def test_runtime_web_search_empty_answer_preserves_low_confidence_kb_answe
         ),
     )
 
-    assert len(runtime_search.calls) == 1
+    assert len(runtime_search.calls) == 0
     assert reply.answer == "I do not have enough information."
     assert reply.low_confidence is True
 
@@ -703,6 +703,57 @@ async def test_graph_passes_tenant_prompt_config_to_planner_and_answer_generator
     assert "Treat Tenant A menu questions as in scope" in (
         planner.tenant_configs[-1].business_summary or ""
     )
+
+
+@pytest.mark.parametrize("needs_history", [False, True])
+async def test_issue_processing_does_not_override_answer_history_flag(needs_history) -> None:
+    container = await create_container(Settings())
+    generator = RecordingAnswerGenerator()
+    message = IncomingMessage(
+        event_id="history-routing",
+        external_chat_id="history-routing",
+        external_user_id="customer",
+        text="What are your hours?",
+    )
+    conversation = await container.conversations.get_or_create(message)
+    previous = StoredMessage(
+        conversation_id=conversation.id,
+        event_id="previous",
+        sender_type="CUSTOMER",
+        body="Hello",
+    )
+    history = AsyncMock(return_value=[previous])
+    issues = SimpleNamespace(
+        repository=SimpleNamespace(history=history, save_message=AsyncMock()),
+        record=AsyncMock(),
+    )
+    planner = SimpleNamespace(
+        plan=AsyncMock(
+            return_value=QuestionPlan(
+                in_scope=True,
+                needs_conversation_history=needs_history,
+                explanation="Test routing",
+            )
+        )
+    )
+    graph = build_service_graph(
+        container.conversations,
+        container.tenant_configs,
+        container.retrieval,
+        generator,
+        planner,
+        0.6,
+        10,
+        60,
+        issues=issues,
+    )
+    await invoke_service_graph(graph, message)
+    # Planning still receives context; answer history obeys the resulting flag.
+    assert planner.plan.await_args.kwargs["conversation_history"] == [previous]
+    assert history.await_count == (2 if needs_history else 1)
+    assert generator.histories == [[previous] if needs_history else []]
+    assert generator.metadata[0] == planner.plan.await_args.args[1]
+    issues.record.assert_awaited_once()
 
 
 async def test_graph_passes_current_conversation_history_with_safety_cap() -> None:
@@ -941,10 +992,7 @@ async def test_graph_skips_conversation_history_for_standalone_question() -> Non
     assert generator.histories[-1] == []
     assert generator.metadata[-1] is not None
     assert generator.metadata[-1].should_greet_customer is False
-    assert (
-        generator.metadata[-1].greeting_reason
-        == "active conversation; avoid repeated greeting"
-    )
+    assert generator.metadata[-1].greeting_reason == "active conversation; avoid repeated greeting"
 
 
 async def test_explicit_human_request_sets_human_requested_state() -> None:
@@ -970,8 +1018,9 @@ async def test_explicit_human_request_sets_human_requested_state() -> None:
 
     assert reply.state == "HUMAN_REQUESTED"
     assert reply.low_confidence is False
-    assert "Refund requests" in reply.answer
-    assert reply.citations == ["kb/refunds.txt#0000"]
+    assert "recorded your request" in reply.answer
+    assert "notified or assigned yet" in reply.answer
+    assert reply.citations == []
 
     conversation = await container.conversations.get_by_id(reply.conversation_id)
     assert conversation.state == "HUMAN_REQUESTED"

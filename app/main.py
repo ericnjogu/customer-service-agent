@@ -102,9 +102,13 @@ async def lifespan(app: FastAPI):
         settings.log_level,
     )
     app.state.container = await create_container(settings)
-    yield
-    await app.state.container.close()
-    shutdown_tracing(app.state.tracer_provider)
+    try:
+        if app.state.container.issues:
+            await app.state.container.issues.start()
+        yield
+    finally:
+        await app.state.container.close()
+        shutdown_tracing(app.state.tracer_provider)
 
 
 app = FastAPI(title="Customer Service Agent", version="0.1.0", lifespan=lifespan)
@@ -170,7 +174,10 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 
 @app.get("/healthz")
-async def health() -> dict[str, str]:
+async def health(request: Request) -> dict[str, str]:
+    issues = request.app.state.container.issues
+    if issues and issues.task and issues.task.done():
+        raise HTTPException(status_code=503, detail="Issue worker is not running")
     return {"status": "ok"}
 
 
@@ -183,11 +190,14 @@ async def receive_customer_message(
     settings = get_settings()
     message = with_tenant(message, x_agent_tenant_id, settings.default_tenant_id)
     set_tenant_trace_attributes(message.tenant_id)
-    return await invoke_service_graph(
+    reply = await invoke_service_graph(
         request.app.state.container.graph,
         message,
         request.app.state.container.tenant_configs,
     )
+    if request.app.state.container.issues:
+        await request.app.state.container.issues.delivered(message, "unknown")
+    return reply
 
 
 @app.post("/webhooks/synthetic", response_model=ServiceReply)
@@ -199,11 +209,14 @@ async def synthetic_webhook(
     settings = get_settings()
     message = with_tenant(message, x_agent_tenant_id, settings.default_tenant_id)
     set_tenant_trace_attributes(message.tenant_id)
-    return await invoke_service_graph(
+    reply = await invoke_service_graph(
         request.app.state.container.graph,
         message,
         request.app.state.container.tenant_configs,
     )
+    if request.app.state.container.issues:
+        await request.app.state.container.issues.delivered(message, "unknown")
+    return reply
 
 
 @app.post("/webhooks/telegram")
@@ -237,12 +250,21 @@ async def telegram_webhook(
         request.app.state.container.tenant_configs,
     )
     telegram_sender = request.app.state.container.telegram_sender
-    if telegram_sender:
-        await telegram_sender.send_message(
-            message.external_chat_id,
-            telegram_reply_text(reply),
-            tenant_id=message.tenant_id,
-        )
+    outcome = "unknown"
+    try:
+        if telegram_sender:
+            await telegram_sender.send_message(
+                message.external_chat_id,
+                telegram_reply_text(reply),
+                tenant_id=message.tenant_id,
+            )
+            outcome = "accepted"
+    except Exception:
+        outcome = "failed"
+        raise
+    finally:
+        if request.app.state.container.issues:
+            await request.app.state.container.issues.delivered(message, outcome)
 
     return {"ok": True, "reply": reply.model_dump(mode="json")}
 
@@ -295,12 +317,21 @@ async def whatsapp_webhook(
             message,
             request.app.state.container.tenant_configs,
         )
-        if whatsapp_sender:
-            await whatsapp_sender.send_message(
-                message.external_chat_id,
-                whatsapp_reply_text(reply),
-                tenant_id=message.tenant_id,
-            )
+        outcome = "unknown"
+        try:
+            if whatsapp_sender:
+                await whatsapp_sender.send_message(
+                    message.external_chat_id,
+                    whatsapp_reply_text(reply),
+                    tenant_id=message.tenant_id,
+                )
+                outcome = "accepted"
+        except Exception:
+            outcome = "failed"
+            raise
+        finally:
+            if request.app.state.container.issues:
+                await request.app.state.container.issues.delivered(message, outcome)
         replies.append(reply.model_dump(mode="json"))
 
     return {"ok": True, "replies": replies}

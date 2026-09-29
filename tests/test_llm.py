@@ -71,6 +71,7 @@ async def test_runtime_web_search_defaults_to_noop_without_platform_api_key(
     result = await runtime_search.search_answer(
         "Who works there?",
         TenantConfig.with_defaults("tenant-a"),
+        [],
     )
 
     assert result.answer == ""
@@ -752,7 +753,7 @@ async def test_llm_question_planner_returns_structured_plan() -> None:
     assert plan.needs_conversation_history is False
     assert plan.explicit_human_request is False
     assert plan.explanation == "standalone location question"
-    assert "Decide using only the latest customer message" in (
+    assert "Decide about the latest customer message" in (
         chat_model.last_messages[0].content
     )
     assert "explanation is the" in chat_model.last_messages[0].content
@@ -1200,7 +1201,7 @@ async def test_tavily_runtime_web_search_sends_answer_and_project_headers(monkey
             "tenant-a",
             web_search_project_name="tenant-a-project",
         ),
-        "https://www.hustlehq.example",
+        ["https://hustlehq.example", "https://second.example"],
     )
 
     assert len(calls) == 1
@@ -1209,11 +1210,11 @@ async def test_tavily_runtime_web_search_sends_answer_and_project_headers(monkey
     assert calls[0][1]["headers"]["X-Project-ID"] == "tenant-a-project"
     assert calls[0][1]["json"]["query"] == "Who works at Hustle HQ?"
     assert calls[0][1]["json"]["search_depth"] == "advanced"
-    assert calls[0][1]["json"]["include_answer"] == "basic"
+    assert calls[0][1]["json"]["include_answer"] is False
     assert calls[0][1]["json"]["include_raw_content"] == "markdown"
-    assert calls[0][1]["json"]["include_domains"] == ["hustlehq.example"]
+    assert calls[0][1]["json"]["include_domains"] == ["hustlehq.example", "second.example"]
     assert calls[0][1]["json"]["max_results"] == 3
-    assert result.answer == "Hustle HQ has a public team page."
+    assert result.answer == ""
     assert len(result.sources) == 1
     assert result.sources[0].url == "https://hustlehq.example/team"
     assert result.sources[0].provider == "tavily"
@@ -1243,7 +1244,9 @@ async def test_tavily_runtime_web_search_http_error_returns_empty_result(
         timeout_seconds=15,
     )
 
-    result = await search.search_answer("Who works there?", TenantConfig.with_defaults("t1"))
+    result = await search.search_answer(
+        "Who works there?", TenantConfig.with_defaults("t1"), ["https://example.com"]
+    )
 
     assert result.answer == ""
     assert result.sources == []

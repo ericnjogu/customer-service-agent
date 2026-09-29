@@ -3,7 +3,7 @@
 Increment 4 is a locally runnable vertical slice using FastAPI, LangGraph, LangChain
 documents, tenant-scoped KB retrieval, conversation routing state, optional LLM-backed answer
 generation, and configurable retrieval/answer boundaries. Helm deploys the service with
-PostgreSQL and pgvector. No external LLM key is needed for the default local path: a
+PostgreSQL and pgvector. Disable issue processing explicitly for the no-key local path: a
 deterministic extractive generator and local hash embeddings make the workflow inspectable
 and reproducible.
 
@@ -38,7 +38,7 @@ Python 3.10 or newer is required.
 
 ```bash
 uv sync
-uv run uvicorn app.main:app --reload
+AGENT_ISSUE_PROCESSING_ENABLED=false uv run uvicorn app.main:app --reload
 ```
 
 Try the vertical slice:
@@ -403,7 +403,7 @@ the customer explicitly asks for a human agent, and to `HUMAN_ACTIVE` when a hum
 agent accepts or joins the conversation.
 
 The graph detects explicit human-agent requests before answer generation. Local runs use a
-deterministic rule-based detector by default; Kubernetes values default to the LLM detector
+deterministic rule-based processor by default; Kubernetes values default to the LLM processor
 when an OpenAI API key secret is configured.
 
 `HUMAN_REQUESTED` does not stop the bot from answering. It records that a human has been
@@ -611,14 +611,17 @@ Tavily uses the shared platform API key for onboarding website research and runt
 fallback. Runtime fallback is enabled by default with
 `AGENT_RUNTIME_WEB_SEARCH_PROVIDER=tavily`; set it to `none` to disable runtime search.
 If the platform Tavily API key is not configured, runtime fallback logs a warning and
-acts as disabled. For in-scope questions, Tavily is called when the KB/history answer has
+acts as disabled. For in-scope questions, Tavily is called only when the tenant has valid
+configured website contact points and the KB/history answer has
 `answer_found=false`, `grounded=false`, or confidence below
 `AGENT_CONFIDENCE_THRESHOLD`. Runtime Tavily requests use `web_search_project_name`
-from tenant config as the Tavily `X-Project-ID`, falling back to the tenant id. When a
-tenant has a website contact point, the runtime search also passes that website domain
-to Tavily as `include_domains` so fallback answers stay anchored to the tenant's own
-site. The LangGraph flow models this as an explicit `search_tenant_website` node after
-KB answer generation. No tenant Tavily API key or Kubernetes Secret is created.
+from tenant config as the Tavily `X-Project-ID`, falling back to the tenant id. All valid
+configured website hosts are passed as `include_domains`. Missing/invalid/unavailable
+website configuration bypasses the graph's `search_tenant_website` node completely.
+Returned sources must match those hosts or their subdomains. The answer generator uses
+accepted source text, never Tavily's synthesized answer. Only accepted sources are cached;
+old runtime-search documents outside the current allowlist are excluded from answers.
+No tenant Tavily API key or Kubernetes Secret is created. Onboarding research is unchanged.
 
 The onboarding job runs provider-project provisioning idempotently before tenant config
 is written. If the project fields already exist, they are reused; if they are missing,
@@ -920,6 +923,11 @@ https://example.com/webhooks/whatsapp
 ```
 
 ## Configuration
+
+Conversation issue tracking is enabled by default and requires PostgreSQL and the OpenAI
+answer provider. Set `AGENT_ISSUE_PROCESSING_ENABLED=false` to opt out. See
+[issue processing](docs/issue-processing.md) for its feature flag, event-triggered
+background processing, recovery procedure, and PostgreSQL integration tests.
 
 Application configuration uses the `AGENT_` prefix. LangSmith uses its native
 `LANGSMITH_` names:

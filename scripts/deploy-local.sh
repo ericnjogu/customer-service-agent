@@ -47,12 +47,14 @@ AGENT_PROVIDER_PROJECT_PROVISIONER="${AGENT_PROVIDER_PROJECT_PROVISIONER:-api}"
 AGENT_OPENAI_ADMIN_KEY_SECRET_NAME="${AGENT_OPENAI_ADMIN_KEY_SECRET_NAME:-api-keys}"
 AGENT_OPENAI_ADMIN_KEY_SECRET_KEY="${AGENT_OPENAI_ADMIN_KEY_SECRET_KEY:-OPENAI_ADMIN_KEY}"
 SYSTEM_PROMPT_PATH="${SYSTEM_PROMPT_PATH:-${REPO_ROOT}/app/prompt_templates/system.md}"
+AGENT_ISSUE_PROCESSING_PROMPT_PATH="${AGENT_ISSUE_PROCESSING_PROMPT_PATH:-${REPO_ROOT}/app/prompt_templates/issue-processing.md}"
 QUESTION_PLANNING_PROMPT_PATH="${QUESTION_PLANNING_PROMPT_PATH:-${REPO_ROOT}/app/prompt_templates/question-planning.md}"
 WEBSITE_ANALYSIS_PROMPT_PATH="${WEBSITE_ANALYSIS_PROMPT_PATH:-${REPO_ROOT}/app/prompt_templates/website-analysis.md}"
 WEBSITE_RESEARCH_PROMPT_PATH="${WEBSITE_RESEARCH_PROMPT_PATH:-${REPO_ROOT}/app/prompt_templates/website-research.md}"
 
 for prompt_path in \
   "${SYSTEM_PROMPT_PATH}" \
+  "${AGENT_ISSUE_PROCESSING_PROMPT_PATH}" \
   "${QUESTION_PLANNING_PROMPT_PATH}" \
   "${WEBSITE_ANALYSIS_PROMPT_PATH}" \
   "${WEBSITE_RESEARCH_PROMPT_PATH}"; do
@@ -122,11 +124,13 @@ helm_args=(
   --set "runtime.webSearchProvider=${AGENT_RUNTIME_WEB_SEARCH_PROVIDER}"
   --set "providerProjects.provisioner=${AGENT_PROVIDER_PROJECT_PROVISIONER}"
   --set "logging.level=${LOG_LEVEL}"
+  --set "issueProcessing.enabled=${AGENT_ISSUE_PROCESSING_ENABLED:-true}"
   --set "telemetry.enabled=${OTEL_ENABLED}"
   --set "telemetry.endpoint=http://otel-collector.${NAMESPACE}:4318"
   --set "telemetry.environment=local"
   --set "prompts.enabled=true"
   --set-file "prompts.system=${SYSTEM_PROMPT_PATH}"
+  --set-file "prompts.issueProcessing=${AGENT_ISSUE_PROCESSING_PROMPT_PATH}"
   --set-file "prompts.questionPlanning=${QUESTION_PLANNING_PROMPT_PATH}"
   --set-file "prompts.websiteAnalysis=${WEBSITE_ANALYSIS_PROMPT_PATH}"
   --set-file "prompts.websiteResearch=${WEBSITE_RESEARCH_PROMPT_PATH}"

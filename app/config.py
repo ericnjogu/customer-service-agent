@@ -1,3 +1,4 @@
+import os
 from functools import lru_cache
 
 from pydantic import AliasChoices, Field, model_validator
@@ -6,6 +7,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="AGENT_", env_file=".env")
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_retired_issue_variables(cls, values):
+        for suffix in ("ENABLED", "PROMPT_PATH"):
+            old = f"AGENT_ISSUE_DETECTION_{suffix}"
+            if old in os.environ or any(str(key).upper() == old for key in values):
+                raise ValueError(
+                    f"{old} is retired; replace it with AGENT_ISSUE_PROCESSING_{suffix}"
+                )
+        return values
 
     app_name: str = "customer-service-agent"
     default_tenant_id: str = Field(default="default", min_length=1)
@@ -23,6 +35,7 @@ class Settings(BaseSettings):
     kb_chunk_overlap: int = Field(default=180, ge=0)
     question_planner_provider: str = "rules"
     llm_model: str = "gpt-4.1-mini"
+    issue_processing_enabled: bool = True
     openai_api_key: str | None = Field(default=None, validation_alias="OPENAI_API_KEY")
     openai_base_url: str | None = None
     llm_temperature: float = 0.0

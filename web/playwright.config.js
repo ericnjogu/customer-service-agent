@@ -78,6 +78,7 @@ export default defineConfig({
       env: {
         ...process.env,
         AGENT_DEPLOYMENT_ENVIRONMENT: "test",
+        AGENT_ISSUE_PROCESSING_ENABLED: "false",
         AGENT_DATABASE_URL:
           process.env.AGENT_E2E_DATABASE_URL ||
           "postgresql://postgres:postgres@127.0.0.1:5432/customer_service_e2e",

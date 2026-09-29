@@ -80,6 +80,8 @@ spec:
             - name: http
               containerPort: 8000
           env:
+            - name: AGENT_ISSUE_PROCESSING_ENABLED
+              value: {{ .Values.issueProcessing.enabled | quote }}
             - name: AGENT_DEFAULT_TENANT_ID
               value: {{ .Values.tenant.defaultId | quote }}
             - name: AGENT_RETRIEVAL_PROVIDER
@@ -277,6 +279,10 @@ spec:
             {{- if .Values.prompts.enabled }}
             - name: AGENT_SYSTEM_PROMPT_PATH
               value: {{ printf "%s/system.md" .Values.prompts.mountPath | quote }}
+            {{- if or .Values.prompts.useBundledFiles .Values.prompts.issueProcessing }}
+            - name: AGENT_ISSUE_PROCESSING_PROMPT_PATH
+              value: {{ printf "%s/issue-processing.md" .Values.prompts.mountPath | quote }}
+            {{- end }}
             - name: AGENT_QUESTION_PLANNING_PROMPT_PATH
               value: {{ printf "%s/question-planning.md" .Values.prompts.mountPath | quote }}
             - name: AGENT_WEBSITE_ANALYSIS_PROMPT_PATH

@@ -6,6 +6,14 @@ metadata:
   labels:
     {{- include "customer-service.labels" . | nindent 4 }}
 data:
+  {{- if or .Values.prompts.useBundledFiles .Values.prompts.issueProcessing }}
+  issue-processing.md: |-
+    {{- if .Values.prompts.useBundledFiles }}
+    {{- required "files/prompts/issue-processing.md is required" (.Files.Get "files/prompts/issue-processing.md") | nindent 4 }}
+    {{- else }}
+    {{- .Values.prompts.issueProcessing | nindent 4 }}
+    {{- end }}
+  {{- end }}
   system.md: |-
     {{- if .Values.prompts.useBundledFiles }}
     {{- required "files/prompts/system.md is required" (.Files.Get "files/prompts/system.md") | nindent 4 }}

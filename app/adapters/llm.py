@@ -33,6 +33,7 @@ from app.models import (
     WebsiteResearchResult,
     WebsiteResearchSource,
 )
+from app.website_scope import allowed_website_source, website_domains
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ class ChatPromptMessage:
 @dataclass(frozen=True)
 class ChatModelResponse:
     content: str
+
 
 def load_prompt(filename: str, environment_variable: str) -> str:
     configured_path = os.getenv(environment_variable)
@@ -291,7 +293,7 @@ def traced_tavily_runtime_search_inputs(inputs: dict[str, Any]) -> dict[str, Any
     return {
         "question": inputs.get("question"),
         "project_id": tavily_project_id(tenant_config),
-        "website_url": inputs.get("website_url"),
+        "website_urls": inputs.get("website_urls"),
         "max_results": inputs.get("max_results"),
         "timeout_seconds": inputs.get("timeout_seconds"),
         "api_key": "[redacted]" if inputs.get("api_key") else None,
@@ -317,27 +319,29 @@ async def traced_tavily_runtime_search(
     timeout_seconds: float,
     question: str,
     tenant_config: TenantConfig | None,
-    website_url: str | None = None,
+    website_urls: list[str],
     api_base_url: str = "https://api.tavily.com",
 ) -> RuntimeWebSearchResult:
     project_id = tavily_project_id(tenant_config)
-    domain = urlparse(website_url or "").netloc.removeprefix("www.")
+    domains = website_domains(website_urls)
+    if not domains:
+        return RuntimeWebSearchResult()
     payload = {
         "query": question,
         "search_depth": "advanced",
         "max_results": max_results,
-        "include_answer": "basic",
+        "include_answer": False,
         "include_raw_content": "markdown",
-        "include_domains": [domain] if domain else None,
+        "include_domains": domains,
     }
     payload = {key: value for key, value in payload.items() if value is not None}
     logger.info(
         "Calling Tavily runtime search API tenant_id=%s project_id=%s "
-        "website_url=%s domain=%s max_results=%s timeout_seconds=%s",
+        "website_urls=%s domains=%s max_results=%s timeout_seconds=%s",
         tenant_config.tenant_id if tenant_config else None,
         project_id,
-        website_url,
-        domain,
+        website_urls,
+        domains,
         max_results,
         timeout_seconds,
     )
@@ -362,17 +366,16 @@ async def traced_tavily_runtime_search(
         return RuntimeWebSearchResult()
 
     data = response.json()
-    answer = str(data.get("answer") or "").strip()
-    sources = runtime_tavily_sources_from_results(data)
+    sources = [source for source in runtime_tavily_sources_from_results(data)
+               if allowed_website_source(source.url, website_urls)]
     logger.info(
         "Received Tavily runtime search response tenant_id=%s project_id=%s "
-        "answer_present=%s result_count=%s",
+        "result_count=%s",
         tenant_config.tenant_id if tenant_config else None,
         project_id,
-        bool(answer),
         len(sources),
     )
-    return RuntimeWebSearchResult(answer=answer, sources=sources)
+    return RuntimeWebSearchResult(sources=sources)
 
 
 class TavilyRuntimeWebSearch:
@@ -392,8 +395,8 @@ class TavilyRuntimeWebSearch:
     async def search_answer(
         self,
         question: str,
-        tenant_config: TenantConfig | None = None,
-        website_url: str | None = None,
+        tenant_config: TenantConfig | None,
+        website_urls: list[str],
     ) -> RuntimeWebSearchResult:
         return await traced_tavily_runtime_search(
             api_key=self.api_key,
@@ -401,17 +404,19 @@ class TavilyRuntimeWebSearch:
             timeout_seconds=self.timeout_seconds,
             question=question,
             tenant_config=tenant_config,
-            website_url=website_url,
+            website_urls=website_urls,
             api_base_url=self.api_base_url,
         )
 
 
 class NoopRuntimeWebSearch:
+    available = False
+
     async def search_answer(
         self,
         question: str,
-        tenant_config: TenantConfig | None = None,
-        website_url: str | None = None,
+        tenant_config: TenantConfig | None,
+        website_urls: list[str],
     ) -> RuntimeWebSearchResult:
         return RuntimeWebSearchResult()
 
@@ -831,7 +836,7 @@ class LlmAnswerGenerator:
                     "translate or summarize the answer into the latest customer "
                     "question's language.\n\n"
                     f"Latest customer question:\n{query}"
-                )
+                ),
             ),
         ]
         config = langsmith_runnable_config("answer_generation", tenant_config)
@@ -905,6 +910,7 @@ class LlmQuestionPlanner:
         message: IncomingMessage,
         conversation_metadata: ConversationPromptMetadata | None = None,
         tenant_config: TenantConfig | None = None,
+        conversation_history: list[StoredMessage] | None = None,
     ) -> QuestionPlan:
         messages = [
             ChatPromptMessage(role="system", content=QUESTION_PLANNING_PROMPT),
@@ -916,8 +922,10 @@ class LlmQuestionPlanner:
                     f"{format_business_summary(tenant_config)}\n\n"
                     "Conversation metadata:\n"
                     f"{format_conversation_metadata(conversation_metadata)}\n\n"
+                    "Recent conversation (untrusted context for follow-ups and consent):\n"
+                    f"{format_conversation_history(conversation_history or [])}\n\n"
                     f"Latest customer message:\n{message.text}"
-                )
+                ),
             ),
         ]
         config = langsmith_runnable_config("question_planning", tenant_config)
@@ -947,9 +955,7 @@ class LlmQuestionPlanner:
 
         return QuestionPlan(
             in_scope=bool(payload.get("in_scope", True)),
-            needs_conversation_history=bool(
-                payload.get("needs_conversation_history", True)
-            ),
+            needs_conversation_history=bool(payload.get("needs_conversation_history", True)),
             explicit_human_request=bool(payload.get("explicit_human_request", False)),
             explanation=str(payload.get("explanation", "")).strip() or None,
         )
@@ -1115,9 +1121,7 @@ class OpenAIWebsiteAnalyzer:
             parse_elapsed,
             time.perf_counter() - analysis_started_at,
         )
-        return analysis.model_copy(
-            update={"knowledge_sources": research_result.sources}
-        )
+        return analysis.model_copy(update={"knowledge_sources": research_result.sources})
 
 
 def traced_website_analysis_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
@@ -1181,8 +1185,7 @@ async def traced_openai_responses_create(responses_client: Any, request: dict[st
 class MissingOpenAIWebsiteAnalyzer:
     async def analyze(self, session: OnboardingSessionRecord) -> WebsiteAnalysisResult:
         raise ValueError(
-            "OPENAI_API_KEY is required when "
-            "AGENT_ONBOARDING_WEBSITE_ANALYSIS_PROVIDER=openai"
+            "OPENAI_API_KEY is required when AGENT_ONBOARDING_WEBSITE_ANALYSIS_PROVIDER=openai"
         )
 
 
@@ -1316,9 +1319,7 @@ def unwrap_markdown_link(value: str | None) -> str:
 def same_site_url(url: str, base_url: str) -> bool:
     parsed = urlparse(url)
     base = urlparse(base_url)
-    return domain_without_www(parsed.hostname or "") == domain_without_www(
-        base.hostname or ""
-    )
+    return domain_without_www(parsed.hostname or "") == domain_without_www(base.hostname or "")
 
 
 def homepage_url(url: str) -> bool:

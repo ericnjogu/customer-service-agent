@@ -145,7 +145,8 @@ class MemoryConversationRepository:
             (
                 message
                 for message in self.messages.values()
-                if message.conversation_id == conversation_id and message.created_at >= since
+                if message.conversation_id == conversation_id
+                and message.created_at >= since
                 and message.in_scope
             ),
             key=lambda message: message.created_at,
@@ -174,10 +175,7 @@ class MemoryConversationRepository:
 
         return max(
             0,
-            int(
-                (current_received_at - previous_customer_message.created_at).total_seconds()
-                // 60
-            ),
+            int((current_received_at - previous_customer_message.created_at).total_seconds() // 60),
         )
 
 
@@ -273,24 +271,16 @@ class MemoryTenantConfigRepository:
             update={
                 "selected_plan": selected_plan or existing.selected_plan,
                 "enabled_features": (
-                    enabled_features
-                    if enabled_features is not None
-                    else existing.enabled_features
+                    enabled_features if enabled_features is not None else existing.enabled_features
                 ),
                 "business_summary": (
-                    business_summary
-                    if business_summary is not None
-                    else existing.business_summary
+                    business_summary if business_summary is not None else existing.business_summary
                 ),
                 "llm_project_id": (
-                    llm_project_id
-                    if llm_project_id is not None
-                    else existing.llm_project_id
+                    llm_project_id if llm_project_id is not None else existing.llm_project_id
                 ),
                 "llm_project_name": (
-                    llm_project_name
-                    if llm_project_name is not None
-                    else existing.llm_project_name
+                    llm_project_name if llm_project_name is not None else existing.llm_project_name
                 ),
                 "langsmith_project": (
                     langsmith_project
@@ -305,9 +295,7 @@ class MemoryTenantConfigRepository:
                     llm_base_url if llm_base_url is not None else existing.llm_base_url
                 ),
                 "vector_provider": (
-                    vector_provider
-                    if vector_provider is not None
-                    else existing.vector_provider
+                    vector_provider if vector_provider is not None else existing.vector_provider
                 ),
                 "vector_isolation_mode": (
                     vector_isolation_mode
@@ -320,9 +308,7 @@ class MemoryTenantConfigRepository:
                     else existing.vector_collection
                 ),
                 "vector_namespace": (
-                    vector_namespace
-                    if vector_namespace is not None
-                    else existing.vector_namespace
+                    vector_namespace if vector_namespace is not None else existing.vector_namespace
                 ),
                 "telegram_secret_name": (
                     telegram_secret_name
@@ -500,9 +486,7 @@ class MemoryOnboardingRepository:
             physical_location=profile.physical_location,
             business_phone=profile.business_phone,
             business_email=profile.business_email,
-            google_place_url=(
-                str(profile.google_place_url) if profile.google_place_url else None
-            ),
+            google_place_url=(str(profile.google_place_url) if profile.google_place_url else None),
             created_at=self.business_profiles.get(
                 tenant_id,
                 BusinessProfileRecord(
@@ -672,10 +656,7 @@ class MemoryOnboardingRepository:
         update: OnboardingSessionUpdate,
     ) -> OnboardingSessionRecord:
         session = self._require_session(session_id)
-        updates = {
-            field: getattr(update, field)
-            for field in update.model_fields_set
-        }
+        updates = {field: getattr(update, field) for field in update.model_fields_set}
         next_values = {
             **updates,
             "updated_at": datetime.now(timezone.utc),
@@ -1068,6 +1049,7 @@ class ExtractiveAnswerGenerator:
             grounded=True,
         )
 
+
 class RuleBasedQuestionPlanner:
     human_request_phrases = (
         "human agent",
@@ -1112,11 +1094,16 @@ class RuleBasedQuestionPlanner:
         message: IncomingMessage,
         conversation_metadata: ConversationPromptMetadata | None = None,
         tenant_config: TenantConfig | None = None,
+        conversation_history: list[StoredMessage] | None = None,
     ) -> QuestionPlan:
         text = message.text.lower().strip()
-        explicit_human_request = any(
-            phrase in text for phrase in self.human_request_phrases
-        )
+        explicit_human_request = any(phrase in text for phrase in self.human_request_phrases)
+        if conversation_history and text.rstrip(".! ") in {"yes", "yes please", "please do"}:
+            last = conversation_history[-1]
+            explicit_human_request = (
+                last.sender_type == "BOT"
+                and "record a request for human support" in last.body.lower()
+            )
         if self._is_arithmetic_question(text) or any(
             phrase in text for phrase in self.out_of_scope_phrases
         ):

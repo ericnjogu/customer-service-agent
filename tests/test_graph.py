@@ -68,15 +68,15 @@ class StaticAnswerGenerator(RecordingAnswerGenerator):
 class RecordingRuntimeWebSearch:
     def __init__(self, result: RuntimeWebSearchResult) -> None:
         self.result = result
-        self.calls: list[tuple[str, TenantConfig | None, str | None]] = []
+        self.calls: list[tuple[str, TenantConfig | None, list[str]]] = []
 
     async def search_answer(
         self,
         question: str,
-        tenant_config: TenantConfig | None = None,
-        website_url: str | None = None,
+        tenant_config: TenantConfig | None,
+        website_urls: list[str],
     ) -> RuntimeWebSearchResult:
-        self.calls.append((question, tenant_config, website_url))
+        self.calls.append((question, tenant_config, website_urls))
         return self.result
 
 
@@ -412,9 +412,9 @@ async def test_answer_not_found_calls_runtime_web_search_even_with_high_confiden
     assert runtime_search.calls[0][0] == "Who works at Hustle HQ?"
     assert runtime_search.calls[0][1] is not None
     assert runtime_search.calls[0][1].web_search_project_name == "tenant-a-project"
-    assert runtime_search.calls[0][2] == "https://hustlehq.example"
-    assert reply.answer == "Hustle HQ team details are listed on the company website."
-    assert reply.low_confidence is False
+    assert runtime_search.calls[0][2] == ["https://hustlehq.example"]
+    assert reply.answer.startswith("I do not have team-member names")
+    assert reply.low_confidence is True
     assert reply.citations == ["https://hustlehq.example/team"]
     refreshed = await container.retrieval.search(
         "team details",
@@ -427,7 +427,7 @@ async def test_answer_not_found_calls_runtime_web_search_even_with_high_confiden
     )
 
 
-async def test_runtime_web_search_empty_answer_preserves_low_confidence_kb_answer() -> None:
+async def test_missing_websites_bypasses_search_preserving_low_confidence_kb_answer() -> None:
     container = await create_container(Settings())
     await container.retrieval.upsert(
         [
@@ -474,7 +474,7 @@ async def test_runtime_web_search_empty_answer_preserves_low_confidence_kb_answe
         ),
     )
 
-    assert len(runtime_search.calls) == 1
+    assert len(runtime_search.calls) == 0
     assert reply.answer == "I do not have enough information."
     assert reply.low_confidence is True
 
@@ -970,8 +970,9 @@ async def test_explicit_human_request_sets_human_requested_state() -> None:
 
     assert reply.state == "HUMAN_REQUESTED"
     assert reply.low_confidence is False
-    assert "Refund requests" in reply.answer
-    assert reply.citations == ["kb/refunds.txt#0000"]
+    assert "recorded your request" in reply.answer
+    assert "notified or assigned yet" in reply.answer
+    assert reply.citations == []
 
     conversation = await container.conversations.get_by_id(reply.conversation_id)
     assert conversation.state == "HUMAN_REQUESTED"

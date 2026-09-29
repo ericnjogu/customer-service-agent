@@ -13,6 +13,19 @@ env:
 jobs:
   application:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: issue_tests
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d issue_tests"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      AGENT_ISSUE_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/issue_tests
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -52,6 +65,7 @@ jobs:
           helm lint helm/customer-service --values helm/customer-service/values-production.yaml \
             --set prompts.useBundledFiles=false \
             --set-file prompts.system=app/prompt_templates/system.md \
+            --set-file prompts.issueProcessing=app/prompt_templates/issue-processing.md \
             --set-file prompts.questionPlanning=app/prompt_templates/question-planning.md \
             --set-file prompts.websiteAnalysis=app/prompt_templates/website-analysis.md \
             --set-file prompts.websiteResearch=app/prompt_templates/website-research.md
@@ -60,6 +74,7 @@ jobs:
             -f helm/customer-service/values-production.yaml \
             --set prompts.useBundledFiles=false \
             --set-file prompts.system=app/prompt_templates/system.md \
+            --set-file prompts.issueProcessing=app/prompt_templates/issue-processing.md \
             --set-file prompts.questionPlanning=app/prompt_templates/question-planning.md \
             --set-file prompts.websiteAnalysis=app/prompt_templates/website-analysis.md \
             --set-file prompts.websiteResearch=app/prompt_templates/website-research.md > /tmp/app.yaml

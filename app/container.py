@@ -132,13 +132,11 @@ def create_provider_project_provisioner(settings: Settings) -> object:
     if provider == "api":
         if not settings.openai_admin_key:
             raise ValueError(
-                "OPENAI_ADMIN_KEY is required when "
-                "AGENT_PROVIDER_PROJECT_PROVISIONER=api"
+                "OPENAI_ADMIN_KEY is required when AGENT_PROVIDER_PROJECT_PROVISIONER=api"
             )
         if not settings.langsmith_api_key:
             raise ValueError(
-                "LANGSMITH_API_KEY is required when "
-                "AGENT_PROVIDER_PROJECT_PROVISIONER=api"
+                "LANGSMITH_API_KEY is required when AGENT_PROVIDER_PROJECT_PROVISIONER=api"
             )
         logger.info(
             "Using OpenAI/LangSmith provider project provisioner "
@@ -177,8 +175,11 @@ class Container:
     telegram_sender: TelegramSender | None = None
     whatsapp_sender: WhatsAppSender | None = None
     database: PostgresDatabase | None = None
+    issues: object | None = None
 
     async def close(self) -> None:
+        if self.issues:
+            await self.issues.close()
         close_tenant_configs = getattr(self.tenant_configs, "close", None)
         if close_tenant_configs:
             await close_tenant_configs()
@@ -187,6 +188,16 @@ class Container:
 
 
 async def create_container(settings: Settings) -> Container:
+    if settings.issue_processing_enabled and settings.retrieval_provider != "pgvector":
+        raise ValueError(
+            "Issue processing requires PostgreSQL: set AGENT_RETRIEVAL_PROVIDER=pgvector "
+            "and AGENT_DATABASE_URL, or explicitly set AGENT_ISSUE_PROCESSING_ENABLED=false"
+        )
+    if settings.issue_processing_enabled and settings.answer_provider != "openai":
+        raise ValueError(
+            "Issue processing requires AGENT_ANSWER_PROVIDER=openai and OPENAI_API_KEY; "
+            "or set AGENT_ISSUE_PROCESSING_ENABLED=false"
+        )
     database = None
     logger.info(
         "Creating app container with retrieval_provider=%s embedding_provider=%s "
@@ -213,9 +224,7 @@ async def create_container(settings: Settings) -> Container:
         database_connect_kwargs: dict[str, object] = {}
         if settings.database_secret_arn:
             if not settings.database_host:
-                raise ValueError(
-                    "AGENT_DATABASE_HOST is required with AGENT_DATABASE_SECRET_ARN"
-                )
+                raise ValueError("AGENT_DATABASE_HOST is required with AGENT_DATABASE_SECRET_ARN")
             import boto3
             from botocore.config import Config
 
@@ -240,8 +249,7 @@ async def create_container(settings: Settings) -> Container:
             }
         elif not settings.database_url:
             raise ValueError(
-                "AGENT_DATABASE_URL or AGENT_DATABASE_SECRET_ARN is required when "
-                "using pgvector"
+                "AGENT_DATABASE_URL or AGENT_DATABASE_SECRET_ARN is required when using pgvector"
             )
         database = PostgresDatabase(
             settings.database_url,
@@ -271,19 +279,14 @@ async def create_container(settings: Settings) -> Container:
     if settings.tenant_config_cache_provider == "redis":
         if not settings.redis_url:
             raise ValueError(
-                "AGENT_REDIS_URL is required when "
-                "AGENT_TENANT_CONFIG_CACHE_PROVIDER=redis"
+                "AGENT_REDIS_URL is required when AGENT_TENANT_CONFIG_CACHE_PROVIDER=redis"
             )
         tenant_configs = RedisTenantConfigRepository(
             tenant_configs,
             create_redis_client(
                 settings.redis_url,
-                iam_cache_name=(
-                    settings.redis_iam_cache_name if settings.redis_iam_auth else None
-                ),
-                iam_username=(
-                    settings.redis_iam_username if settings.redis_iam_auth else None
-                ),
+                iam_cache_name=(settings.redis_iam_cache_name if settings.redis_iam_auth else None),
+                iam_username=(settings.redis_iam_username if settings.redis_iam_auth else None),
                 aws_region=settings.aws_region,
             ),
             ttl_seconds=settings.tenant_config_cache_ttl_seconds,
@@ -292,8 +295,7 @@ async def create_container(settings: Settings) -> Container:
         tenant_configs = MemoryCachedTenantConfigRepository(tenant_configs)
     else:
         raise ValueError(
-            "Unsupported tenant config cache provider: "
-            f"{settings.tenant_config_cache_provider}"
+            f"Unsupported tenant config cache provider: {settings.tenant_config_cache_provider}"
         )
 
     await conversations.initialize()
@@ -308,9 +310,7 @@ async def create_container(settings: Settings) -> Container:
         generator = ExtractiveAnswerGenerator()
     elif settings.answer_provider == "openai":
         if not settings.openai_api_key:
-            raise ValueError(
-                "OPENAI_API_KEY is required when AGENT_ANSWER_PROVIDER=openai"
-            )
+            raise ValueError("OPENAI_API_KEY is required when AGENT_ANSWER_PROVIDER=openai")
         logger.info("using openai answer generator")
         generator = create_openai_answer_generator(
             api_key=settings.openai_api_key,
@@ -326,9 +326,7 @@ async def create_container(settings: Settings) -> Container:
         question_planner = RuleBasedQuestionPlanner()
     elif settings.question_planner_provider == "llm":
         if not settings.openai_api_key:
-            raise ValueError(
-                "OPENAI_API_KEY is required when AGENT_QUESTION_PLANNER_PROVIDER=llm"
-            )
+            raise ValueError("OPENAI_API_KEY is required when AGENT_QUESTION_PLANNER_PROVIDER=llm")
         question_planner = create_openai_question_planner(
             api_key=settings.openai_api_key,
             model=settings.llm_model,
@@ -337,8 +335,22 @@ async def create_container(settings: Settings) -> Container:
         )
     else:
         raise ValueError(
-            "Unsupported question planner provider: "
-            f"{settings.question_planner_provider}"
+            f"Unsupported question planner provider: {settings.question_planner_provider}"
+        )
+
+    issues = None
+    if settings.issue_processing_enabled:
+        from app.adapters.issues import PostgresIssueRepository
+        from app.issues import IssueService
+
+        issue_repository = PostgresIssueRepository(database)
+        await issue_repository.initialize()
+        issues = IssueService(
+            issue_repository,
+            embeddings,
+            generator,
+            tenant_configs,
+            settings.embedding_model,
         )
 
     graph = build_service_graph(
@@ -354,6 +366,7 @@ async def create_container(settings: Settings) -> Container:
         settings.kb_chunk_size,
         settings.kb_chunk_overlap,
         onboarding,
+        issues,
     )
     if settings.email_provider == "log":
         logger.info("Using logging email provider")
@@ -448,8 +461,7 @@ async def create_container(settings: Settings) -> Container:
         )
     else:
         raise ValueError(
-            "Unsupported Telegram credential provider: "
-            f"{settings.telegram_credential_provider}"
+            f"Unsupported Telegram credential provider: {settings.telegram_credential_provider}"
         )
     telegram_sender = TenantAwareTelegramSender(
         telegram_credentials,
@@ -484,4 +496,5 @@ async def create_container(settings: Settings) -> Container:
         telegram_sender=telegram_sender,
         whatsapp_sender=whatsapp_sender,
         database=database,
+        issues=issues,
     )

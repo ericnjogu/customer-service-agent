@@ -34,11 +34,13 @@ from app.ports import (
     RuntimeWebSearch,
     TenantConfigRepository,
 )
+from app.website_scope import allowed_website_source, website_host
 
 logger = logging.getLogger(__name__)
 
 
 class ServiceState(TypedDict, total=False):
+    tenant_websites: list[str]
     message: IncomingMessage
     conversation: ConversationRecord
     tenant_config: TenantConfig
@@ -67,6 +69,7 @@ def build_service_graph(
     kb_chunk_size: int = 1_000,
     kb_chunk_overlap: int = 180,
     onboarding: OnboardingRepository | None = None,
+    issues=None,
 ):
     async def get_or_create_conversation(state: ServiceState) -> dict:
         conversation = await conversations.get_or_create(state["message"])
@@ -74,7 +77,8 @@ def build_service_graph(
 
     async def persist_customer_message(state: ServiceState) -> dict:
         conversation = state["conversation"]
-        await conversations.save_message(
+        save = issues.repository.save_message if issues else conversations.save_message
+        await save(
             StoredMessage(
                 tenant_id=state["message"].tenant_id,
                 conversation_id=conversation.id,
@@ -93,6 +97,13 @@ def build_service_graph(
         return {"tenant_config": tenant_config}
 
     async def plan_question(state: ServiceState) -> dict:
+        history = (
+            await issues.repository.history(
+                state["conversation"], conversation_history_max_messages
+            )
+            if issues
+            else []
+        )
         minutes_since_last_customer_message = (
             await conversations.minutes_since_previous_customer_message(
                 state["conversation"].id,
@@ -109,15 +120,13 @@ def build_service_graph(
             state["message"],
             metadata,
             state.get("tenant_config"),
+            **({"conversation_history": history} if issues else {}),
         )
         return {"question_plan": plan, "conversation_metadata": metadata}
 
     async def apply_human_request_state(state: ServiceState) -> dict:
         conversation = state["conversation"]
-        if (
-            state["question_plan"].explicit_human_request
-            and conversation.state == "BOT_ACTIVE"
-        ):
+        if state["question_plan"].explicit_human_request and conversation.state == "BOT_ACTIVE":
             conversation = await conversations.update_state(
                 conversation.id,
                 state="HUMAN_REQUESTED",
@@ -127,10 +136,14 @@ def build_service_graph(
 
     async def load_conversation_history(state: ServiceState) -> dict:
         conversation = state["conversation"]
-        history = await conversations.list_messages_since(
-            conversation.id,
-            conversation.created_at,
-            conversation_history_max_messages,
+        history = (
+            await issues.repository.history(conversation, conversation_history_max_messages)
+            if issues
+            else await conversations.list_messages_since(
+                conversation.id,
+                conversation.created_at,
+                conversation_history_max_messages,
+            )
         )
         return {"conversation_history": history}
 
@@ -157,6 +170,7 @@ def build_service_graph(
         return {"conversation_metadata": metadata}
 
     async def retrieve(state: ServiceState) -> dict:
+        websites = await tenant_website_urls(state["message"].tenant_id)
         tenant_config = state.get("tenant_config")
         knowledge_tenant_id = (
             tenant_config.vector_namespace
@@ -167,7 +181,13 @@ def build_service_graph(
             state["message"].text,
             knowledge_tenant_id,
         )
-        return {"documents": documents}
+        documents = [
+            document
+            for document in documents
+            if document.metadata.get("source") != "runtime-web-search"
+            or allowed_website_source(document.metadata.get("source_url"), websites)
+        ]
+        return {"documents": documents, "tenant_websites": websites}
 
     async def answer_out_of_scope(state: ServiceState) -> dict:
         metadata = state.get("conversation_metadata") or build_prompt_metadata_without_history(
@@ -186,6 +206,16 @@ def build_service_graph(
         }
 
     async def answer(state: ServiceState) -> dict:
+        if state["question_plan"].explicit_human_request:
+            return {
+                "answer": "I've recorded your request for human support. "
+                "This does not mean a team member has been notified or assigned yet.",
+                "confidence": 1.0,
+                "answer_found": True,
+                "grounded": True,
+                "citations": [],
+                "low_confidence": False,
+            }
         if state["conversation"].state == "HUMAN_ACTIVE":
             return {
                 "answer": "This conversation is currently being handled by human support.",
@@ -215,19 +245,50 @@ def build_service_graph(
         }
 
     async def search_tenant_website(state: ServiceState) -> dict:
-        if runtime_web_search is None:
+        websites = state.get("tenant_websites", [])
+        if (
+            not getattr(runtime_web_search, "available", runtime_web_search is not None)
+            or not websites
+        ):
             return {"low_confidence": True}
-        website_url = await tenant_website_url(
-            onboarding,
-            state["message"].tenant_id,
-        )
-        search_result = await runtime_web_search.search_answer(
-            state["message"].text,
-            state.get("tenant_config"),
-            website_url,
-        )
-        tavily_answer = search_result.answer.strip()
-        if not tavily_answer:
+        try:
+            search_result = await runtime_web_search.search_answer(
+                state["message"].text,
+                state.get("tenant_config"),
+                websites,
+            )
+        except Exception:
+            logger.warning("Tenant website search unavailable; preserving KB answer")
+            return {"low_confidence": True}
+        sources = [
+            source
+            for source in search_result.sources
+            if source.text.strip() and allowed_website_source(source.url, websites)
+        ]
+        if not sources:
+            return {"low_confidence": True}
+        documents = [
+            document
+            for source in sources
+            for document in runtime_web_search_documents(
+                source,
+                query=state["message"].text,
+                chunk_size=kb_chunk_size,
+                chunk_overlap=kb_chunk_overlap,
+            )
+        ]
+        try:
+            result = normalize_answer_result(
+                await generator.generate(
+                    state["message"].text,
+                    documents,
+                    state.get("conversation_history", []),
+                    state.get("conversation_metadata"),
+                    state.get("tenant_config"),
+                )
+            )
+        except Exception:
+            logger.warning("Website answer generation unavailable; preserving KB answer")
             return {"low_confidence": True}
         asyncio.create_task(
             refresh_runtime_web_search_knowledge(
@@ -235,18 +296,18 @@ def build_service_graph(
                 tenant_config=state.get("tenant_config"),
                 tenant_id=state["message"].tenant_id,
                 query=state["message"].text,
-                sources=search_result.sources,
+                sources=sources,
                 chunk_size=kb_chunk_size,
                 chunk_overlap=kb_chunk_overlap,
             )
         )
         return {
-            "answer": tavily_answer,
-            "confidence": max(confidence_threshold, state["confidence"]),
-            "answer_found": True,
-            "grounded": True,
-            "citations": [source.url for source in search_result.sources],
-            "low_confidence": False,
+            "answer": result.answer,
+            "confidence": result.confidence,
+            "answer_found": result.answer_found,
+            "grounded": result.grounded,
+            "citations": [source.url for source in sources] if result.grounded else [],
+            "low_confidence": should_search_tenant_website(result),
         }
 
     def document_citations(documents: list[Document]) -> list[str]:
@@ -255,22 +316,21 @@ def build_service_graph(
             for item in documents
         ]
 
-    async def tenant_website_url(
-        onboarding: OnboardingRepository | None,
-        tenant_id: str,
-    ) -> str | None:
+    async def tenant_website_urls(tenant_id: str) -> list[str]:
         if onboarding is None:
-            return None
-        contact_points = await onboarding.list_contact_points(tenant_id)
-        website_points = [
-            point
-            for point in contact_points
-            if point.kind == "website" and point.url
-        ]
-        if not website_points:
-            return None
-        website_points.sort(key=lambda point: not point.is_primary)
-        return website_points[0].url
+            return []
+        try:
+            contact_points = await onboarding.list_contact_points(tenant_id)
+        except Exception:
+            logger.warning("Tenant websites unavailable; disabling website search for this turn")
+            return []
+        return list(
+            dict.fromkeys(
+                point.url
+                for point in sorted(contact_points, key=lambda point: not point.is_primary)
+                if point.kind == "website" and website_host(point.url)
+            )
+        )
 
     async def refresh_runtime_web_search_knowledge(
         retrieval: RetrievalStore,
@@ -367,26 +427,39 @@ def build_service_graph(
     def route_history(state: ServiceState) -> str:
         return (
             "load_history"
-            if state["question_plan"].needs_conversation_history
+            if issues or state["question_plan"].needs_conversation_history
             else "skip_history"
         )
 
     def route_after_kb_answer(state: ServiceState) -> str:
-        return "search" if state["low_confidence"] else "reply"
+        return (
+            "search"
+            if (
+                state["low_confidence"]
+                and state["question_plan"].in_scope
+                and state.get("tenant_websites")
+                and getattr(runtime_web_search, "available", runtime_web_search is not None)
+                and state["conversation"].state != "HUMAN_ACTIVE"
+            )
+            else "reply"
+        )
 
     async def persist_reply(state: ServiceState) -> dict:
         conversation = state["conversation"]
-        await conversations.save_message(
-            StoredMessage(
-                tenant_id=conversation.tenant_id,
-                conversation_id=conversation.id,
-                event_id=f"reply:{state['message'].event_id}",
-                sender_type="BOT",
-                body=state["answer"],
-                in_scope=state["question_plan"].in_scope,
-            )
+        answer_text = state["answer"]
+        reply = StoredMessage(
+            tenant_id=conversation.tenant_id,
+            conversation_id=conversation.id,
+            event_id=f"reply:{state['message'].event_id}",
+            sender_type="BOT",
+            body=answer_text,
+            in_scope=state["question_plan"].in_scope,
         )
-        return {"conversation": conversation}
+        if issues:
+            await issues.record(reply, state["message"])
+        else:
+            await conversations.save_message(reply)
+        return {"conversation": conversation, "answer": answer_text}
 
     workflow = StateGraph(ServiceState)
     workflow.add_node("get_or_create_conversation", get_or_create_conversation)
@@ -456,9 +529,7 @@ def build_prompt_metadata(
     minutes_since_last_customer_message = max(
         0,
         int(
-            (
-                current_message.received_at - previous_customer_message.created_at
-            ).total_seconds()
+            (current_message.received_at - previous_customer_message.created_at).total_seconds()
             // 60
         ),
     )
@@ -537,9 +608,7 @@ async def invoke_service_graph(
     tenant_configs: TenantConfigRepository | None = None,
 ) -> ServiceReply:
     tenant_config = (
-        await tenant_configs.get(message.tenant_id)
-        if tenant_configs is not None
-        else None
+        await tenant_configs.get(message.tenant_id) if tenant_configs is not None else None
     )
     initial_state: ServiceState = {"message": message}
     if tenant_config is not None:

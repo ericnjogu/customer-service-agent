@@ -102,6 +102,9 @@ redis:
     username: ""
     region: eu-central-1
 
+issueProcessing:
+  enabled: true
+
 onboarding:
   actionTokenTtlMinutes: 60
   emailVerificationTokenTtlMinutes: 60
@@ -207,6 +210,7 @@ prompts:
   useBundledFiles: false
   mountPath: /etc/aws-csa/prompts
   system: ""
+  issueProcessing: ""
   questionPlanning: ""
   websiteAnalysis: ""
   websiteResearch: ""

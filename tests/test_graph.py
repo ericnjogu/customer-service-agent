@@ -1,6 +1,9 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
+import pytest
 from langchain_core.documents import Document
 
 from app.adapters.llm import langsmith_client
@@ -264,10 +267,7 @@ async def test_unknown_question_is_marked_low_confidence() -> None:
 async def test_service_graph_contains_search_tenant_website_node() -> None:
     container = await create_container(Settings())
     graph = container.graph.get_graph()
-    edges = {
-        (edge.source, edge.target, edge.data, edge.conditional)
-        for edge in graph.edges
-    }
+    edges = {(edge.source, edge.target, edge.data, edge.conditional) for edge in graph.edges}
 
     assert "search_tenant_website" in graph.nodes
     assert ("answer", "search_tenant_website", "search", True) in edges
@@ -705,6 +705,57 @@ async def test_graph_passes_tenant_prompt_config_to_planner_and_answer_generator
     )
 
 
+@pytest.mark.parametrize("needs_history", [False, True])
+async def test_issue_processing_does_not_override_answer_history_flag(needs_history) -> None:
+    container = await create_container(Settings())
+    generator = RecordingAnswerGenerator()
+    message = IncomingMessage(
+        event_id="history-routing",
+        external_chat_id="history-routing",
+        external_user_id="customer",
+        text="What are your hours?",
+    )
+    conversation = await container.conversations.get_or_create(message)
+    previous = StoredMessage(
+        conversation_id=conversation.id,
+        event_id="previous",
+        sender_type="CUSTOMER",
+        body="Hello",
+    )
+    history = AsyncMock(return_value=[previous])
+    issues = SimpleNamespace(
+        repository=SimpleNamespace(history=history, save_message=AsyncMock()),
+        record=AsyncMock(),
+    )
+    planner = SimpleNamespace(
+        plan=AsyncMock(
+            return_value=QuestionPlan(
+                in_scope=True,
+                needs_conversation_history=needs_history,
+                explanation="Test routing",
+            )
+        )
+    )
+    graph = build_service_graph(
+        container.conversations,
+        container.tenant_configs,
+        container.retrieval,
+        generator,
+        planner,
+        0.6,
+        10,
+        60,
+        issues=issues,
+    )
+    await invoke_service_graph(graph, message)
+    # Planning still receives context; answer history obeys the resulting flag.
+    assert planner.plan.await_args.kwargs["conversation_history"] == [previous]
+    assert history.await_count == (2 if needs_history else 1)
+    assert generator.histories == [[previous] if needs_history else []]
+    assert generator.metadata[0] == planner.plan.await_args.args[1]
+    issues.record.assert_awaited_once()
+
+
 async def test_graph_passes_current_conversation_history_with_safety_cap() -> None:
     container = await create_container(Settings())
     generator = RecordingAnswerGenerator()
@@ -941,10 +992,7 @@ async def test_graph_skips_conversation_history_for_standalone_question() -> Non
     assert generator.histories[-1] == []
     assert generator.metadata[-1] is not None
     assert generator.metadata[-1].should_greet_customer is False
-    assert (
-        generator.metadata[-1].greeting_reason
-        == "active conversation; avoid repeated greeting"
-    )
+    assert generator.metadata[-1].greeting_reason == "active conversation; avoid repeated greeting"
 
 
 async def test_explicit_human_request_sets_human_requested_state() -> None:

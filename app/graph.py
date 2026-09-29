@@ -427,7 +427,7 @@ def build_service_graph(
     def route_history(state: ServiceState) -> str:
         return (
             "load_history"
-            if issues or state["question_plan"].needs_conversation_history
+            if state["question_plan"].needs_conversation_history
             else "skip_history"
         )
 

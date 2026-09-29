@@ -30,7 +30,12 @@ from app.issues import (
 from app.models import IncomingMessage, StoredMessage
 
 
-async def test_full_graph_to_mocked_provider_and_background_embeddings(repository, monkeypatch):
+@pytest.mark.parametrize("has_knowledge", [False, True])
+async def test_full_graph_to_mocked_provider_and_background_embeddings(
+    repository, monkeypatch, has_knowledge
+):
+    from langchain_core.documents import Document
+
     from app.adapters.llm import create_openai_answer_generator
     from app.adapters.memory import MemoryRetrievalStore
     from app.graph import build_service_graph, invoke_service_graph
@@ -61,11 +66,23 @@ async def test_full_graph_to_mocked_provider_and_background_embeddings(repositor
     )
     repo = repository
     tenant_configs = MemoryTenantConfigRepository()
+    retrieval = MemoryRetrievalStore()
+    if has_knowledge:
+        tenant = await tenant_configs.get("tenant")
+        await retrieval.upsert(
+            [
+                Document(
+                    page_content="For a cracked screen, describe the damage to your screen.",
+                    metadata={"source": "screen-support", "chunk_id": "screen-support#0"},
+                )
+            ],
+            tenant.vector_namespace,
+        )
     worker = IssueService(repo, LocalHashEmbeddingProvider(64), generator, tenant_configs, "local")
     graph = build_service_graph(
         PostgresConversationRepository(repo.database),
         tenant_configs,
-        MemoryRetrievalStore(),
+        retrieval,
         generator,
         RuleBasedQuestionPlanner(),
         0.6,
@@ -81,12 +98,17 @@ async def test_full_graph_to_mocked_provider_and_background_embeddings(repositor
         text="My screen cracked",
     )
     reply = await invoke_service_graph(graph, message)
-    assert "damage" in reply.answer
-    assert len(calls) == 1  # ProcessingResult is outside the customer-answer path.
+    if has_knowledge:
+        assert "damage" in reply.answer
+    else:
+        assert reply.answer == "I could not find enough information to answer that question."
+        assert reply.low_confidence
+    answer_calls = int(has_knowledge)
+    assert len(calls) == answer_calls  # Issue processing is outside the answer path.
     await worker.delivered(message, "accepted")
     await worker.process(await job_for(repo))
-    assert len(calls) == 2
-    evidence = json.loads(calls[1]["messages"][1]["content"])["messages"]
+    assert len(calls) == answer_calls + 1
+    evidence = json.loads(calls[-1]["messages"][1]["content"])["messages"]
     assert [m["event_id"] for m in evidence] == ["one"]
     issue = await repo.database.pool.fetchrow("SELECT * FROM conversation_issues")
     assert issue["embedding_version"] == issue["version"] == 1

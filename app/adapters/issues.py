@@ -43,6 +43,21 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS issue_completed_at timestamptz;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS issue_queue_id bigint;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivery text NOT NULL DEFAULT 'unknown'
     CHECK(delivery IN ('unknown','accepted','failed'));
+CREATE UNIQUE INDEX IF NOT EXISTS messages_tenant_conversation_event
+    ON messages(tenant_id, conversation_id, event_id);
+CREATE TABLE IF NOT EXISTS conversation_turn_sentiments (
+    tenant_id text NOT NULL,
+    conversation_id uuid NOT NULL,
+    customer_event_id text NOT NULL,
+    preceding_bot_event_id text,
+    sentiment text NOT NULL CHECK(sentiment IN ('positive','neutral','negative')),
+    assessed_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY(tenant_id,conversation_id,customer_event_id),
+    FOREIGN KEY(tenant_id,conversation_id,customer_event_id)
+        REFERENCES messages(tenant_id,conversation_id,event_id),
+    FOREIGN KEY(tenant_id,conversation_id,preceding_bot_event_id)
+        REFERENCES messages(tenant_id,conversation_id,event_id)
+);
 DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='messages_issue_scope_fk') THEN
         ALTER TABLE messages ADD CONSTRAINT messages_issue_scope_fk
@@ -246,7 +261,21 @@ class PostgresIssueRepository:
                 customer_event,
                 ref["event_id"],
             )
+            preceding_bot = await c.fetchrow(
+                """SELECT b.event_id,b.body,b.delivery,b.issue_sequence FROM messages b
+                JOIN messages customer ON customer.tenant_id=b.tenant_id
+                    AND customer.conversation_id=b.conversation_id
+                WHERE customer.tenant_id=$1 AND customer.conversation_id=$2
+                    AND customer.event_id=$3 AND b.sender_type='BOT'
+                    AND b.issue_sequence<customer.issue_sequence
+                ORDER BY b.issue_sequence DESC LIMIT 1""",
+                tenant,
+                conversation,
+                customer_event,
+            )
         return dict(
+            customer_event_id=customer_event,
+            preceding_bot=dict(preceding_bot) if preceding_bot else None,
             issue=dict(issue) if issue else None,
             processed=processed,
             finished=reply["issue_completed_at"] is not None,
@@ -254,7 +283,7 @@ class PostgresIssueRepository:
             messages=[dict(r) for r in rows] if reply["in_scope"] and len(rows) == 2 else [],
         )
 
-    async def complete(self, ref, snapshot, details):
+    async def complete(self, ref, snapshot, details, *, sentiment=None):
         tenant, conversation = ref["tenant_id"], UUID(ref["conversation_id"])
         async with self.database.pool.acquire() as c, c.transaction():
             # Serializes the short commit with future status changes, not the model call.
@@ -319,6 +348,34 @@ class PostgresIssueRepository:
                     issue_id,
                     [m["event_id"] for m in snapshot["messages"]],
                 )
+            if sentiment is not None and snapshot["messages"]:
+                preceding = snapshot["preceding_bot"]
+                valid = await c.fetchval(
+                    """SELECT EXISTS(SELECT 1 FROM messages customer
+                    WHERE customer.tenant_id=$1 AND customer.conversation_id=$2
+                        AND customer.event_id=$3 AND customer.sender_type='CUSTOMER'
+                        AND customer.in_scope AND ($4::text IS NULL OR EXISTS(
+                            SELECT 1 FROM messages bot WHERE bot.tenant_id=customer.tenant_id
+                            AND bot.conversation_id=customer.conversation_id
+                            AND bot.event_id=$4 AND bot.sender_type='BOT'
+                            AND bot.issue_sequence<customer.issue_sequence)))""",
+                    tenant,
+                    conversation,
+                    snapshot["customer_event_id"],
+                    preceding["event_id"] if preceding else None,
+                )
+                if not valid:
+                    raise ValueError("Invalid sentiment message references")
+                await c.execute(
+                    """INSERT INTO conversation_turn_sentiments
+                    (tenant_id,conversation_id,customer_event_id,preceding_bot_event_id,sentiment)
+                    VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING""",
+                    tenant,
+                    conversation,
+                    snapshot["customer_event_id"],
+                    preceding["event_id"] if preceding else None,
+                    sentiment,
+                )
             await c.execute(
                 """UPDATE messages SET issue_processed_at=now()
                 WHERE tenant_id=$1 AND conversation_id=$2 AND event_id=$3""",
@@ -326,6 +383,26 @@ class PostgresIssueRepository:
                 conversation,
                 ref["event_id"],
             )
+
+    async def sentiment_history(self, tenant_id, conversation_id, limit=100):
+        """Latest assessed customer turns in chronological order; no inferred missing values."""
+        rows = await self.database.pool.fetch(
+            """SELECT s.*,customer.body AS customer_message, customer.issue_sequence,
+                bot.body AS preceding_bot_response,bot.delivery AS preceding_bot_delivery
+            FROM conversation_turn_sentiments s
+            JOIN messages customer ON customer.tenant_id=s.tenant_id
+                AND customer.conversation_id=s.conversation_id
+                AND customer.event_id=s.customer_event_id
+            LEFT JOIN messages bot ON bot.tenant_id=s.tenant_id
+                AND bot.conversation_id=s.conversation_id
+                AND bot.event_id=s.preceding_bot_event_id
+            WHERE s.tenant_id=$1 AND s.conversation_id=$2
+            ORDER BY customer.issue_sequence DESC LIMIT $3""",
+            tenant_id,
+            conversation_id,
+            max(1, min(limit, 1000)),
+        )
+        return [dict(row) for row in reversed(rows)]
 
     async def finish(self, ref):
         """Complete the embedding phase and release the successor in one transaction."""

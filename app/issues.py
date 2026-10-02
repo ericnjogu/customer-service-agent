@@ -6,7 +6,7 @@ import logging
 import time
 from datetime import timedelta
 from functools import partial
-from typing import Annotated
+from typing import Annotated, Literal
 
 from langsmith import trace as langsmith_trace
 from langsmith import tracing_context
@@ -73,9 +73,10 @@ class IssueDetails(BaseModel):
 class ProcessingResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
     issue: IssueDetails | None
+    sentiment: Literal["positive", "neutral", "negative"]
 
 
-async def process_issue(generator, tenant, issue, messages) -> ProcessingResult:
+async def process_issue(generator, tenant, issue, messages, preceding_bot=None) -> ProcessingResult:
     prompt_messages = [
         ChatPromptMessage(role="system", content=PROCESSOR_PROMPT),
         ChatPromptMessage(
@@ -84,6 +85,7 @@ async def process_issue(generator, tenant, issue, messages) -> ProcessingResult:
                 {
                     "business_summary": tenant.business_summary if tenant else None,
                     "open_issue": issue,
+                    "preceding_bot_response_for_sentiment_only": preceding_bot,
                     "messages": [
                         message for message in messages if message.get("sender_type") == "CUSTOMER"
                     ],
@@ -193,12 +195,21 @@ class IssueService:
                 if not snapshot["processed"]:
                     decision = (
                         await process_issue(
-                            self.generator, tenant, snapshot["issue"], snapshot["messages"]
+                            self.generator,
+                            tenant,
+                            snapshot["issue"],
+                            snapshot["messages"],
+                            snapshot["preceding_bot"],
                         )
                         if snapshot["messages"]
-                        else ProcessingResult(issue=None)
+                        else None
                     )
-                    await self.repository.complete(ref, snapshot, decision.issue)
+                    await self.repository.complete(
+                        ref,
+                        snapshot,
+                        decision.issue if decision else None,
+                        sentiment=decision.sentiment if decision else None,
+                    )
                 target = await self.repository.embedding_target(ref)
                 if target:
                     vector = await asyncio.wait_for(

@@ -130,6 +130,112 @@ async def test_out_of_scope_turn_and_schema_reinitialization(repository):
     assert (await repo.snapshot(ref))["processed"]
     await repo.initialize()
     assert await repo.database.pool.fetchval("SELECT count(*) FROM messages") == 2
+    assert (
+        await repo.database.pool.fetchval("SELECT count(*) FROM conversation_turn_sentiments") == 0
+    )
+
+
+@pytest.mark.parametrize("value", ["positive", "neutral", "negative"])
+def test_turn_sentiment_values(value):
+    assert ProcessingResult(issue=None, sentiment=value).sentiment == value
+
+
+@pytest.mark.parametrize("value", [None, "mixed", "Positive", 0, ""])
+def test_turn_sentiment_invalid(value):
+    with pytest.raises(ValidationError):
+        ProcessingResult(issue=None, sentiment=value)
+
+
+def test_turn_sentiment_required():
+    with pytest.raises(ValidationError, match="sentiment"):
+        ProcessingResult(issue=None)
+
+
+@pytest.mark.parametrize("delivery", ["accepted", "failed", "unknown"])
+async def test_turn_sentiment_links_preceding_response_without_issue(repository, delivery):
+    repo = repository
+    _, _, conversation, first = await turn(repo, text="Hello")
+    worker = service(repo, Model({"issue": None, "sentiment": "neutral"}))
+    await worker.process(await job_for(repo))
+    await repo.delivery("tenant", "one", delivery)
+    # Insert an unrelated conversation to verify the boundary.
+    await turn(repo, event="other", chat="other")
+    _, _, _, second = await turn(repo, event="second", text="That was not helpful!")
+    snapshot = await repo.snapshot(second)
+    assert snapshot["preceding_bot"]["event_id"] == "reply:one"
+    model = Model({"issue": None, "sentiment": "negative"})
+    await service(repo, model).process(await job_for(repo, event="reply:second"))
+    await service(repo, model).process(await job_for(repo, event="reply:second"))
+    assert len(model.calls) == 1
+    payload = json.loads(model.calls[0][1].content)
+    assert payload["preceding_bot_response_for_sentiment_only"]["delivery"] == delivery
+    assert [m["event_id"] for m in payload["messages"]] == ["second"]
+    history = await repo.sentiment_history("tenant", conversation.id)
+    assert [r["sentiment"] for r in history] == ["neutral", "negative"]
+    assert history[0]["preceding_bot_event_id"] is None
+    assert history[1]["preceding_bot_event_id"] == "reply:one"
+    assert history[1]["preceding_bot_delivery"] == delivery
+    assert await repo.sentiment_history("another-tenant", conversation.id) == []
+    assert await repo.database.pool.fetchval("SELECT count(*) FROM conversation_issues") == 0
+    await repo.initialize()
+    assert len(await repo.sentiment_history("tenant", conversation.id)) == 2
+
+
+async def test_sentiment_failure_rolls_back_issue_and_processed_marker(repository):
+    repo = repository
+    _, _, _, ref = await turn(repo)
+    snapshot = await repo.snapshot(ref)
+    details = IssueDetails(summary="Screen damaged.", issue_type="repair")
+    with pytest.raises(asyncpg.CheckViolationError):
+        await repo.complete(ref, snapshot, details, sentiment="invalid")
+    assert await repo.database.pool.fetchval("SELECT count(*) FROM conversation_issues") == 0
+    assert (
+        await repo.database.pool.fetchval("SELECT count(*) FROM conversation_turn_sentiments") == 0
+    )
+    assert not (await repo.snapshot(ref))["processed"]
+    await turn(repo, event="foreign", chat="foreign")
+    snapshot["preceding_bot"] = {"event_id": "reply:foreign"}
+    with pytest.raises(ValueError, match="Invalid sentiment message references"):
+        await repo.complete(ref, snapshot, details, sentiment="neutral")
+    assert await repo.database.pool.fetchval("SELECT count(*) FROM conversation_issues") == 0
+    snapshot["preceding_bot"] = None
+    await repo.complete(ref, snapshot, details, sentiment="negative")
+    assert (await repo.snapshot(ref))["processed"]
+
+
+async def test_sentiment_predecessor_is_bounded_by_customer_not_current_reply(repository):
+    repo = repository
+    _, _, conversation, first = await turn(repo)
+    await service(repo, Model({"issue": None})).process(await job_for(repo))
+    # Two customer messages arrive before a new bot response is persisted.
+    for event in ["second", "third"]:
+        await repo.save_message(
+            StoredMessage(
+                tenant_id="tenant",
+                conversation_id=conversation.id,
+                event_id=event,
+                sender_type="CUSTOMER",
+                body="Please help",
+            )
+        )
+    for event in ["second", "third"]:
+        reply = StoredMessage(
+            tenant_id="tenant",
+            conversation_id=conversation.id,
+            event_id=f"reply:{event}",
+            sender_type="BOT",
+            body="Checking",
+        )
+        await repo.enqueue(reply, event)
+        ref = dict(
+            tenant_id="tenant", conversation_id=str(conversation.id), event_id=reply.event_id
+        )
+        snapshot = await repo.snapshot(ref)
+        assert snapshot["preceding_bot"]["event_id"] == "reply:one"
+        await repo.complete(ref, snapshot, None, sentiment="neutral")
+        await repo.finish(ref)
+    history = await repo.sentiment_history("tenant", conversation.id)
+    assert [row["preceding_bot_event_id"] for row in history] == [None, "reply:one", "reply:one"]
 
 
 async def test_stale_job_cannot_overwrite_newer_summary(repository):
@@ -160,6 +266,7 @@ class Model:
             }
         }
         self.calls = []
+        self.result.setdefault("sentiment", "neutral")
 
     async def ainvoke(self, messages, **kwargs):
         self.calls.append(messages)
@@ -396,6 +503,7 @@ async def test_processor_conditional_tracing(monkeypatch, enabled):
         assert traced_messages[0] == {"role": "system", "content": PROCESSOR_PROMPT}
         assert traced_messages[1]["role"] == "user"
         assert json.loads(traced_messages[1]["content"]) == {
+            "preceding_bot_response_for_sentiment_only": None,
             "business_summary": tenant.business_summary,
             "open_issue": issue,
             "messages": [history[0]],

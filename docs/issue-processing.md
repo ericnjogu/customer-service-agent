@@ -12,6 +12,25 @@ replace them before rollout. No environment aliases or old Helm keys are support
 
 ## Behavior
 
+### Per-turn sentiment
+
+The same background call returns a required top-level `sentiment` (`positive`, `neutral`,
+or `negative`) independently of `issue`. It assesses each in-scope customer message,
+including greetings without an identifiable issue. Out-of-scope turns are not assessed.
+`conversation_turn_sentiments` stores one assessment per tenant/conversation/customer
+event, plus the preceding bot event and assessment timestamp. It is saved atomically with
+issue changes and the processed marker; retries and embedding retries do not duplicate it.
+The preceding response is selected strictly before the customer event in persisted order,
+never the current turn's newly generated response. It is sentiment context only, not
+issue-summary evidence. Failed sends are not evidence of a delivered response; unknown
+delivery remains uncertain. Association is temporal, not proof of causation.
+Join the stored event references to `messages` to display customer text, preceding response,
+and delivery status chronologically. A null preceding reference is a baseline assessment;
+responses without later assessed customer messages are unassessed, not neutral.
+There is no historical backfill, issue-level sentiment, or separate sentiment model call.
+
+### Issue summaries
+
 One open issue per tenant/conversation; messages have a nullable, tenant-safe issue FK.
 A background processor creates nothing for greetings or insufficient context. Once a
 customer need is identifiable, it creates/updates one summary, main type and subtopic

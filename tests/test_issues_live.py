@@ -166,6 +166,39 @@ async def test_live_processor_condenses_long_customer_message(generator):
     assert "dispatch" not in result.issue.summary.lower()
 
 
+@pytest.mark.parametrize(
+    "customer_message,preceding,expected",
+    [
+        ("Hello", None, "neutral"),
+        (
+            "I already gave it to you! This is frustrating.",
+            "Please provide your order number.",
+            "negative",
+        ),
+        ("Thanks, that is really helpful!", "Your request was recorded.", "positive"),
+        ("My order number is HP-1042.", "Please provide your order number.", "neutral"),
+    ],
+)
+async def test_live_customer_reaction_sentiment(generator, customer_message, preceding, expected):
+    context = (
+        None
+        if preceding is None
+        else {
+            "event_id": "previous-bot",
+            "body": preceding,
+            "delivery": "accepted",
+        }
+    )
+    result = await process_issue(
+        generator,
+        TENANT,
+        None,
+        current_turn(customer_message, "The customer is very angry."),
+        preceding_bot=context,
+    )
+    assert result.sentiment == expected
+
+
 async def test_live_processor_ignores_bot_speculation(generator):
     existing = {
         "summary": "Customer reports missing chapati.",

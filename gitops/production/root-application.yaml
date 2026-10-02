@@ -1,0 +1,18 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: production-root
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/ericnjogu/customer-service-agent.git
+    targetRevision: deploy/production
+    path: gitops/production
+    directory:
+      recurse: true
+      exclude: '{secrets/production-secrets.example.yaml}'
+  destination: { server: https://kubernetes.default.svc, namespace: argocd }
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [SkipDryRunOnMissingResource=true]

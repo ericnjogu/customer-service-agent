@@ -1,0 +1,13 @@
+environment: production
+clusterName: ristoh-production
+collectionInterval: 60s
+
+exporters:
+  otlp:
+    enabled: true
+    metricsEndpoint: http://vmsingle-victoria-metrics-victoria-metrics-k8s-stack.monitoring.svc:8428/opentelemetry
+    logsEndpoint: http://loki-gateway.monitoring.svc/otlp
+
+resources:
+  requests: { cpu: 75m, memory: 128Mi }
+  limits: { cpu: 500m, memory: 384Mi }

@@ -11,6 +11,30 @@ import pytest
 from app.adapters.secret_transport import secret_transport
 
 
+def _config_mounts(directory):
+    # Only disposable synthetic test files are made readable. Keep pytest's
+    # private host directory unchanged and mount each file independently so
+    # container UID 100 need not traverse the runner-owned 0700 directory.
+    mounts = []
+    for name in ("server.hcl", "seal-key"):
+        path = directory / name
+        path.chmod(0o444)
+        mounts.extend(["-v", f"{path}:/test-config/{name}:ro"])
+    return mounts
+
+
+def test_config_mounts_preserve_private_parent(tmp_path):
+    tmp_path.chmod(0o700)
+    for name in ("server.hcl", "seal-key"):
+        (tmp_path / name).write_text("synthetic")
+    mounts = _config_mounts(tmp_path)
+    assert tmp_path.stat().st_mode & 0o777 == 0o700
+    for name in ("server.hcl", "seal-key"):
+        assert (tmp_path / name).stat().st_mode & 0o777 == 0o444
+        assert f"{tmp_path / name}:/test-config/{name}:ro" in mounts
+    assert f"{tmp_path}:/test-config:ro" not in mounts
+
+
 async def test_static_auto_unseal_restart_and_snapshot_restore(tmp_path):
     if os.getenv("AGENT_OPENBAO_RAFT_TESTS") != "true":
         pytest.skip("Set AGENT_OPENBAO_RAFT_TESTS=true to start a disposable Raft container")
@@ -42,8 +66,7 @@ async def test_static_auto_unseal_restart_and_snapshot_restore(tmp_path):
             name,
             "-p",
             "127.0.0.1::8200",
-            "-v",
-            f"{tmp_path}:/test-config:ro",
+            *_config_mounts(tmp_path),
             "openbao/openbao:2.7.1",
             "server",
             "-config=/test-config/server.hcl",
@@ -51,20 +74,48 @@ async def test_static_auto_unseal_restart_and_snapshot_restore(tmp_path):
         port = (await asyncio.to_thread(run, "port", name, "8200/tcp")).split(":")[-1]
         async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}", timeout=5) as client:
 
-            async def ready(*, initialized):
-                for _ in range(60):
+            async def ready(*, initialized, phase):
+                last_probe = "No health response"
+                state = "unknown"
+                for attempt in range(60):
                     try:
                         result = (await client.get("/v1/sys/health")).json()
                         if result["initialized"] == initialized and (
                             not initialized or not result["sealed"]
                         ):
                             return
-                    except (httpx.HTTPError, ValueError, KeyError):
-                        pass
+                        last_probe = (
+                            f"initialized={result.get('initialized')}, "
+                            f"sealed={result.get('sealed')}"
+                        )
+                    except (httpx.HTTPError, ValueError, KeyError) as error:
+                        last_probe = type(error).__name__
+                    if attempt % 5 == 0:
+                        state = await asyncio.to_thread(
+                            run,
+                            "inspect",
+                            "--format",
+                            "{{.State.Status}} exit={{.State.ExitCode}}",
+                            name,
+                        )
+                        if state.startswith(("exited", "dead")):
+                            break
                     await asyncio.sleep(0.5)
-                pytest.fail("Disposable OpenBao did not become ready")
+                diagnostics = f"phase={phase}; container={state}; health={last_probe}"
+                if not initialized:
+                    # Before initialization there are no generated root tokens
+                    # or recovery shares. Never dump post-initialization logs.
+                    logs = await asyncio.to_thread(
+                        subprocess.run,
+                        [runtime, "logs", "--tail", "30", name],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    diagnostics += "\nStartup logs:\n" + logs.stdout + logs.stderr
+                pytest.fail("Disposable OpenBao did not become ready: " + diagnostics)
 
-            await ready(initialized=False)
+            await ready(initialized=False, phase="startup")
             with secret_transport():
                 response = await client.put(
                     "/v1/sys/init",
@@ -73,7 +124,7 @@ async def test_static_auto_unseal_restart_and_snapshot_restore(tmp_path):
                 )
                 response.raise_for_status()
                 client.headers["X-Vault-Token"] = response.json()["root_token"]
-                await ready(initialized=True)
+                await ready(initialized=True, phase="initialization")
                 (
                     await client.post(
                         "/v1/sys/mounts/test",
@@ -90,7 +141,7 @@ async def test_static_auto_unseal_restart_and_snapshot_restore(tmp_path):
                 assert len(snapshot.content) > 0
                 (await client.post(path, json={"data": {"value": "after"}})).raise_for_status()
                 await asyncio.to_thread(run, "restart", name)
-                await ready(initialized=True)
+                await ready(initialized=True, phase="restart")
                 assert (await client.get(path)).json()["data"]["data"]["value"] == "after"
                 (
                     await client.post(
@@ -99,7 +150,7 @@ async def test_static_auto_unseal_restart_and_snapshot_restore(tmp_path):
                         headers={"Content-Type": "application/octet-stream"},
                     )
                 ).raise_for_status()
-                await ready(initialized=True)
+                await ready(initialized=True, phase="restore")
                 assert (await client.get(path)).json()["data"]["data"]["value"] == "before"
     finally:
         await asyncio.to_thread(run, "rm", "-f", "-v", name)

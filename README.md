@@ -1036,3 +1036,20 @@ handoff state. The graph can move a conversation to `HUMAN_REQUESTED` when the c
 explicitly asks for a human agent, but creating/reusing Telegram or WhatsApp support
 groups, tracking internal agent discussion, deciding which agent messages to forward, and
 forwarding those messages to the customer still belong to later increments.
+
+## WhatsApp Embedded Signup and tenant credentials
+
+The staged WhatsApp onboarding implementation uses server-verified Meta signup
+and OpenBao KV v2 credentials. Signup is enabled by default through
+`AGENT_ONBOARDING_WHATSAPP_ENABLED=true` / Helm `onboarding.whatsappEnabled=true`.
+It requires configured OpenBao and Meta credentials; without the vault URL the
+application fails startup. Explicitly disable signup in environments awaiting
+bootstrap or recovery acceptance. Enabling this default does not deploy OpenBao.
+Telegram setup is separately
+controlled by `AGENT_ONBOARDING_TELEGRAM_ENABLED` (default false); existing Telegram
+messaging is unaffected.
+
+See [the OpenBao bootstrap and recovery runbook](infra/openbao/README.md) for
+configuration, SOPS seal-key handling, backups, rollout gates and test commands.
+Browser QA covers both flows via `AGENT_E2E_CHANNEL=whatsapp` or `telegram` when
+running `bash scripts/run-browser-qa.sh`.

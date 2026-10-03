@@ -1,7 +1,12 @@
 import json
 import logging
+import ssl
 from dataclasses import dataclass
+from pathlib import Path
 
+import httpx
+
+from app.adapters.credential_store import OpenBaoCredentialStore
 from app.adapters.embeddings import LocalHashEmbeddingProvider, OpenAIEmbeddingProvider
 from app.adapters.llm import (
     MissingOpenAIWebsiteAnalyzer,
@@ -22,6 +27,7 @@ from app.adapters.memory import (
     MemoryTenantRepository,
     RuleBasedQuestionPlanner,
 )
+from app.adapters.meta_signup import MetaSignupClient
 from app.adapters.postgres import (
     PgVectorRetrievalStore,
     PostgresConversationRepository,
@@ -48,6 +54,7 @@ from app.adapters.tenant_cache import (
 )
 from app.adapters.whatsapp import (
     KubernetesSecretWhatsAppCredentialResolver,
+    OpenBaoWhatsAppCredentialResolver,
     TenantAwareWhatsAppSender,
     WhatsAppCredentialResolver,
     WhatsAppSender,
@@ -61,6 +68,8 @@ from app.provider_projects import (
     MetadataOnlyProviderProjectProvisioner,
     OpenAILangSmithProviderProjectProvisioner,
 )
+from app.whatsapp_connections import PostgresWhatsAppConnections
+from app.whatsapp_signup import WhatsAppSignupService
 
 logger = logging.getLogger(__name__)
 
@@ -176,8 +185,13 @@ class Container:
     whatsapp_sender: WhatsAppSender | None = None
     database: PostgresDatabase | None = None
     issues: object | None = None
+    whatsapp_connections: object | None = None
+    whatsapp_signup: object | None = None
+    credential_http_clients: tuple = ()
 
     async def close(self) -> None:
+        for client in self.credential_http_clients:
+            await client.aclose()
         if self.issues:
             await self.issues.close()
         close_tenant_configs = getattr(self.tenant_configs, "close", None)
@@ -302,6 +316,55 @@ async def create_container(settings: Settings) -> Container:
     await tenants.initialize()
     await tenant_configs.initialize()
     await onboarding.initialize()
+    whatsapp_connections = None
+    whatsapp_signup = None
+    credential_http_clients = ()
+    vault_credentials = None
+    if database:
+        whatsapp_connections = PostgresWhatsAppConnections(database.pool)
+        await whatsapp_connections.initialize()
+    if settings.onboarding_whatsapp_enabled and not settings.openbao_url:
+        raise ValueError("WhatsApp signup requires AGENT_OPENBAO_URL and completed vault bootstrap")
+    if settings.openbao_url:
+        if not whatsapp_connections or (
+            not settings.openbao_url.startswith("https://")
+            and settings.deployment_environment != "test"
+        ):
+            raise ValueError("OpenBao requires PostgreSQL and an HTTPS AGENT_OPENBAO_URL")
+        required = (
+            settings.meta_app_id,
+            settings.meta_app_secret,
+            settings.meta_signup_configuration_id,
+            settings.meta_webhook_verification_token,
+        )
+        if not all(required):
+            raise ValueError("OpenBao WhatsApp requires Meta app, signup and webhook configuration")
+        vault_http = httpx.AsyncClient(
+            base_url=settings.openbao_url,
+            timeout=10,
+            verify=ssl.create_default_context(cafile=settings.openbao_ca_file),
+        )
+        if (settings.deployment_environment != "test"
+                and settings.meta_graph_api_base_url != "https://graph.facebook.com"):
+            raise ValueError("Meta Graph endpoint overrides are allowed only in tests")
+        meta_http = httpx.AsyncClient(base_url=settings.meta_graph_api_base_url, timeout=20)
+        credential_http_clients = (vault_http, meta_http)
+        vault_credentials = OpenBaoCredentialStore(
+            vault_http,
+            role=settings.openbao_role,
+            jwt_path=Path(settings.openbao_jwt_path),
+            mount=settings.openbao_mount,
+        )
+        whatsapp_signup = WhatsAppSignupService(
+            whatsapp_connections,
+            vault_credentials,
+            MetaSignupClient(
+                meta_http,
+                app_id=settings.meta_app_id,
+                app_secret=settings.meta_app_secret,
+                version=settings.meta_graph_api_version,
+            ),
+        )
     await retrieval.initialize()
 
     logger.info(f"answer provider '{settings.answer_provider}'")
@@ -476,7 +539,15 @@ async def create_container(settings: Settings) -> Container:
         graph_api_version_key=settings.whatsapp_graph_api_version_secret_key,
         default_graph_api_version=settings.whatsapp_graph_api_version,
     )
+    if vault_credentials:
+        whatsapp_credentials = OpenBaoWhatsAppCredentialResolver(
+            whatsapp_connections,
+            vault_credentials,
+            settings.meta_graph_api_version,
+        )
     whatsapp_sender = TenantAwareWhatsAppSender(whatsapp_credentials)
+    onboarding_jobs.whatsapp_connections = whatsapp_connections
+    onboarding_sessions.whatsapp_connections = whatsapp_connections
     return Container(
         conversations=conversations,
         tenants=tenants,
@@ -497,4 +568,7 @@ async def create_container(settings: Settings) -> Container:
         whatsapp_sender=whatsapp_sender,
         database=database,
         issues=issues,
+        whatsapp_connections=whatsapp_connections,
+        whatsapp_signup=whatsapp_signup,
+        credential_http_clients=credential_http_clients,
     )

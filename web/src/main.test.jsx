@@ -3,6 +3,14 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+function stubOnboardingFetch(fetchMock) {
+  vi.stubGlobal("fetch", (url, options) => url === "/api/onboarding/config"
+    ? Promise.resolve({ ok: true, json: async () => ({
+        telegram_enabled: true, whatsapp_enabled: false,
+      }) })
+    : fetchMock(url, options));
+}
+
 vi.mock("@mdxeditor/editor", () => {
   const ToolbarButton = ({ label }) => <button type="button">{label}</button>;
   return {
@@ -298,7 +306,7 @@ describe("website URL validation", () => {
         updated_at: "2026-08-20T00:00:00Z",
       }),
     });
-    vi.stubGlobal("fetch", fetchMock);
+    stubOnboardingFetch(fetchMock);
 
     render(<App />);
     await user.type(
@@ -408,7 +416,7 @@ describe("email verification flow", () => {
           updated_at: "2026-08-20T00:00:00Z",
         }),
       });
-    vi.stubGlobal("fetch", fetchMock);
+    stubOnboardingFetch(fetchMock);
 
     render(<App />);
 
@@ -467,7 +475,7 @@ describe("email verification flow", () => {
         json: async () => verifiedSession,
       })
       .mockImplementationOnce(() => analysisResponse);
-    vi.stubGlobal("fetch", fetchMock);
+    stubOnboardingFetch(fetchMock);
 
     render(<App />);
 
@@ -592,7 +600,7 @@ describe("email verification flow", () => {
         updated_at: "2026-08-20T00:00:00Z",
       }),
     });
-    vi.stubGlobal("fetch", fetchMock);
+    stubOnboardingFetch(fetchMock);
 
     render(<App />);
 
@@ -641,7 +649,7 @@ describe("email verification flow", () => {
       ok: true,
       json: async () => analyzedSession,
     });
-    vi.stubGlobal("fetch", fetchMock);
+    stubOnboardingFetch(fetchMock);
 
     render(<App />);
 
@@ -706,7 +714,7 @@ describe("email verification flow", () => {
         ok: true,
         json: async () => refreshedSession,
       });
-    vi.stubGlobal("fetch", fetchMock);
+    stubOnboardingFetch(fetchMock);
 
     render(<App />);
 
@@ -811,7 +819,7 @@ describe("contact information form", () => {
     await user.type(labelInputs[1], "WhatsApp");
     await user.type(contactInputs[1], "+254 700 000000");
 
-    await user.click(screen.getByRole("button", { name: /submit for review/i }));
+    await user.click(screen.getByRole("button", { name: /continue to connection/i }));
 
     expect(onNext).toHaveBeenCalledWith([
       {

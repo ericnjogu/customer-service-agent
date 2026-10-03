@@ -1,0 +1,9 @@
+apiVersion: v2
+name: openbao-platform
+description: Private tenant credential vault and recovery controls
+type: application
+version: 0.1.0
+dependencies:
+  - name: openbao
+    version: 0.30.2
+    repository: https://openbao.github.io/openbao-helm

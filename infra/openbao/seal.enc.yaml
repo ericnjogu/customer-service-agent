@@ -1,0 +1,26 @@
+apiVersion: isindir.github.com/v1alpha3
+kind: SopsSecret
+metadata:
+    name: openbao-seal
+    namespace: openbao
+spec:
+    suspend: false
+    secretTemplates:
+        - name: ENC[AES256_GCM,data:CWvk0FZSnXfIu9NC,iv:1uewCKHhMY/qeOSM04qolwpa8YEEl/NrfkLAcTkuxyU=,tag:o8/FZVCOs3g58BPmKDW3tg==,type:str]
+          data:
+            key: ENC[AES256_GCM,data:lGju2WmXejwrBjBL41dFrgm9UUR3AMl2b1LQnlCrBNlwvneDh3Pr23f/a2Y=,iv:bYWVGH0/nuNfvIMseXrN2CEErMCNt0GKdtMb8qzbb9U=,tag:p1lvmupybpO8p5SLMp1JCA==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBTSWE5QUVZU3NzeDNNbE9R
+            N2loam9xMHlLaWFaR2VNTTFZU1ovT2pNdnljCmlxUTIzV3V6WDQ5SFJqU0hRUTFl
+            WWNxZEJxdC9zcnowNGNodUVSZUJwWUkKLS0tIHk1Zmc3dW13RHRab2Vadm0vTEVM
+            Y0k2Z1E4b3BqNHVYSnFHQnlQNVhWVlkK2TvME7Ys0YmD9RIk//vEjiF4L3q31DJ9
+            tE0Wn+dJ/SwomBxceAIMyG4TvMZEv9rpWJ9WG18Mxj7FgABI1fcZlA==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age14vn3sglty83cq3rtkzw0udlh3dak768daneupwxdqafgnewrhcsq9zawc6
+    encrypted_suffix: Templates
+    lastmodified: "2026-10-03T12:26:50Z"
+    mac: ENC[AES256_GCM,data:Tp1pH1BWXkkGiSzjYxQbhARZv1PglAxWkptW/Vj/i1FAIlp+GbPPZxMeHizlbxswbjSGXNBBpHzT1lsc7UN5d+4AP2mf/d5w5gn0iyBn/1H6/XDjcn9Z9sbNBa0eVn2wPwFQLu1WNK/os2pvHjtWLNHTj7NqPJPaQjsN73c53Q8=,iv:zOXzwgN1qjxptfGMRJXD0XYYPKpry/seEeWFxhJUumo=,tag:ZqfRvDxr2s49ZTV49WJCGw==,type:str]
+    version: 3.13.3

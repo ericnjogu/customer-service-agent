@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openbao-audit-alerts
+  namespace: monitoring
+data:
+  openbao.yaml: |
+    groups:
+      - name: openbao-authentication
+        interval: 1m
+        rules:
+          - alert: OpenBaoAuthenticationFailures
+            expr: sum(count_over_time({k8s_namespace_name="openbao",k8s_container_name="openbao"} | json | type="response" | request_path="auth/kubernetes/login" | error!="" | __error__="" [5m])) >= 5
+            for: 2m
+            labels:
+              severity: warning
+              namespace: openbao
+            annotations:
+              summary: Repeated OpenBao Kubernetes authentication failures
+              description: Check service-account bindings and projected token audiences. Never include credential values in incident reports.

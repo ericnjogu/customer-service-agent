@@ -30,3 +30,5 @@ ansible/vault-password*
 private/
 *.agekey
 gitops/production/secrets/production-secrets.yaml
+helm/openbao-platform/charts/
+infra/openbao/secrets.yaml

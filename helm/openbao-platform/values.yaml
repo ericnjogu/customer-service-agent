@@ -1,0 +1,107 @@
+applicationNamespace: customer-service-production
+monitoringNamespace: monitoring
+monitoring:
+  enabled: true # Requires the existing VictoriaMetrics operator and kube-state-metrics.
+backups:
+  enabled: true # Shared fil.one credentials and the restricted snapshot role are bootstrapped.
+  endpoint: eu-west-1.s3.filonecontent.com
+  bucket: ristoh-css-postgres
+  prefix: production/openbao
+  credentialsSecret: openbao-backup-s3
+  image: ghcr.io/openbao/openbao-snapshot-agent:0.4.5
+  tiers:
+    - { name: frequent, schedule: "*/15 * * * *", days: 1 }
+    - { name: daily, schedule: "7 1 * * *", days: 7 }
+    - { name: weekly, schedule: "12 1 * * 0", days: 28 }
+    - { name: monthly, schedule: "17 1 1 * *", days: 186 }
+openbao:
+  global:
+    tlsDisable: false
+  injector: { enabled: false }
+  csi: { enabled: false }
+  ui: { enabled: false }
+  server:
+    image:
+      registry: docker.io
+      repository: openbao/openbao
+      tag: "2.7.1"
+    logLevel: info
+    logFormat: json
+    podManagementPolicy: Parallel
+    updateStrategyType: OnDelete
+    configAnnotation: true
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: "1", memory: 768Mi }
+    dataStorage:
+      size: 5Gi
+      storageClass: local-path
+    persistentVolumeClaimRetentionPolicy:
+      whenDeleted: Retain
+      whenScaled: Retain
+    extraEnvironmentVars:
+      BAO_CACERT: /openbao/tls/ca.crt
+    volumes:
+      - name: tls
+        secret: { secretName: openbao-tls, defaultMode: 0440 }
+      - name: seal
+        secret: { secretName: openbao-seal, defaultMode: 0440 }
+    volumeMounts:
+      - { name: tls, mountPath: /openbao/tls, readOnly: true }
+      - { name: seal, mountPath: /openbao/seal, readOnly: true }
+    affinity: |
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels: { app.kubernetes.io/name: openbao, component: server }
+            topologyKey: kubernetes.io/hostname
+    standalone: { enabled: false }
+    ha:
+      enabled: true
+      replicas: 3
+      apiAddr: https://openbao-active.openbao.svc:8200
+      disruptionBudget: { enabled: true, maxUnavailable: 1 }
+      raft:
+        enabled: true
+        setNodeId: true
+        config: |
+          ui = false
+          disable_mlock = true
+          listener "tcp" {
+            address = "[::]:8200"
+            cluster_address = "[::]:8201"
+            tls_cert_file = "/openbao/tls/tls.crt"
+            tls_key_file = "/openbao/tls/tls.key"
+            tls_min_version = "tls12"
+            telemetry { unauthenticated_metrics_access = true }
+          }
+          storage "raft" {
+            path = "/openbao/data"
+            retry_join {
+              leader_api_addr = "https://openbao-0.openbao-internal.openbao.svc:8200"
+              leader_ca_cert_file = "/openbao/tls/ca.crt"
+            }
+            retry_join {
+              leader_api_addr = "https://openbao-1.openbao-internal.openbao.svc:8200"
+              leader_ca_cert_file = "/openbao/tls/ca.crt"
+            }
+            retry_join {
+              leader_api_addr = "https://openbao-2.openbao-internal.openbao.svc:8200"
+              leader_ca_cert_file = "/openbao/tls/ca.crt"
+            }
+          }
+          seal "static" {
+            current_key_id = "production-1"
+            current_key = "file:///openbao/seal/key"
+          }
+          service_registration "kubernetes" {}
+          audit "file" "to-stdout" {
+            description = "Redacted audit events for the private vault"
+            options {
+              file_path = "stdout"
+            }
+          }
+          telemetry {
+            prometheus_retention_time = "60s"
+            disable_hostname = true
+          }

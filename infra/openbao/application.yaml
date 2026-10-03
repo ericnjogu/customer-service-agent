@@ -1,0 +1,16 @@
+# Deliberately outside gitops/production: operator applies after prerequisites.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: openbao
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/ericnjogu/customer-service-agent.git
+    targetRevision: deploy/production
+    path: helm/openbao-platform
+    helm: { releaseName: openbao }
+  destination: { server: https://kubernetes.default.svc, namespace: openbao }
+  syncPolicy:
+    syncOptions: [CreateNamespace=true]

@@ -1,11 +1,12 @@
 import base64
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
 import httpx
 
+from app.adapters.secret_transport import secret_transport
 from app.models import IncomingMessage, ServiceReply
 from app.ports import TenantConfigRepository
 
@@ -23,14 +24,32 @@ class WhatsAppSender(Protocol):
 
 @dataclass(frozen=True)
 class WhatsAppCredentials:
-    access_token: str | None = None
+    access_token: str | None = field(default=None, repr=False)
     phone_number_id: str | None = None
-    verify_token: str | None = None
+    verify_token: str | None = field(default=None, repr=False)
     graph_api_version: str = "v20.0"
 
 
 class WhatsAppCredentialResolver(Protocol):
     async def resolve(self, tenant_id: str) -> WhatsAppCredentials: ...
+
+
+class OpenBaoWhatsAppCredentialResolver:
+    def __init__(self, connections, store, graph_api_version: str):
+        self.connections = connections
+        self.store = store
+        self.graph_api_version = graph_api_version
+
+    async def resolve(self, tenant_id: str) -> WhatsAppCredentials:
+        connection = await self.connections.for_tenant(tenant_id)
+        if connection is None:
+            raise RuntimeError("No active WhatsApp connection for tenant")
+        value = await self.store.read(connection.connection_id)
+        return WhatsAppCredentials(
+            access_token=value.access_token.get_secret_value(),
+            phone_number_id=connection.phone_number_id,
+            graph_api_version=self.graph_api_version,
+        )
 
 
 class WhatsAppCloudClient:
@@ -45,6 +64,10 @@ class WhatsAppCloudClient:
         self.graph_api_version = graph_api_version
 
     async def send_message(self, to: str, text: str) -> None:
+        with secret_transport():
+            await self._send_message(to, text)
+
+    async def _send_message(self, to: str, text: str) -> None:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
                 (
@@ -166,7 +189,6 @@ class KubernetesSecretWhatsAppCredentialResolver:
 class TenantAwareWhatsAppSender:
     def __init__(self, credentials: WhatsAppCredentialResolver) -> None:
         self.credentials = credentials
-        self.clients: dict[tuple[str, str, str], WhatsAppCloudClient] = {}
 
     async def send_message(
         self,
@@ -179,19 +201,11 @@ class TenantAwareWhatsAppSender:
             logger.info("Skipping WhatsApp reply because no credentials are configured")
             return
 
-        cache_key = (
+        client = WhatsAppCloudClient(
             credentials.access_token,
             credentials.phone_number_id,
             credentials.graph_api_version,
         )
-        client = self.clients.get(cache_key)
-        if client is None:
-            client = WhatsAppCloudClient(
-                credentials.access_token,
-                credentials.phone_number_id,
-                credentials.graph_api_version,
-            )
-            self.clients[cache_key] = client
         await client.send_message(to, text)
 
 
@@ -202,7 +216,10 @@ def whatsapp_update_to_incoming_messages(update: dict) -> list[IncomingMessage]:
         if not isinstance(entry, dict):
             continue
 
-        for change in entry.get("changes", []):
+        changes = entry.get("changes")
+        if not isinstance(changes, list):
+            continue
+        for change in changes:
             if not isinstance(change, dict):
                 continue
 
@@ -211,7 +228,10 @@ def whatsapp_update_to_incoming_messages(update: dict) -> list[IncomingMessage]:
                 continue
 
             contact_names = whatsapp_contact_names_by_id(value)
-            for message in value.get("messages", []):
+            raw_messages = value.get("messages")
+            if not isinstance(raw_messages, list):
+                continue
+            for message in raw_messages:
                 incoming = whatsapp_message_to_incoming_message(
                     message,
                     contact_names=contact_names,
@@ -256,7 +276,10 @@ def whatsapp_message_to_incoming_message(
 
 def whatsapp_contact_names_by_id(value: dict) -> dict[str, str]:
     names: dict[str, str] = {}
-    for contact in value.get("contacts", []):
+    contacts = value.get("contacts")
+    if not isinstance(contacts, list):
+        return names
+    for contact in contacts:
         if not isinstance(contact, dict):
             continue
 

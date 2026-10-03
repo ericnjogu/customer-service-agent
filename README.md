@@ -359,6 +359,11 @@ Or run the helper script:
 scripts/deploy-local.sh
 ```
 
+WhatsApp signup now bootstraps a separate local OpenBao by default. Prepare the
+local Meta Secret first; see [Local WhatsApp setup](docs/local-whatsapp.md).
+Use `AGENT_ONBOARDING_WHATSAPP_ENABLED=false` to skip that feature and bootstrap.
+The script targets Rancher Desktop explicitly and never uses production vault keys.
+
 The script defaults to `cs-local`, `customer-service`, `customer-service:local`, and
 `DEBUG` logging. If `OPENAI_API_KEY` is present, it also creates/updates an OpenAI secret
 and deploys with `answer.provider=openai`. Override values with environment variables:

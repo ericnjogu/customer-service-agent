@@ -50,6 +50,8 @@ jobs:
           done
           exit 1
       - run: uv run ruff check app tests
+      - run: uv run ruff check scripts/bootstrap-local-openbao.py
+      - run: bash -n scripts/deploy-local.sh
       - name: Run unit and application tests
         run: uv run pytest -q
 
@@ -78,8 +80,12 @@ jobs:
       - name: Validate Helm releases
         run: |
           helm lint helm/production-platform
+          helm repo add customer-service-openbao https://openbao.github.io/openbao-helm
           helm dependency build helm/openbao-platform
           helm lint helm/openbao-platform
+          helm lint helm/openbao-platform -f helm/openbao-platform/values-local.yaml
+          helm template openbao-local helm/openbao-platform -n openbao-local \
+            -f helm/openbao-platform/values-local.yaml > /tmp/openbao-local.yaml
           helm template openbao helm/openbao-platform -n openbao \
             --set backups.enabled=true --set backups.endpoint=s3.example.invalid > /tmp/openbao.yaml
           helm lint helm/customer-service --values helm/customer-service/values-production.yaml \

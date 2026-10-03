@@ -29,6 +29,12 @@ WEB_PUBLIC_BASE_URL="${WEB_PUBLIC_BASE_URL:-}"
 AGENT_ONBOARDING_REQUIRE_ADMIN_EMAIL_DOMAIN_MATCH="${AGENT_ONBOARDING_REQUIRE_ADMIN_EMAIL_DOMAIN_MATCH:-true}"
 LOG_LEVEL="${LOG_LEVEL:-DEBUG}"
 KUBE_CONTEXT="${KUBE_CONTEXT:-rancher-desktop}"
+AGENT_ONBOARDING_WHATSAPP_ENABLED="${AGENT_ONBOARDING_WHATSAPP_ENABLED:-true}"
+AGENT_ONBOARDING_TELEGRAM_ENABLED="${AGENT_ONBOARDING_TELEGRAM_ENABLED:-false}"
+LOCAL_META_CONFIG_SECRET="${LOCAL_META_CONFIG_SECRET:-app-configs}"
+LOCAL_OPENBAO_ROLE="${NAMESPACE}-${RELEASE_NAME}"
+# Match the chart's fullname truncation, independent of deployment-name overrides.
+LOCAL_APP_SERVICE_ACCOUNT="$(printf '%.63s' "${RELEASE_NAME}-customer-service")-app"
 APP_DEPLOYMENT="${APP_DEPLOYMENT:-${RELEASE_NAME}-customer-service-app}"
 WEB_DEPLOYMENT="${WEB_DEPLOYMENT:-${RELEASE_NAME}-customer-service-web}"
 AGENT_EMAIL_PROVIDER="${AGENT_EMAIL_PROVIDER:-resend}"
@@ -76,8 +82,28 @@ if [[ "${AGENT_PROVIDER_PROJECT_PROVISIONER}" == "api" && -z "${AGENT_OPENAI_ADM
   exit 1
 fi
 
-echo "Using Kubernetes context: ${KUBE_CONTEXT}"
-kubectl config use-context "${KUBE_CONTEXT}"
+for enabled in "${AGENT_ONBOARDING_WHATSAPP_ENABLED}" "${AGENT_ONBOARDING_TELEGRAM_ENABLED}"; do
+  if [[ "$enabled" != "true" && "$enabled" != "false" ]]; then
+    echo "Onboarding feature flags must be true or false." >&2
+    exit 1
+  fi
+done
+if [[ "${AGENT_ONBOARDING_WHATSAPP_ENABLED}" == "true" && "${KUBE_CONTEXT}" != "rancher-desktop" ]]; then
+  echo "Local OpenBao bootstrap only permits the rancher-desktop context." >&2
+  exit 1
+fi
+# Pin every operation rather than changing the user's global current context.
+kubectl() { command kubectl --context "${KUBE_CONTEXT}" "$@"; }
+helm() { command helm --kube-context "${KUBE_CONTEXT}" "$@"; }
+echo "Using Kubernetes context: ${KUBE_CONTEXT} (global current context unchanged)"
+
+if [[ "${AGENT_ONBOARDING_WHATSAPP_ENABLED}" == "true" ]]; then
+  echo "Bootstrapping isolated local OpenBao (requires local ${LOCAL_META_CONFIG_SECRET})."
+  uv run --project "${REPO_ROOT}" python "${SCRIPT_DIR}/bootstrap-local-openbao.py" \
+    --context "${KUBE_CONTEXT}" --namespace "${NAMESPACE}" \
+    --service-account "${LOCAL_APP_SERVICE_ACCOUNT}" --role "${LOCAL_OPENBAO_ROLE}" \
+    --meta-secret "${LOCAL_META_CONFIG_SECRET}"
+fi
 
 echo "Building image: ${IMAGE_REPOSITORY}:${IMAGE_TAG}"
 nerdctl --namespace k8s.io build \
@@ -117,6 +143,13 @@ helm_args=(
   --set "web.publicBaseUrl=${WEB_PUBLIC_BASE_URL}"
   --set "email.provider=${AGENT_EMAIL_PROVIDER}"
   --set "onboarding.requireAdminEmailDomainMatch=${AGENT_ONBOARDING_REQUIRE_ADMIN_EMAIL_DOMAIN_MATCH}"
+  --set "onboarding.whatsappEnabled=${AGENT_ONBOARDING_WHATSAPP_ENABLED}"
+  --set "onboarding.telegramEnabled=${AGENT_ONBOARDING_TELEGRAM_ENABLED}"
+  --set "openbao.enabled=${AGENT_ONBOARDING_WHATSAPP_ENABLED}"
+  --set-string "openbao.url=https://openbao-local-active.openbao-local.svc:8200"
+  --set-string "openbao.caConfigMap=openbao-local-ca"
+  --set-string "openbao.role=${LOCAL_OPENBAO_ROLE}"
+  --set-string "openbao.metaConfigSecret=${LOCAL_META_CONFIG_SECRET}"
   --set "platform.webSearchProvider=${AGENT_PLATFORM_WEB_SEARCH_PROVIDER}"
   --set "platform.webSearchProjectId=${AGENT_PLATFORM_WEB_SEARCH_PROJECT_ID}"
   --set "platform.webSearchMaxResults=${AGENT_PLATFORM_WEB_SEARCH_MAX_RESULTS}"

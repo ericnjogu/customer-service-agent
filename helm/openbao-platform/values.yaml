@@ -1,5 +1,7 @@
 applicationNamespace: customer-service-production
 monitoringNamespace: monitoring
+security:
+  enabled: true # Local bootstrap supplies its own TLS and seal Secrets instead.
 monitoring:
   enabled: true # Requires the existing VictoriaMetrics operator and kube-state-metrics.
 backups:

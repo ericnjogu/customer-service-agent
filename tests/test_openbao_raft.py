@@ -35,6 +35,33 @@ def test_config_mounts_preserve_private_parent(tmp_path):
     assert f"{tmp_path}:/test-config:ro" not in mounts
 
 
+async def _refresh_published_endpoint(client, run, name):
+    # Docker may allocate a new ephemeral host port when restarting a container.
+    mapping = await asyncio.to_thread(run, "port", name, "8200/tcp")
+    port = int(mapping.splitlines()[0].rsplit(":", 1)[1])
+    client.base_url = f"http://127.0.0.1:{port}"
+
+
+async def test_refresh_published_endpoint_after_restart():
+    mappings = iter(["127.0.0.1:41001", "127.0.0.1:41002"])
+    requests = []
+
+    def run(*args):
+        assert args == ("port", "disposable-test", "8200/tcp")
+        return next(mappings)
+
+    def handle(request):
+        requests.append(request.url.port)
+        return httpx.Response(200, json={"initialized": True, "sealed": False})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        await _refresh_published_endpoint(client, run, "disposable-test")
+        await client.get("/v1/sys/health")
+        await _refresh_published_endpoint(client, run, "disposable-test")
+        await client.get("/v1/sys/health")
+    assert requests == [41001, 41002]
+
+
 async def test_static_auto_unseal_restart_and_snapshot_restore(tmp_path):
     if os.getenv("AGENT_OPENBAO_RAFT_TESTS") != "true":
         pytest.skip("Set AGENT_OPENBAO_RAFT_TESTS=true to start a disposable Raft container")
@@ -71,8 +98,8 @@ async def test_static_auto_unseal_restart_and_snapshot_restore(tmp_path):
             "server",
             "-config=/test-config/server.hcl",
         )
-        port = (await asyncio.to_thread(run, "port", name, "8200/tcp")).split(":")[-1]
-        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}", timeout=5) as client:
+        async with httpx.AsyncClient(timeout=5) as client:
+            await _refresh_published_endpoint(client, run, name)
 
             async def ready(*, initialized, phase):
                 last_probe = "No health response"
@@ -141,6 +168,7 @@ async def test_static_auto_unseal_restart_and_snapshot_restore(tmp_path):
                 assert len(snapshot.content) > 0
                 (await client.post(path, json={"data": {"value": "after"}})).raise_for_status()
                 await asyncio.to_thread(run, "restart", name)
+                await _refresh_published_endpoint(client, run, name)
                 await ready(initialized=True, phase="restart")
                 assert (await client.get(path)).json()["data"]["data"]["value"] == "after"
                 (

@@ -206,9 +206,7 @@ class TenantConfig(BaseModel):
             enabled_features=enabled_features or [],
             business_summary=business_summary,
             llm_project_id=llm_project_id,
-            llm_project_name=(
-                llm_project_name or default_llm_project_name(normalized_tenant_id)
-            ),
+            llm_project_name=(llm_project_name or default_llm_project_name(normalized_tenant_id)),
             langsmith_project=(
                 langsmith_project or default_langsmith_project(normalized_tenant_id)
             ),
@@ -524,11 +522,18 @@ class OnboardingJobCreate(BaseModel):
     business_profile: OnboardingBusinessProfile
     business_summary: str = Field(min_length=1, max_length=10_000)
     contact_info: list[OnboardingContactPoint] = Field(default_factory=list)
-    telegram: OnboardingTelegramSetup
+    telegram: OnboardingTelegramSetup | None = None
+    whatsapp_connection_id: UUID | None = None
     provider_projects: OnboardingProviderProjects = Field(
         default_factory=OnboardingProviderProjects
     )
     knowledge_sources: list[WebsiteResearchSource] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def require_messaging_connection(self):
+        if (self.telegram is None) == (self.whatsapp_connection_id is None):
+            raise ValueError("Provide exactly one messaging connection")
+        return self
 
 
 class OnboardingJobRetryTelegram(BaseModel):

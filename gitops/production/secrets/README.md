@@ -27,6 +27,9 @@ The encrypted output is safe to commit. Confirm it contains no plaintext values.
 HMAC-SHA256 key for onboarding email codes; rotate it only when outstanding
 ten-minute codes may be invalidated.
 
-The `backup-credentials` template uses fil.one S3-compatible credentials. The same
-key may be used during bootstrap, but production should use a rotated key scoped to
-the private `ristoh-css-postgres` bucket.
+The `backup-credentials` template uses fil.one S3-compatible credentials scoped to
+the private `ristoh-css-postgres` bucket. PostgreSQL and OpenBao backups share this
+key by operator choice. OpenBao has a separate encrypted copy for its namespace;
+run `scripts/prepare-openbao-backup-secret.py` after any rotation and apply both
+SopsSecrets before revoking the old key. Prefixes do not isolate access: either
+copy can access both backup sets. See `infra/openbao/README.md` for the procedure.

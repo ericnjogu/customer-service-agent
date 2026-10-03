@@ -171,6 +171,29 @@ spec:
               value: {{ include "customer-service.webPublicBaseUrl" . | quote }}
             - name: AGENT_ONBOARDING_ACTION_TOKEN_TTL_MINUTES
               value: {{ .Values.onboarding.actionTokenTtlMinutes | quote }}
+            - name: AGENT_ONBOARDING_TELEGRAM_ENABLED
+              value: {{ .Values.onboarding.telegramEnabled | quote }}
+            - name: AGENT_ONBOARDING_WHATSAPP_ENABLED
+              value: {{ .Values.onboarding.whatsappEnabled | quote }}
+            {{- if .Values.openbao.enabled }}
+            - name: AGENT_OPENBAO_URL
+              value: {{ .Values.openbao.url | quote }}
+            - name: AGENT_OPENBAO_CA_FILE
+              value: /var/run/openbao-ca/ca.crt
+            - name: AGENT_OPENBAO_ROLE
+              value: {{ .Values.openbao.role | quote }}
+            - name: AGENT_OPENBAO_MOUNT
+              value: {{ .Values.openbao.mount | quote }}
+            - name: AGENT_META_GRAPH_API_VERSION
+              value: {{ .Values.openbao.metaGraphApiVersion | quote }}
+            {{- range $key := list "AGENT_META_APP_ID" "AGENT_META_SIGNUP_CONFIGURATION_ID" "AGENT_META_APP_SECRET" "AGENT_META_WEBHOOK_VERIFICATION_TOKEN" }}
+            - name: {{ $key }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.openbao.metaConfigSecret }}
+                  key: {{ $key }}
+            {{- end }}
+            {{- end }}
             - name: AGENT_ONBOARDING_EMAIL_VERIFICATION_TOKEN_TTL_MINUTES
               value: {{ .Values.onboarding.emailVerificationTokenTtlMinutes | quote }}
             - name: AGENT_ONBOARDING_EMAIL_VERIFICATION_CODE_TTL_MINUTES
@@ -363,15 +386,39 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          {{- if .Values.prompts.enabled }}
+          {{- if or .Values.prompts.enabled .Values.openbao.enabled }}
           volumeMounts:
+            {{- if .Values.openbao.enabled }}
+            - name: openbao-auth
+              mountPath: /var/run/secrets/openbao
+              readOnly: true
+            - name: openbao-ca
+              mountPath: /var/run/openbao-ca
+              readOnly: true
+            {{- end }}
+            {{- if .Values.prompts.enabled }}
             - name: prompts
               mountPath: {{ .Values.prompts.mountPath | quote }}
               readOnly: true
+            {{- end }}
           {{- end }}
-      {{- if .Values.prompts.enabled }}
+      {{- if or .Values.prompts.enabled .Values.openbao.enabled }}
       volumes:
+        {{- if .Values.openbao.enabled }}
+        - name: openbao-auth
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  audience: openbao
+                  expirationSeconds: 600
+        - name: openbao-ca
+          configMap:
+            name: {{ .Values.openbao.caConfigMap }}
+        {{- end }}
+        {{- if .Values.prompts.enabled }}
         - name: prompts
           configMap:
             name: {{ include "customer-service.fullname" . }}-prompts
+        {{- end }}
       {{- end }}

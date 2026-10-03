@@ -1,7 +1,7 @@
 import os
 from functools import lru_cache
 
-from pydantic import AliasChoices, Field, model_validator
+from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -60,6 +60,20 @@ class Settings(BaseSettings):
     whatsapp_verify_token_secret_key: str = "WHATSAPP_VERIFY_TOKEN"
     whatsapp_graph_api_version_secret_key: str = "WHATSAPP_GRAPH_API_VERSION"
     whatsapp_graph_api_version: str = "v20.0"
+    onboarding_telegram_enabled: bool = False
+    # Explicit rollout gate: enable only after Meta readiness and vault restore checks.
+    onboarding_whatsapp_enabled: bool = True
+    meta_app_id: str | None = None
+    meta_signup_configuration_id: str | None = None
+    meta_app_secret: SecretStr | None = None
+    meta_webhook_verification_token: SecretStr | None = None
+    meta_graph_api_version: str = "v25.0"
+    meta_graph_api_base_url: str = "https://graph.facebook.com"
+    openbao_url: str | None = None
+    openbao_ca_file: str | None = None
+    openbao_role: str = "customer-service"
+    openbao_mount: str = "tenant-credentials"
+    openbao_jwt_path: str = "/var/run/secrets/openbao/token"
     web_public_base_url: str = "http://localhost:8080"
     onboarding_action_token_ttl_minutes: int = Field(default=60, gt=0)
     onboarding_email_verification_token_ttl_minutes: int = Field(default=60, gt=0)

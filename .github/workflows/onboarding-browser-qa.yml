@@ -9,6 +9,10 @@ permissions:
 
 jobs:
   browser-qa:
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [telegram, whatsapp]
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -62,6 +66,7 @@ jobs:
           exit 1
       - name: Run human-style onboarding scenarios
         env:
+          AGENT_E2E_CHANNEL: ${{ matrix.channel }}
           AGENT_WIREMOCK_URL: http://127.0.0.1:8080
           AGENT_E2E_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/customer_service_e2e
           AGENT_E2E_REDIS_URL: redis://127.0.0.1:6379/0
@@ -71,7 +76,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: onboarding-browser-qa-${{ github.run_id }}-${{ github.run_attempt }}
+          name: onboarding-browser-qa-${{ matrix.channel }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             web/playwright-report
             web/test-results

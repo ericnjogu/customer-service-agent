@@ -106,6 +106,8 @@ issueProcessing:
   enabled: true
 
 onboarding:
+  telegramEnabled: false
+  whatsappEnabled: true # Requires Meta configuration and OpenBao; explicitly disable before bootstrap.
   actionTokenTtlMinutes: 60
   emailVerificationTokenTtlMinutes: 60
   emailVerificationCodeTtlMinutes: 10
@@ -187,6 +189,15 @@ whatsapp:
   verifyTokenSecretKey: WHATSAPP_VERIFY_TOKEN
   graphApiVersionSecretKey: WHATSAPP_GRAPH_API_VERSION
   graphApiVersion: v20.0
+
+openbao:
+  enabled: false
+  url: https://openbao-active.openbao.svc:8200
+  role: customer-service
+  mount: tenant-credentials
+  caConfigMap: openbao-ca
+  metaConfigSecret: app-configs
+  metaGraphApiVersion: v25.0
 
 llm:
   model: gpt-5-mini

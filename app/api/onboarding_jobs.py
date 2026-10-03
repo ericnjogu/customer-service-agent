@@ -3,6 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Path, Request, status
 
+from app.config import get_settings
 from app.models import (
     OnboardingJobAccepted,
     OnboardingJobCreate,
@@ -25,6 +26,12 @@ async def create_onboarding_job(
     background_tasks: BackgroundTasks,
     onboarding_request: OnboardingJobCreate,
 ) -> OnboardingJobAccepted:
+    if onboarding_request.whatsapp_connection_id:
+        raise HTTPException(
+            403, "WhatsApp provisioning must be submitted through its verified session"
+        )
+    if not get_settings().onboarding_telegram_enabled:
+        raise HTTPException(403, "Telegram onboarding is disabled")
     set_tenant_trace_attributes(
         None,
         tenant_slug(onboarding_request.business_profile.business_name),
@@ -58,6 +65,8 @@ async def retry_onboarding_job(
     retry_request: OnboardingJobRetryRequest,
     job_id: Annotated[UUID, Path()],
 ) -> OnboardingJobAccepted:
+    if not get_settings().onboarding_telegram_enabled:
+        raise HTTPException(403, "Telegram onboarding is disabled")
     service = request.app.state.container.onboarding_jobs
     try:
         job, onboarding_request = await service.retry_job(job_id, retry_request)

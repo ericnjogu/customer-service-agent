@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import hmac
 import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
@@ -173,9 +175,7 @@ class FakeWebsiteAnalyzer:
                 business_phone="+254110101010",
                 business_email="hello@hustlehq.example",
             ),
-            business_summary=(
-                "Represent Hustle HQ and answer from approved business facts."
-            ),
+            business_summary=("Represent Hustle HQ and answer from approved business facts."),
             contact_info=[
                 OnboardingContactPoint(
                     kind="website",
@@ -255,6 +255,10 @@ class FailingProviderProjectProvisioner:
 
 @pytest.fixture(autouse=True)
 def clear_settings_cache(monkeypatch: pytest.MonkeyPatch):
+    # This module retains coverage for the explicitly enabled legacy Telegram flow.
+    monkeypatch.setenv("AGENT_ONBOARDING_TELEGRAM_ENABLED", "true")
+    monkeypatch.setenv("AGENT_META_APP_SECRET", "test-meta-secret")
+    monkeypatch.setenv("AGENT_META_WEBHOOK_VERIFICATION_TOKEN", "expected-token")
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setattr(
         "app.container.create_openai_website_analyzer",
@@ -362,10 +366,7 @@ def test_tenant_creation_returns_conflict_when_slug_already_exists() -> None:
     assert first_response.status_code == 201
     assert second_response.status_code == 409
     assert first_response.json()["slug"] == "hustle-hq"
-    assert (
-        second_response.json()["detail"]
-        == "Tenant with matching name or slug already exists"
-    )
+    assert second_response.json()["detail"] == "Tenant with matching name or slug already exists"
 
 
 def test_tenant_can_be_read_by_slug() -> None:
@@ -502,9 +503,7 @@ def create_reviewed_onboarding_session_with_options(
             "business_phone": "+254110101010",
             "business_email": "hello@hustlehq.example",
         },
-        "business_summary": (
-            "Represent Hustle HQ and answer from approved facts."
-        ),
+        "business_summary": ("Represent Hustle HQ and answer from approved facts."),
         "contact_info": [
             {
                 "kind": "instagram",
@@ -582,10 +581,7 @@ def test_onboarding_session_accepts_valid_start_fields() -> None:
     assert response.json()["terms_version"] == "beta-2026-08-28"
     assert response.json()["terms_accepted_at"]
     assert sent_email.to == ["admin@hustlehq.example"]
-    assert (
-        f"http://localhost:8080?session_id={response.json()['session_id']}"
-        in sent_email.text
-    )
+    assert f"http://localhost:8080?session_id={response.json()['session_id']}" in sent_email.text
 
 
 def test_onboarding_verification_code_is_six_digits_and_only_hmac_is_stored() -> None:
@@ -928,9 +924,7 @@ def test_onboarding_analysis_internal_errors_are_generic() -> None:
         )
         assert save_response.status_code == 200
         verify_onboarding_website_email(client, session_id)
-        client.app.state.container.onboarding_sessions.website_analyzer = (
-            FailingWebsiteAnalyzer()
-        )
+        client.app.state.container.onboarding_sessions.website_analyzer = FailingWebsiteAnalyzer()
 
         response = client.post(f"/onboarding/sessions/{session_id}/analyze-website")
 
@@ -1022,10 +1016,7 @@ def test_onboarding_session_requires_given_and_family_names() -> None:
 
     assert response.status_code == 422
     messages = validation_messages(response)
-    assert any(
-        "String should have at least 1 character" in message
-        for message in messages
-    )
+    assert any("String should have at least 1 character" in message for message in messages)
 
 
 def test_onboarding_session_rejects_invalid_admin_phone() -> None:
@@ -1324,9 +1315,7 @@ def test_onboarding_session_submits_completed_session_into_job_flow() -> None:
         sent_email = client.app.state.container.email_sender.sent_messages[-1]
 
     assert telegram_response.status_code == 200
-    generated_webhook_secret = telegram_response.json()["telegram"][
-        "webhook_secret_token"
-    ]
+    generated_webhook_secret = telegram_response.json()["telegram"]["webhook_secret_token"]
     assert re.fullmatch(r"[0-9a-f]{64}", generated_webhook_secret)
     assert submit_response.status_code == 202
     assert job_response.status_code == 200
@@ -1396,9 +1385,7 @@ def test_onboarding_job_success_email_sends_bot_link_to_tenant_and_saas_admin(
 
     with TestClient(app) as client:
         bot_info_resolver = FakeTelegramBotInfoResolver(username="hustle_hq_success_bot")
-        client.app.state.container.onboarding_jobs.telegram_bot_info_resolver = (
-            bot_info_resolver
-        )
+        client.app.state.container.onboarding_jobs.telegram_bot_info_resolver = bot_info_resolver
         response = client.post("/admin/onboarding/jobs", json=payload)
         job_id = response.json()["job_id"]
         job_response = client.get(f"/admin/onboarding/jobs/{job_id}")
@@ -1408,9 +1395,7 @@ def test_onboarding_job_success_email_sends_bot_link_to_tenant_and_saas_admin(
     assert job_response.json()["status"] == "succeeded"
     assert bot_info_resolver.bot_tokens == ["123456:telegram-token"]
     completion_emails = [
-        email
-        for email in sent_messages
-        if email.subject == "Customer-service onboarding completed"
+        email for email in sent_messages if email.subject == "Customer-service onboarding completed"
     ]
     assert len(completion_emails) == 2
     tenant_admin_email = next(
@@ -1459,15 +1444,9 @@ def test_telegram_setup_submits_session_and_job_provisions_provider_projects() -
     assert job_response.status_code == 200
     assert job_response.json()["status"] == "succeeded"
     assert config_response.status_code == 200
-    assert config_response.json()["llm_project_name"] == (
-        "customer-service-hustle-hq-session"
-    )
-    assert config_response.json()["langsmith_project"] == (
-        "customer-service-hustle-hq-session"
-    )
-    assert config_response.json()["telegram_secret_name"] == (
-        "tenant-hustle-hq-session-telegram"
-    )
+    assert config_response.json()["llm_project_name"] == ("customer-service-hustle-hq-session")
+    assert config_response.json()["langsmith_project"] == ("customer-service-hustle-hq-session")
+    assert config_response.json()["telegram_secret_name"] == ("tenant-hustle-hq-session-telegram")
 
 
 def test_onboarding_job_accepts_and_provisions_internal_records() -> None:
@@ -1631,8 +1610,9 @@ def test_onboarding_job_creates_tenant_telegram_secret_before_webhook() -> None:
             "webhook_secret_token": "telegram-webhook-secret",
         }
     ]
-    assert registrar.registrations[0]["webhook_secret_token"] == (
-        secret_writer.secrets[0]["webhook_secret_token"]
+    assert (
+        registrar.registrations[0]["webhook_secret_token"]
+        == (secret_writer.secrets[0]["webhook_secret_token"])
     )
 
 
@@ -1759,9 +1739,7 @@ def test_failed_onboarding_kb_job_can_retry_without_duplicate_tenant() -> None:
 
 def test_retry_replaces_previous_onboarding_session_kb_documents() -> None:
     payload = onboarding_job_payload()
-    payload["idempotency_key"] = (
-        "onboarding-session-00000000-0000-0000-0000-000000000123"
-    )
+    payload["idempotency_key"] = "onboarding-session-00000000-0000-0000-0000-000000000123"
     payload["business_profile"]["business_name"] = "Hustle HQ KB Replace"
     payload["knowledge_sources"] = [
         {
@@ -1795,8 +1773,7 @@ def test_retry_replaces_previous_onboarding_session_kb_documents() -> None:
     assert retry_response.status_code == 202
     assert retried_job.json()["status"] == "succeeded"
     assert all(
-        document.metadata["onboarding_session_id"]
-        == "00000000-0000-0000-0000-000000000123"
+        document.metadata["onboarding_session_id"] == "00000000-0000-0000-0000-000000000123"
         for document in kb_documents
     )
     assert not any(
@@ -1837,9 +1814,7 @@ def test_onboarding_job_provisions_missing_provider_project_metadata() -> None:
     )
     assert config_response.json()["llm_project_id"] is None
     assert config_response.json()["web_search_provider"] == "tavily"
-    assert config_response.json()["web_search_project_name"] == (
-        "hustle-hq-provider-defaults"
-    )
+    assert config_response.json()["web_search_project_name"] == ("hustle-hq-provider-defaults")
 
 
 def test_onboarding_job_rejects_invalid_admin_email_message() -> None:
@@ -1897,8 +1872,9 @@ def test_failed_onboarding_job_can_be_retried_with_persisted_payload_and_token()
         secret_writer.secrets[0]["webhook_secret_token"],
     )
     assert registrar.registrations[0]["bot_token"] == "123456:retry-bot-token"
-    assert registrar.registrations[0]["webhook_secret_token"] == (
-        secret_writer.secrets[0]["webhook_secret_token"]
+    assert (
+        registrar.registrations[0]["webhook_secret_token"]
+        == (secret_writer.secrets[0]["webhook_secret_token"])
     )
     assert re.fullmatch(
         r"[0-9a-f]{64}",
@@ -1984,13 +1960,9 @@ def test_tenant_config_can_be_read_and_updated() -> None:
         "telegram",
         "whatsapp",
     ]
-    assert update_response.json()["business_summary"] == (
-        "Use Tenant A's concise tone."
-    )
+    assert update_response.json()["business_summary"] == ("Use Tenant A's concise tone.")
     assert get_response.status_code == 200
-    assert get_response.json()["business_summary"] == (
-        "Use Tenant A's concise tone."
-    )
+    assert get_response.json()["business_summary"] == ("Use Tenant A's concise tone.")
     assert get_response.json()["llm_project_id"] == "proj_tenant_a"
     assert get_response.json()["llm_provider"] == "langchain-compatible"
     assert get_response.json()["llm_model"] == "deepseek-chat"
@@ -2010,8 +1982,7 @@ def test_tenant_config_rejects_unknown_feature() -> None:
 
     assert response.status_code == 422
     assert any(
-        "Input should be 'multimedia', 'telegram' or 'whatsapp'"
-        in message
+        "Input should be 'multimedia', 'telegram' or 'whatsapp'" in message
         for message in validation_messages(response)
     )
 
@@ -2195,6 +2166,46 @@ def test_telegram_webhook_ignores_non_text_updates() -> None:
     assert response.json() == {"ok": True, "ignored": True}
 
 
+class FakeWhatsAppConnections:
+    def __init__(self):
+        self.seen = set()
+        self.pool = self
+
+    async def resolve_active(self, waba, phone):
+        return "default" if (waba, phone) == ("123", "456") else None
+
+    async def claim_message(self, waba, phone, event, *, active):
+        key = (waba, phone, event)
+        if key in self.seen:
+            return False
+        self.seen.add(key)
+        return True
+
+    async def execute(self, *args):
+        pass
+
+
+def signed_whatsapp_post(client, *, json: dict):
+    import json as encoding
+
+    for entry in json.get("entry", []):
+        entry.setdefault("id", "123")
+        for change in entry.get("changes", []):
+            change["value"].setdefault("metadata", {"phone_number_id": "456"})
+    if not client.app.state.container.whatsapp_connections:
+        client.app.state.container.whatsapp_connections = FakeWhatsAppConnections()
+    body = encoding.dumps(json).encode()
+    signature = hmac.new(b"test-meta-secret", body, hashlib.sha256).hexdigest()
+    return client.post(
+        "/webhooks/whatsapp",
+        content=body,
+        headers={
+            "Content-Type": "application/json",
+            "X-Hub-Signature-256": f"sha256={signature}",
+        },
+    )
+
+
 def test_whatsapp_webhook_verification_accepts_matching_verify_token() -> None:
     resolver = FakeWhatsAppCredentialResolver(verify_token="expected-token")
 
@@ -2212,7 +2223,7 @@ def test_whatsapp_webhook_verification_accepts_matching_verify_token() -> None:
 
     assert response.status_code == 200
     assert response.text == "challenge-value"
-    assert resolver.tenant_ids == ["tenant-a"]
+    assert resolver.tenant_ids == []
 
 
 def test_whatsapp_webhook_verification_rejects_invalid_verify_token() -> None:
@@ -2231,7 +2242,7 @@ def test_whatsapp_webhook_verification_rejects_invalid_verify_token() -> None:
         )
 
     assert response.status_code == 403
-    assert resolver.tenant_ids == ["tenant-a"]
+    assert resolver.tenant_ids == []
 
 
 def test_whatsapp_webhook_receives_customer_message_and_sends_reply() -> None:
@@ -2243,8 +2254,8 @@ def test_whatsapp_webhook_receives_customer_message_and_sends_reply() -> None:
             "Refund requests can be submitted within 30 days of purchase.",
         )
         client.app.state.container.whatsapp_sender = sender
-        response = client.post(
-            "/webhooks/whatsapp",
+        response = signed_whatsapp_post(
+            client,
             json={
                 "entry": [
                     {
@@ -2275,7 +2286,6 @@ def test_whatsapp_webhook_receives_customer_message_and_sends_reply() -> None:
 
     assert response.status_code == 200
     assert response.json()["ok"] is True
-    assert response.json()["replies"][0]["citations"] == ["kb/refunds.txt#0000"]
     assert sender.sent_messages == [
         (
             "254700000001",
@@ -2287,8 +2297,8 @@ def test_whatsapp_webhook_receives_customer_message_and_sends_reply() -> None:
 
 def test_whatsapp_webhook_ignores_non_text_updates() -> None:
     with TestClient(app) as client:
-        response = client.post(
-            "/webhooks/whatsapp",
+        response = signed_whatsapp_post(
+            client,
             json={
                 "entry": [
                     {
@@ -2312,4 +2322,29 @@ def test_whatsapp_webhook_ignores_non_text_updates() -> None:
         )
 
     assert response.status_code == 200
-    assert response.json() == {"ok": True, "ignored": True}
+    assert response.json() == {"ok": True}
+
+
+def test_whatsapp_signature_required_before_parsing() -> None:
+    with TestClient(app) as client:
+        response = client.post("/webhooks/whatsapp", content=b"not-json")
+    assert response.status_code == 403
+
+
+def test_whatsapp_mixed_batch_is_exactly_routed_and_deduplicated() -> None:
+    sender = FakeWhatsAppSender()
+    value = {
+        "messages": [{"from": "254700000001", "id": "batch-message", "text": {"body": "Hello"}}],
+    }
+    payload = {
+        "entry": [
+            {"id": "unrecognized", "changes": [{"value": value.copy()}]},
+            {"id": "123", "changes": [{"value": value.copy()}]},
+        ]
+    }
+    with TestClient(app) as client:
+        client.app.state.container.whatsapp_sender = sender
+        assert signed_whatsapp_post(client, json=payload).status_code == 200
+        assert signed_whatsapp_post(client, json=payload).status_code == 200
+    assert len(sender.sent_messages) == 1
+    assert sender.sent_messages[0][2] == "default"

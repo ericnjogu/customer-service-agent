@@ -2,8 +2,9 @@ import logging
 import time
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response, status
 
+from app.api.whatsapp_signup import authorize_browser, browser_cookie
 from app.models import (
     OnboardingEmailVerificationRequest,
     OnboardingJobAccepted,
@@ -50,8 +51,7 @@ async def create_onboarding_session(
         return session
     except OnboardingValidationError as error:
         logger.info(
-            "Rejected onboarding session username_email=%s error=%s "
-            "elapsed_seconds=%.3f",
+            "Rejected onboarding session username_email=%s error=%s elapsed_seconds=%.3f",
             payload.admin.username_email,
             error,
             time.perf_counter() - started_at,
@@ -207,12 +207,26 @@ async def send_website_email_verification(
 @router.post("/{session_id}/verify-username-email", response_model=OnboardingSessionRecord)
 async def verify_username_email(
     request: Request,
+    response: Response,
     session_id: UUID,
     payload: OnboardingEmailVerificationRequest,
 ) -> OnboardingSessionRecord:
     service = request.app.state.container.onboarding_sessions
     try:
-        return await service.verify_username_email(session_id, payload)
+        session = await service.verify_username_email(session_id, payload)
+        signup = request.app.state.container.whatsapp_signup
+        if signup:
+            browser = await signup.authorize_verified_browser(session_id)
+            response.set_cookie(
+                browser_cookie(session_id),
+                browser,
+                httponly=True,
+                samesite="strict",
+                secure=service.settings.web_public_base_url.startswith("https://"),
+                max_age=86400,
+                path="/",
+            )
+        return session
     except KeyError:
         raise HTTPException(status_code=404, detail="Onboarding session not found") from None
     except OnboardingRateLimitError as error:
@@ -324,6 +338,8 @@ async def submit_onboarding_session(
     session_id: UUID,
 ) -> OnboardingJobAccepted:
     service = request.app.state.container.onboarding_sessions
+    if not service.settings.onboarding_telegram_enabled:
+        await authorize_browser(request, session_id)
     try:
         submission = await service.submit_session(session_id)
         background_tasks.add_task(

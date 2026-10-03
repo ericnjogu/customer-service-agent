@@ -1,0 +1,74 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: openbao-application-acceptance
+  namespace: customer-service-production
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 180
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: app
+        app.kubernetes.io/instance: one-css
+        # Intentionally omit app.kubernetes.io/name: not a web/API service endpoint.
+    spec:
+      serviceAccountName: one-css-customer-service-app
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      imagePullSecrets: [{ name: ghcr-pull }]
+      containers:
+        - name: verify
+          image: ghcr.io/ericnjogu/customer-service-agent@sha256:c751294439c4ed5eef99c75c1900ec1b0fdaa3571bc6866c13b80e43760187d1
+          command: [python, -c]
+          args:
+            - |
+              import json, ssl, urllib.request, urllib.error, uuid
+              from pathlib import Path
+              base = 'https://openbao-active.openbao.svc:8200/v1/'
+              ctx = ssl.create_default_context(cafile='/ca/ca.crt')
+              def request(method, path, data=None, token=None):
+                  headers = {'Content-Type': 'application/json'}
+                  if token: headers['X-Vault-Token'] = token
+                  req = urllib.request.Request(base + path, method=method, headers=headers,
+                      data=json.dumps(data).encode() if data is not None else None)
+                  with urllib.request.urlopen(req, context=ctx, timeout=20) as response:
+                      raw = response.read()
+                      return json.loads(raw) if raw else {}
+              auth = request('POST', 'auth/kubernetes/login', {
+                  'role': 'customer-service', 'jwt': Path('/auth/token').read_text()})
+              token = auth['auth']['client_token']
+              connection = str(uuid.uuid4())
+              path = 'tenant-credentials/data/whatsapp/' + connection
+              request('POST', path, {'data': {'access_token': 'synthetic-recovery-canary',
+                  'registration_pin': '000000'}}, token)
+              assert request('GET', path, token=token)['data']['data']['access_token'] == 'synthetic-recovery-canary'
+              metadata = 'tenant-credentials/metadata/whatsapp/' + connection
+              assert request('GET', metadata, token=token)['data']['current_version'] == 1
+              try:
+                  request('GET', 'sys/policies/acl/root', token=token)
+                  raise RuntimeError('Unexpected administrative permission')
+              except urllib.error.HTTPError as error:
+                  assert error.code == 403
+              request('POST', 'auth/token/revoke-self', token=token)
+              print('PASS: private TLS, projected JWT, KV read/write, and denied administrator access')
+              print('Synthetic recovery canary connection: ' + connection)
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 250m, memory: 128Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: auth, mountPath: /auth, readOnly: true }
+            - { name: ca, mountPath: /ca, readOnly: true }
+      volumes:
+        - name: auth
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  audience: openbao
+                  expirationSeconds: 600
+        - name: ca
+          configMap: { name: openbao-ca }

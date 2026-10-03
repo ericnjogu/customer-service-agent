@@ -19,7 +19,10 @@ spec:
               resources: { requests: { storage: 10Gi } }
         grafana:
           persistence: { enabled: true, size: 2Gi }
-        alertmanager: { enabled: true }
+        alertmanager:
+          enabled: true
+          spec:
+            configSecret: operations-alert-email
   destination: { server: https://kubernetes.default.svc, namespace: monitoring }
   syncPolicy:
     automated: { prune: true, selfHeal: true }
@@ -54,9 +57,23 @@ spec:
           compactor:
             retention_enabled: true
             delete_request_store: filesystem
+          rulerConfig:
+            storage:
+              type: local
+              local: { directory: /etc/loki/rules }
+            rule_path: /var/loki/rules-tmp
+            alertmanager_url: http://vmalertmanager-vm-victoria-metrics-k8s-stack.monitoring.svc:9093
+            enable_alertmanager_v2: true
         singleBinary:
           replicas: 1
           persistence: { size: 10Gi }
+          extraVolumes:
+            - name: openbao-alert-rules
+              configMap:
+                name: openbao-audit-alerts
+                items: [{ key: openbao.yaml, path: fake/openbao.yaml }]
+          extraVolumeMounts:
+            - { name: openbao-alert-rules, mountPath: /etc/loki/rules, readOnly: true }
         chunksCache: { enabled: false }
         resultsCache: { enabled: false }
         backend: { replicas: 0 }

@@ -75,6 +75,7 @@ class OnboardingSessionService:
         self.email_sender = email_sender
         self.website_analyzer = website_analyzer
         self.settings = settings
+        self.whatsapp_connections = None
 
     async def create_session(
         self,
@@ -119,15 +120,11 @@ class OnboardingSessionService:
             session.website_url == requested_website_url
             and str(session.website_verification_email or "").lower() == requested_email
         ):
-            enforce_resend_cooldown(
-                session.website_email_verification_resend_available_at
-            )
+            enforce_resend_cooldown(session.website_email_verification_resend_available_at)
         validate_website_verification_fields(
             requested_website_url,
             requested_email,
-            require_email_domain_match=(
-                self.settings.onboarding_require_admin_email_domain_match
-            ),
+            require_email_domain_match=(self.settings.onboarding_require_admin_email_domain_match),
         )
         await self._validate_no_duplicate_website(
             requested_website_url,
@@ -190,9 +187,7 @@ class OnboardingSessionService:
                 "Username and website emails must be verified before analysis"
             )
         if not session.website_url:
-            raise OnboardingValidationError(
-                "Website URL must be saved before analysis"
-            )
+            raise OnboardingValidationError("Website URL must be saved before analysis")
         try:
             analysis = await self.website_analyzer.analyze(session)
         except Exception as error:
@@ -233,9 +228,7 @@ class OnboardingSessionService:
     ) -> OnboardingSessionRecord:
         started_at = time.perf_counter()
         session = await self._require_session(session_id)
-        enforce_resend_cooldown(
-            session.username_email_verification_resend_available_at
-        )
+        enforce_resend_cooldown(session.username_email_verification_resend_available_at)
         code = generate_verification_code()
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(
@@ -394,11 +387,9 @@ class OnboardingSessionService:
             max_attempts=self.settings.onboarding_email_verification_max_attempts,
         )
         if not accepted:
-            failed_attempts = (
-                await self.onboarding.record_username_email_verification_failure(
-                    session_id,
-                    max_attempts=self.settings.onboarding_email_verification_max_attempts,
-                )
+            failed_attempts = await self.onboarding.record_username_email_verification_failure(
+                session_id,
+                max_attempts=self.settings.onboarding_email_verification_max_attempts,
             )
             diagnostic = await self.onboarding.inspect_username_email_verification_token(
                 session_id,
@@ -444,11 +435,9 @@ class OnboardingSessionService:
             max_attempts=self.settings.onboarding_email_verification_max_attempts,
         )
         if not accepted:
-            failed_attempts = (
-                await self.onboarding.record_website_email_verification_failure(
-                    session_id,
-                    max_attempts=self.settings.onboarding_email_verification_max_attempts,
-                )
+            failed_attempts = await self.onboarding.record_website_email_verification_failure(
+                session_id,
+                max_attempts=self.settings.onboarding_email_verification_max_attempts,
             )
             diagnostic = await self.onboarding.inspect_website_email_verification_token(
                 session_id,
@@ -482,6 +471,8 @@ class OnboardingSessionService:
         return session
 
     async def prepare_telegram_setup(self, session_id: UUID) -> OnboardingSessionRecord:
+        if not self.settings.onboarding_telegram_enabled:
+            raise OnboardingValidationError("Telegram onboarding is disabled")
         session = await self._require_session(session_id)
         if not session.username_email_verified or not website_requirement_satisfied(session):
             raise OnboardingValidationError(
@@ -510,6 +501,8 @@ class OnboardingSessionService:
         session_id: UUID,
         request: OnboardingTelegramSetupRequest,
     ) -> OnboardingTelegramSetupResult:
+        if not self.settings.onboarding_telegram_enabled:
+            raise OnboardingValidationError("Telegram onboarding is disabled")
         await self._require_session(session_id)
         accepted = await self.onboarding.consume_telegram_setup_token(
             session_id,
@@ -558,16 +551,24 @@ class OnboardingSessionService:
             raise OnboardingValidationError(
                 "Username and website emails must be verified before submit"
             )
+        connection = (
+            await self.whatsapp_connections.for_session(session_id)
+            if self.whatsapp_connections
+            else None
+        )
+        if not self.settings.onboarding_telegram_enabled:
+            if not connection or connection.status not in {"connected", "active"}:
+                raise OnboardingValidationError("A verified WhatsApp connection is required")
         request = onboarding_job_from_session(
             session,
             completion_callback_url=None,
+            whatsapp_connection_id=connection.connection_id if connection else None,
         )
         if session.submitted_job_id is not None:
             existing_job = await self.onboarding_jobs.get_job(session.submitted_job_id)
             if existing_job is not None:
                 logger.info(
-                    "Reusing existing onboarding job for session_id=%s job_id=%s "
-                    "job_status=%s",
+                    "Reusing existing onboarding job for session_id=%s job_id=%s job_status=%s",
                     session_id,
                     existing_job.job_id,
                     existing_job.status,
@@ -613,9 +614,7 @@ class OnboardingSessionService:
             domain,
         )
         if existing_profile is not None:
-            raise OnboardingValidationError(
-                "A tenant with this website already exists"
-            )
+            raise OnboardingValidationError("A tenant with this website already exists")
 
         existing_session = await self.onboarding.get_active_session_by_website_domain(
             domain,
@@ -692,24 +691,15 @@ def domain_without_www(value: str) -> str:
 
 
 def telegram_setup_url(base_url: str, session_id: UUID, token: str) -> str:
-    return (
-        f"{base_url.rstrip('/')}/telegram-setup"
-        f"?session_id={session_id}&token={token}"
-    )
+    return f"{base_url.rstrip('/')}/telegram-setup?session_id={session_id}&token={token}"
 
 
 def username_email_verification_url(base_url: str, session_id: UUID, token: str) -> str:
-    return (
-        f"{base_url.rstrip('/')}/verify-username-email"
-        f"?session_id={session_id}&token={token}"
-    )
+    return f"{base_url.rstrip('/')}/verify-username-email?session_id={session_id}&token={token}"
 
 
 def website_email_verification_url(base_url: str, session_id: UUID, token: str) -> str:
-    return (
-        f"{base_url.rstrip('/')}/verify-website-email"
-        f"?session_id={session_id}&token={token}"
-    )
+    return f"{base_url.rstrip('/')}/verify-website-email?session_id={session_id}&token={token}"
 
 
 def onboarding_resume_url(base_url: str, session_id: UUID) -> str:
@@ -787,9 +777,7 @@ def verification_attempts_exhausted(
     if diagnostic.expires_at:
         retry_after = max(
             1,
-            math.ceil(
-                (diagnostic.expires_at - datetime.now(timezone.utc)).total_seconds()
-            ),
+            math.ceil((diagnostic.expires_at - datetime.now(timezone.utc)).total_seconds()),
         )
     return OnboardingRateLimitError(
         "Too many incorrect verification attempts; request a new code",
@@ -823,18 +811,17 @@ def onboarding_job_from_session(
     session: OnboardingSessionRecord,
     *,
     completion_callback_url: str | None,
+    whatsapp_connection_id: UUID | None = None,
 ) -> OnboardingJobCreate:
     missing = []
     if not session.business_profile:
         missing.append("business_profile")
     if not session.business_summary:
         missing.append("business_summary")
-    if not session.telegram:
+    if not session.telegram and not whatsapp_connection_id:
         missing.append("telegram")
     if missing:
-        raise OnboardingValidationError(
-            "Onboarding session is incomplete: " + ", ".join(missing)
-        )
+        raise OnboardingValidationError("Onboarding session is incomplete: " + ", ".join(missing))
 
     business_slug = tenant_slug(session.business_profile.business_name)
     return OnboardingJobCreate(
@@ -844,10 +831,9 @@ def onboarding_job_from_session(
         admin=session.admin,
         business_profile=session.business_profile,
         business_summary=session.business_summary,
-        contact_info=[
-            point for point in session.contact_info if point.kind != "website"
-        ],
-        telegram=session.telegram,
+        contact_info=[point for point in session.contact_info if point.kind != "website"],
+        telegram=None if whatsapp_connection_id else session.telegram,
+        whatsapp_connection_id=whatsapp_connection_id,
         provider_projects=session.provider_projects.model_copy(
             update={
                 "llm_project_name": (

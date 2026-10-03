@@ -1,5 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 import { createServer } from "node:net";
+import { fileURLToPath } from "node:url";
 
 // Reserve both ports together so the OS cannot return the same port twice.
 // Release them before Playwright launches the servers. Workers inherit the URLs.
@@ -39,6 +40,7 @@ process.env.AGENT_E2E_API_URL = apiBaseUrl;
 const webPort = Number(new URL(webBaseUrl).port);
 const apiPort = Number(new URL(apiBaseUrl).port);
 const wireMockUrl = process.env.AGENT_WIREMOCK_URL || "http://127.0.0.1:8080";
+const whatsapp = (process.env.AGENT_E2E_CHANNEL || "whatsapp") === "whatsapp";
 const slowMo = Number(process.env.AGENT_E2E_SLOW_MO_MS || "0");
 if (!Number.isSafeInteger(slowMo) || slowMo < 0) {
   throw new Error("AGENT_E2E_SLOW_MO_MS must be a non-negative integer (milliseconds).");
@@ -46,7 +48,7 @@ if (!Number.isSafeInteger(slowMo) || slowMo < 0) {
 
 export default defineConfig({
   testDir: "./e2e",
-  testMatch: "**/*.e2e.js",
+  testMatch: whatsapp ? "**/whatsapp.e2e.js" : "**/onboarding.e2e.js",
   // Allow time for deliberate pauses during interactive QA.
   timeout: 60_000 + slowMo * 100,
   fullyParallel: false,
@@ -78,6 +80,15 @@ export default defineConfig({
       env: {
         ...process.env,
         AGENT_DEPLOYMENT_ENVIRONMENT: "test",
+        AGENT_ONBOARDING_TELEGRAM_ENABLED: whatsapp ? "false" : "true",
+        AGENT_ONBOARDING_WHATSAPP_ENABLED: whatsapp ? "true" : "false",
+        AGENT_OPENBAO_URL: whatsapp ? wireMockUrl : "",
+        AGENT_OPENBAO_JWT_PATH: fileURLToPath(new URL("../tests/fixtures/openbao-service-account.jwt", import.meta.url)),
+        AGENT_META_APP_ID: "123",
+        AGENT_META_SIGNUP_CONFIGURATION_ID: "test-signup-config",
+        AGENT_META_APP_SECRET: "test-meta-secret",
+        AGENT_META_WEBHOOK_VERIFICATION_TOKEN: "test-webhook-token",
+        AGENT_META_GRAPH_API_BASE_URL: wireMockUrl,
         AGENT_ISSUE_PROCESSING_ENABLED: "false",
         AGENT_DATABASE_URL:
           process.env.AGENT_E2E_DATABASE_URL ||
@@ -119,7 +130,7 @@ export default defineConfig({
       reuseExistingServer: false,
       env: {
         ...process.env,
-        VITE_API_BASE_URL: apiBaseUrl,
+        VITE_API_BASE_URL: "/api",
         VITE_REQUIRE_ADMIN_EMAIL_DOMAIN_MATCH: "false",
       },
     },

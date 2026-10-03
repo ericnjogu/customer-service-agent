@@ -39,7 +39,7 @@ test("a business with a website completes verification and reviews analyzed deta
   await page.getByLabel("Business name").fill(identity.businessName);
   await page.getByRole("button", { name: "Review contact information" }).click();
   await expect(page.getByRole("heading", { name: "Contact information" })).toBeVisible();
-  await page.getByRole("button", { name: "Submit for review" }).click();
+  await page.getByRole("button", { name: "Continue to connection" }).click();
   await expect(
     page.getByRole("heading", { name: "Onboarding submitted for review" }),
   ).toBeVisible();
@@ -114,7 +114,7 @@ test("a business without a website can submit manual details and complete Telegr
   await page.getByLabel("Type").fill("instagram");
   await page.getByLabel("Label").fill("Instagram");
   await page.getByLabel("URL or value").fill("https://instagram.com/hustle_bakery_e2e");
-  await page.getByRole("button", { name: "Submit for review" }).click();
+  await page.getByRole("button", { name: "Continue to connection" }).click();
 
   await expect(
     page.getByRole("heading", { name: "Onboarding submitted for review" }),

@@ -8,11 +8,13 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.adapters.meta_signup import verify_meta_signature
 from app.adapters.telegram import telegram_reply_text, telegram_update_to_incoming_message
 from app.adapters.whatsapp import whatsapp_reply_text, whatsapp_update_to_incoming_messages
 from app.api.onboarding_jobs import router as onboarding_jobs_router
 from app.api.onboarding_sessions import router as onboarding_sessions_router
 from app.api.tenants import router as tenants_router
+from app.api.whatsapp_signup import router as whatsapp_signup_router
 from app.config import get_settings
 from app.container import create_container
 from app.graph import invoke_service_graph
@@ -124,6 +126,7 @@ app.add_middleware(
 app.include_router(onboarding_jobs_router)
 app.include_router(onboarding_sessions_router)
 app.include_router(tenants_router)
+app.include_router(whatsapp_signup_router)
 
 
 @app.exception_handler(HTTPException)
@@ -272,23 +275,18 @@ async def telegram_webhook(
 @app.get("/webhooks/whatsapp")
 async def verify_whatsapp_webhook(
     request: Request,
-    tenant_id: str | None = Query(default=None),
     hub_mode: str | None = Query(default=None, alias="hub.mode"),
     hub_challenge: str | None = Query(default=None, alias="hub.challenge"),
     hub_verify_token: str | None = Query(default=None, alias="hub.verify_token"),
-    x_agent_tenant_id: str | None = Header(default=None),
 ) -> Response:
     settings = get_settings()
-    resolved_tenant_id = tenant_id or x_agent_tenant_id or settings.default_tenant_id
-    set_tenant_trace_attributes(resolved_tenant_id)
-    whatsapp_credentials = await request.app.state.container.whatsapp_credentials.resolve(
-        resolved_tenant_id
-    )
+    verification_token = settings.meta_webhook_verification_token
     if (
         hub_mode == "subscribe"
         and hub_challenge
-        and whatsapp_credentials.verify_token
-        and hub_verify_token == whatsapp_credentials.verify_token
+        and verification_token
+        and hub_verify_token
+        and secrets.compare_digest(hub_verify_token, verification_token.get_secret_value())
     ):
         return Response(content=hub_challenge, media_type="text/plain")
 
@@ -297,44 +295,92 @@ async def verify_whatsapp_webhook(
 
 @app.post("/webhooks/whatsapp")
 async def whatsapp_webhook(
-    update: dict,
     request: Request,
-    tenant_id: str | None = Query(default=None),
-    x_agent_tenant_id: str | None = Header(default=None),
 ) -> dict:
-    messages = whatsapp_update_to_incoming_messages(update)
-    if not messages:
-        return {"ok": True, "ignored": True}
-
     settings = get_settings()
-    replies = []
-    whatsapp_sender = request.app.state.container.whatsapp_sender
-    for message in messages:
-        message = with_tenant(message, tenant_id or x_agent_tenant_id, settings.default_tenant_id)
-        set_tenant_trace_attributes(message.tenant_id)
-        reply = await invoke_service_graph(
-            request.app.state.container.graph,
-            message,
-            request.app.state.container.tenant_configs,
-        )
-        outcome = "unknown"
-        try:
-            if whatsapp_sender:
-                await whatsapp_sender.send_message(
-                    message.external_chat_id,
-                    whatsapp_reply_text(reply),
-                    tenant_id=message.tenant_id,
+    body = await request.body()
+    if not verify_meta_signature(
+        body,
+        request.headers.get("x-hub-signature-256"),
+        settings.meta_app_secret.get_secret_value() if settings.meta_app_secret else "",
+    ):
+        raise HTTPException(403, "Invalid WhatsApp webhook signature")
+    try:
+        update = await request.json()
+        entries = update.get("entry", [])
+        if not isinstance(entries, list):
+            raise ValueError()
+    except (ValueError, AttributeError):
+        raise HTTPException(400, "Invalid WhatsApp webhook payload") from None
+    container = request.app.state.container
+    repository = container.whatsapp_connections
+    if not repository:
+        raise HTTPException(503, "WhatsApp routing unavailable")
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        waba_id = str(entry.get("id", ""))
+        changes = entry.get("changes")
+        if not isinstance(changes, list):
+            continue
+        for change in changes:
+            if not isinstance(change, dict):
+                continue
+            value = change.get("value", {})
+            if not isinstance(value, dict) or not isinstance(value.get("metadata"), dict):
+                continue
+            phone_id = str(value["metadata"].get("phone_number_id", ""))
+            if not waba_id or not phone_id:
+                continue
+            tenant = await repository.resolve_active(waba_id, phone_id)
+            messages = whatsapp_update_to_incoming_messages({"entry": [{"changes": [change]}]})
+            for message in messages:
+                claimed = await repository.claim_message(
+                    waba_id,
+                    phone_id,
+                    message.event_id,
+                    active=bool(tenant),
                 )
-                outcome = "accepted"
-        except Exception:
-            outcome = "failed"
-            raise
-        finally:
-            if request.app.state.container.issues:
-                await request.app.state.container.issues.delivered(message, outcome)
-        replies.append(reply.model_dump(mode="json"))
-
-    return {"ok": True, "replies": replies}
+                if not claimed or not tenant:
+                    continue
+                message = message.model_copy(update={"tenant_id": tenant})
+                outcome = "unknown"
+                receipt_status = "failed"
+                sending = False
+                try:
+                    set_tenant_trace_attributes(tenant)
+                    reply = await invoke_service_graph(
+                        container.graph, message, container.tenant_configs
+                    )
+                    if not container.whatsapp_sender:
+                        raise RuntimeError("WhatsApp sender unavailable")
+                    sending = True
+                    await container.whatsapp_sender.send_message(
+                        message.external_chat_id,
+                        whatsapp_reply_text(reply),
+                        tenant_id=tenant,
+                    )
+                    outcome = "accepted"
+                    receipt_status = "sent"
+                except Exception:
+                    # A transport timeout does not prove Meta rejected the send.
+                    outcome = "unknown" if sending else "failed"
+                    logger.warning("WhatsApp event processing failed; retained for diagnosis")
+                finally:
+                    await repository.pool.execute(
+                        "UPDATE whatsapp_webhook_receipts SET status=$4,updated_at=now() "
+                        "WHERE waba_id=$1 AND phone_number_id=$2 AND message_id=$3",
+                        waba_id,
+                        phone_id,
+                        message.event_id,
+                        receipt_status,
+                    )
+                    if container.issues:
+                        try:
+                            await container.issues.delivered(message, outcome)
+                        except Exception:
+                            logger.warning("WhatsApp delivery bookkeeping failed")
+    return {"ok": True}
 
 
 @app.get("/conversations/{conversation_id}", response_model=ConversationRecord)

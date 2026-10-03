@@ -26,6 +26,11 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 20
     env:
       AGENT_ISSUE_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/issue_tests
+      AGENT_WHATSAPP_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/issue_tests
+      AGENT_OPENBAO_TEST_URL: http://127.0.0.1:58200
+      AGENT_OPENBAO_TEST_ROOT_TOKEN: local-test-only
+      AGENT_OPENBAO_RAFT_TESTS: "true"
+      AGENT_E2E_CONTAINER_RUNTIME: docker
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -33,6 +38,17 @@ jobs:
       - uses: astral-sh/setup-uv@b75a909f75acd358c2196fb9a5f1299a9a8868a4 # v6
         with: { enable-cache: true }
       - run: uv sync --locked
+      - name: Start disposable OpenBao for credential policy tests
+        run: |
+          docker run -d --name openbao-test -p 127.0.0.1:58200:8200 \
+            -e BAO_DEV_ROOT_TOKEN_ID=local-test-only \
+            -e BAO_DEV_LISTEN_ADDRESS=0.0.0.0:8200 \
+            openbao/openbao:2.7.1 server -dev
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:58200/v1/sys/health >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          exit 1
       - run: uv run ruff check app tests
       - name: Run unit and application tests
         run: uv run pytest -q
@@ -62,6 +78,10 @@ jobs:
       - name: Validate Helm releases
         run: |
           helm lint helm/production-platform
+          helm dependency build helm/openbao-platform
+          helm lint helm/openbao-platform
+          helm template openbao helm/openbao-platform -n openbao \
+            --set backups.enabled=true --set backups.endpoint=s3.example.invalid > /tmp/openbao.yaml
           helm lint helm/customer-service --values helm/customer-service/values-production.yaml \
             --set prompts.useBundledFiles=false \
             --set-file prompts.system=app/prompt_templates/system.md \

@@ -17,6 +17,7 @@ import {
 } from "@mdxeditor/editor";
 import "@mdxeditor/editor/style.css";
 import "./styles.css";
+import WhatsAppScreen from "./WhatsAppScreen";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
 const API_REQUEST_TIMEOUT_MS = 60000;
@@ -52,6 +53,7 @@ const noWebsiteSteps = [
 ];
 
 function App() {
+  const [config, setConfig] = useState({ telegram_enabled: false, whatsapp_enabled: false });
   const [session, setSession] = useState(null);
   const [step, setStep] = useState("account");
   const [alert, setAlert] = useState(null);
@@ -87,6 +89,10 @@ function App() {
   }, []);
 
   const busy = busyAction !== null;
+
+  useEffect(() => {
+    api("/onboarding/config").then(setConfig).catch((error) => showError(error.message));
+  }, []);
 
   useEffect(() => {
     const savedSessionId = window.localStorage.getItem("onboarding_session_id");
@@ -128,6 +134,7 @@ function App() {
     try {
       const response = await fetch(`${API_BASE_URL}${path}`, {
         ...options,
+        credentials: "include",
         signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
@@ -524,12 +531,11 @@ function App() {
           <p className="eyebrow">Risto AI CSS</p>
           <h1>Customer-service onboarding</h1>
           <p>
-            Review the business profile, approve public details, and hand off
-            Telegram setup without losing draft state.
+            Add your business information, connect WhatsApp, and provision your customer-service assistant.
           </p>
         </header>
 
-        <Progress step={step} session={session} />
+        <Progress step={step} session={session} telegramEnabled={config.telegram_enabled} />
 
         {alert && (
           <div className={`alert ${alert.type}`}>
@@ -608,19 +614,20 @@ function App() {
             session={session}
             onBack={() => setStep("analysis")}
             onNext={(contact_info) =>
-              patchSession({ contact_info }, "awaiting-review").then((updated) =>
-                requestTelegramSetup(updated.session_id),
-              )
+              config.telegram_enabled
+                ? patchSession({ contact_info }, "awaiting-review").then((updated) =>
+                    requestTelegramSetup(updated.session_id))
+                : patchSession({ contact_info }, "whatsapp")
             }
             busy={busy}
           />
         )}
 
-        {session && step === "awaiting-review" && !actionParams.isTelegramSetup && (
+        {config.telegram_enabled && session && step === "awaiting-review" && !actionParams.isTelegramSetup && (
           <WaitingForReviewScreen session={session} onBack={() => setStep("contact")} />
         )}
 
-        {session && step === "telegram" && actionParams.isTelegramSetup && (
+        {config.telegram_enabled && session && step === "telegram" && actionParams.isTelegramSetup && (
           <TelegramScreen
             session={session}
             token={actionParams.token}
@@ -630,7 +637,17 @@ function App() {
           />
         )}
 
-        {session && step === "complete" && (
+        {session && (step === "whatsapp" || (!config.telegram_enabled &&
+          ["telegram", "awaiting-review"].includes(step))) && (
+          <WhatsAppScreen session={session} config={config} api={api}
+            onBack={() => setStep("contact")} onSubmit={submitProvisioning} busy={busy} />
+        )}
+
+        {session && step === "complete" && !config.telegram_enabled && (
+          <ProvisioningScreen session={session} api={api} />
+        )}
+
+        {config.telegram_enabled && session && step === "complete" && (
           <CompletionScreen
             session={session}
             onBack={() => setStep("telegram")}
@@ -756,12 +773,15 @@ function TermsScreen() {
   );
 }
 
-function Progress({ step, session }) {
+function Progress({ step, session, telegramEnabled = false }) {
   const websiteWasSkipped =
     session &&
     !session.website_url &&
     !["account", "username-email-verification", "website"].includes(step);
-  const steps = websiteWasSkipped ? noWebsiteSteps : websiteSteps;
+  const legacySteps = websiteWasSkipped ? noWebsiteSteps : websiteSteps;
+  const steps = telegramEnabled ? legacySteps : legacySteps
+    .filter((item) => !["awaiting-review", "telegram"].includes(item))
+    .flatMap((item) => item === "complete" ? ["whatsapp", "complete"] : [item]);
   const index = Math.max(0, steps.indexOf(step));
   return (
     <div className="progress">
@@ -1361,7 +1381,7 @@ function ContactInfoScreen({ session, onBack, onNext, busy }) {
       <button type="button" className="secondary" onClick={addLink} disabled={busy}>
         Add a contact or social account
       </button>
-      <NavButtons onBack={onBack} busy={busy} submitLabel="Submit for review" />
+      <NavButtons onBack={onBack} busy={busy} submitLabel="Continue to connection" />
     </form>
   );
 }
@@ -1489,6 +1509,41 @@ function OnboardingSummary({ session }) {
       )}
     </section>
   );
+}
+
+function ProvisioningScreen({ session, api }) {
+  const [job, setJob] = useState(null);
+  const [error, setError] = useState("");
+  const apiRef = useRef(api);
+  apiRef.current = api;
+  const base = `/onboarding/sessions/${session.session_id}/provisioning`;
+  useEffect(() => {
+    let disposed = false;
+    let timer;
+    async function poll() {
+      try {
+        const result = await apiRef.current(base);
+        if (disposed) return;
+        setJob(result); setError("");
+        if (["accepted", "running"].includes(result.status)) timer = setTimeout(poll, 2000);
+      } catch (failure) { if (!disposed) setError(failure.message); }
+    }
+    poll();
+    return () => { disposed = true; clearTimeout(timer); };
+  }, [session.session_id, job?.status === "accepted"]);
+  async function retry() {
+    try { setJob(await apiRef.current(`${base}/retry`, { method: "POST" })); }
+    catch (failure) { setError(failure.message); }
+  }
+  return <section className="card">
+    <h2>{job?.status === "succeeded" ? "Setup complete" : "Provisioning your assistant"}</h2>
+    <p role="status">{job?.status === "succeeded"
+      ? "Your WhatsApp assistant is active and can now reply to customers."
+      : "Automated replies remain disabled until provisioning succeeds."}</p>
+    {["failed", "running", "accepted"].includes(job?.status) &&
+      <button type="button" onClick={retry}>Retry interrupted provisioning</button>}
+    {error && <p role="alert">{error}</p>}
+  </section>;
 }
 
 function CompletionScreen({ session, onBack, onSubmit, busy }) {

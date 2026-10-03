@@ -67,6 +67,7 @@ class OnboardingJobService:
         self.onboarding_review_email = onboarding_review_email
         self.kb_chunk_size = kb_chunk_size
         self.kb_chunk_overlap = kb_chunk_overlap
+        self.whatsapp_connections = None
 
     async def start_job(self, request: OnboardingJobCreate) -> OnboardingJobRecord:
         job = await self.onboarding.create_job(
@@ -115,6 +116,16 @@ class OnboardingJobService:
 
     @tracer.start_as_current_span("onboarding.process")
     async def process_job(self, job_id: UUID, request: OnboardingJobCreate) -> None:
+        if request.whatsapp_connection_id:
+            if not self.whatsapp_connections:
+                raise RuntimeError("WhatsApp provisioning repository is required")
+            async with self.whatsapp_connections.provisioning_lock(job_id) as acquired:
+                if acquired:
+                    await self._process_job(job_id, request)
+            return
+        await self._process_job(job_id, request)
+
+    async def _process_job(self, job_id: UUID, request: OnboardingJobCreate) -> None:
         set_tenant_trace_attributes(
             None,
             tenant_slug(request.business_profile.business_name),
@@ -184,12 +195,14 @@ class OnboardingJobService:
             tenant_config = await self.tenant_configs.upsert(
                 tenant.tenant_id,
                 selected_plan=request.selected_plan,
-                enabled_features=["telegram"],
+                enabled_features=["whatsapp"] if request.whatsapp_connection_id else ["telegram"],
                 business_summary=request.business_summary,
                 llm_project_id=provider_projects.llm_project_id,
                 llm_project_name=provider_projects.llm_project_name,
                 langsmith_project=provider_projects.langsmith_project,
-                telegram_secret_name=telegram_secret_name_for_request(request),
+                telegram_secret_name=(
+                    telegram_secret_name_for_request(request) if request.telegram else None
+                ),
                 web_search_provider=provider_projects.web_search_provider,
                 web_search_project_name=provider_projects.web_search_project_name,
             )
@@ -210,17 +223,22 @@ class OnboardingJobService:
                 tenant_config=tenant_config,
                 onboarding_session_id=onboarding_session_id_from_request(request),
             )
-            await self.write_telegram_secret(request)
-            await self.register_telegram_webhook(
-                request,
-                tenant_id=tenant.tenant_id,
-            )
-            telegram_bot_link = await self.telegram_bot_link(request)
-            await self.onboarding.mark_job_succeeded(
-                job_id,
-                tenant_id=tenant.tenant_id,
-                tenant_slug=tenant.slug,
-            )
+            telegram_bot_link = None
+            if request.whatsapp_connection_id:
+                if not self.whatsapp_connections:
+                    raise ValueError("WhatsApp provisioning is not configured")
+                await self.whatsapp_connections.activate(
+                    request.whatsapp_connection_id, job_id, tenant.tenant_id, tenant.slug
+                )
+            else:
+                await self.write_telegram_secret(request)
+                await self.register_telegram_webhook(request, tenant_id=tenant.tenant_id)
+                telegram_bot_link = await self.telegram_bot_link(request)
+                await self.onboarding.mark_job_succeeded(
+                    job_id,
+                    tenant_id=tenant.tenant_id,
+                    tenant_slug=tenant.slug,
+                )
             await self.send_success_email(
                 request,
                 tenant_id=tenant.tenant_id,
@@ -239,6 +257,10 @@ class OnboardingJobService:
                 },
             )
         except Exception as error:
+            completed = await self.onboarding.get_job(job_id)
+            if completed and completed.status == "succeeded":
+                logger.warning("Provisioning succeeded but notification failed job_id=%s", job_id)
+                return
             logger.exception("Onboarding job failed job_id=%s", job_id)
             await self.onboarding.mark_job_failed(
                 job_id,
@@ -271,8 +293,7 @@ class OnboardingJobService:
         knowledge_tenant_id = tenant_config.vector_namespace
         if not knowledge_tenant_id:
             logger.info(
-                "Skipping onboarding KB creation because tenant has no KB tenant id "
-                "tenant_id=%s",
+                "Skipping onboarding KB creation because tenant has no KB tenant id tenant_id=%s",
                 tenant_config.tenant_id,
             )
             return
@@ -382,9 +403,7 @@ class OnboardingJobService:
         saas_admin_recipients = dedupe_recipients([self.onboarding_review_email])
         if not saas_admin_recipients:
             return
-        if tenant_admin_email.lower() in {
-            recipient.lower() for recipient in saas_admin_recipients
-        }:
+        if tenant_admin_email.lower() in {recipient.lower() for recipient in saas_admin_recipients}:
             logger.info(
                 "Skipping separate SaaS-admin onboarding completion email because "
                 "review email matches tenant admin email email=%s",
@@ -431,10 +450,7 @@ def tenant_admin_success_email_text(
     lines = [
         f"Hello {request.admin.name},",
         "",
-        (
-            "Customer-service onboarding for "
-            f"{request.business_profile.business_name} is complete."
-        ),
+        (f"Customer-service onboarding for {request.business_profile.business_name} is complete."),
     ]
     if telegram_bot_link:
         lines.extend(
@@ -444,14 +460,17 @@ def tenant_admin_success_email_text(
                 telegram_bot_link,
             ]
         )
-    lines.extend(
-        [
-            "",
-            "You can share this link with customers who should start a Telegram chat "
-            "with the bot.",
-            "",
-        ]
-    )
+    if request.whatsapp_connection_id:
+        lines.extend(["", "Your connected WhatsApp number can now reply to customers.", ""])
+    elif telegram_bot_link:
+        lines.extend(
+            [
+                "",
+                "You can share this link with customers who should start "
+                "a Telegram chat with the bot.",
+                "",
+            ]
+        )
     return "\n".join(lines)
 
 
@@ -696,11 +715,12 @@ def onboarding_session_id_from_request(request: OnboardingJobCreate) -> str | No
 
 def sanitized_job_payload(request: OnboardingJobCreate) -> dict:
     payload = request.model_dump(mode="json")
-    payload["telegram"] = {
-        "secret_name": telegram_secret_name_for_request(request),
-        "bot_token_received": True,
-        "webhook_secret_token_received": True,
-    }
+    if request.telegram:
+        payload["telegram"] = {
+            "secret_name": telegram_secret_name_for_request(request),
+            "bot_token_received": True,
+            "webhook_secret_token_received": True,
+        }
     return payload
 
 

@@ -54,6 +54,11 @@ whatsapp:
 
 onboarding:
   verificationCodeSecretName: app-configs
+  # Enable only after a real Meta acceptance session and operational gates pass.
+  whatsappEnabled: false
+
+openbao:
+  enabled: true
 
 email:
   configSecretName: app-configs

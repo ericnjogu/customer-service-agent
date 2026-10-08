@@ -195,7 +195,7 @@ test("a user sees browser validation, recovers from a wrong code, and cannot sub
 }) => {
   const identity = uniqueIdentity("recovery");
   await fillAccount(page, identity);
-  await page.getByRole("button", { name: "Send account verification code" }).click();
+  await page.getByRole("button", { name: "Send account verification code to email" }).click();
 
   const code = await verificationCodeFor(identity.accountEmail);
   const wrongCode = code === "000000" ? "000001" : "000000";
@@ -217,7 +217,7 @@ test("a user sees browser validation, recovers from a wrong code, and cannot sub
 
 async function startAndVerifyAccount(page, identity) {
   await fillAccount(page, identity);
-  await page.getByRole("button", { name: "Send account verification code" }).click();
+  await page.getByRole("button", { name: "Send account verification code to email" }).click();
   await expect(page.getByRole("heading", { name: "Verify account email" })).toBeVisible();
   const code = await verificationCodeFor(identity.accountEmail);
   await page.getByLabel("Verify account email six-digit code").fill(code);
@@ -227,14 +227,14 @@ async function startAndVerifyAccount(page, identity) {
 
 async function fillAccount(page, identity) {
   await page.goto("/");
-  await page.getByLabel("Username email").fill(identity.accountEmail);
+  await page.getByLabel(/^Email/).fill(identity.accountEmail);
   await page.getByLabel("Given name").fill("Amina");
   await page.getByLabel("Family name").fill("Kamau");
-  await page.getByLabel("Admin phone number").fill("+254712345678");
-  await page.getByLabel("Admin role/title").fill("Owner");
-  const checkboxes = page.locator('input[type="checkbox"]');
-  await checkboxes.nth(0).check();
-  await checkboxes.nth(1).check();
+  await page.getByLabel("Phone number").fill("+254712345678");
+  await expect(page.getByLabel("Admin role/title")).toHaveCount(0);
+  await page.getByLabel("I have a website").check();
+  await page.getByLabel("I have social media pages").check();
+  await page.getByLabel(/I accept the/).check();
 }
 
 function uniqueIdentity(scenario) {

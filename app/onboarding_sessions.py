@@ -32,6 +32,7 @@ from app.ports import (
     WebsiteAnalyzer,
 )
 from app.tenancy import DEFAULT_TENANT_PLAN, tenant_slug
+from app.verification_email import verification_email_html
 
 logger = logging.getLogger(__name__)
 
@@ -116,9 +117,14 @@ class OnboardingSessionService:
         assert request.website_verification_email is not None
         requested_website_url = str(request.website_url)
         requested_email = str(request.website_verification_email).lower()
+        verified = (
+            requested_email.rsplit("@", 1)[1]
+            == str(session.admin.username_email).lower().rsplit("@", 1)[1]
+        )
         if (
             session.website_url == requested_website_url
             and str(session.website_verification_email or "").lower() == requested_email
+            and not verified
         ):
             enforce_resend_cooldown(session.website_email_verification_resend_available_at)
         validate_website_verification_fields(
@@ -134,7 +140,10 @@ class OnboardingSessionService:
             session_id,
             website_url=requested_website_url,
             website_verification_email=requested_email,
+            verified=verified,
         )
+        if verified:
+            return updated
         return await self.send_website_email_verification(updated.session_id)
 
     async def get_session(self, session_id: UUID) -> OnboardingSessionRecord | None:
@@ -270,6 +279,11 @@ class OnboardingSessionService:
             await self.email_sender.send_email(
                 to=[str(session.admin.username_email)],
                 subject="Verify your customer-service onboarding account email",
+                html=verification_email_html(
+                    name=session.admin.name, code=code,
+                    purpose="your account email address", resume_url=resume_url,
+                    ttl_minutes=self.settings.onboarding_email_verification_code_ttl_minutes,
+                ),
                 text=(
                     f"Hello {session.admin.name},\n\n"
                     "Use this verification code to confirm the email address for "
@@ -344,6 +358,11 @@ class OnboardingSessionService:
             await self.email_sender.send_email(
                 to=[str(session.website_verification_email)],
                 subject="Verify your business website for customer-service onboarding",
+                html=verification_email_html(
+                    name=session.admin.name, code=code,
+                    purpose="your business website contact email", resume_url=resume_url,
+                    ttl_minutes=self.settings.onboarding_email_verification_code_ttl_minutes,
+                ),
                 text=(
                     f"Hello {session.admin.name},\n\n"
                     "Use this verification code to confirm the business website "

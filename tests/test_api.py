@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import hmac
 import re
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
 from uuid import UUID
@@ -392,8 +393,6 @@ def onboarding_job_payload() -> dict:
             "given_name": "John",
             "family_name": "Doe",
             "phone_number": "+254110101010",
-            "role_title": "Owner",
-            "authority_confirmed": True,
             "terms_accepted": True,
         },
         "business_profile": {
@@ -449,8 +448,6 @@ def onboarding_session_payload() -> dict:
             "given_name": "John",
             "family_name": "Doe",
             "phone_number": "+254110101010",
-            "role_title": "Owner",
-            "authority_confirmed": True,
             "terms_accepted": True,
         },
     }
@@ -552,6 +549,9 @@ def verify_onboarding_username_email(client: TestClient, session_id: str) -> dic
 
 
 def verify_onboarding_website_email(client: TestClient, session_id: str) -> dict:
+    session = client.get(f"/onboarding/sessions/{session_id}").json()
+    if session["website_email_verified"]:
+        return session
     link_session_id, code = verification_code_from_latest_email(client)
     assert link_session_id == session_id
     response = client.post(
@@ -560,6 +560,25 @@ def verify_onboarding_website_email(client: TestClient, session_id: str) -> dict
     )
     assert response.status_code == 200
     return response.json()
+
+
+def test_onboarding_session_accepts_omitted_role() -> None:
+    payload = onboarding_session_payload()
+    with TestClient(app) as client:
+        response = client.post("/onboarding/sessions", json=payload)
+    assert response.status_code == 201
+    assert "role_title" not in response.json()["admin"]
+
+
+def test_onboarding_screen_choices_survive_reload() -> None:
+    payload = onboarding_session_payload()
+    payload["admin"].update(has_website=False, has_social_media=False)
+    with TestClient(app) as client:
+        response = client.post("/onboarding/sessions", json=payload)
+        assert response.status_code == 201
+        loaded = client.get(f"/onboarding/sessions/{response.json()['session_id']}")
+    assert loaded.json()["admin"]["has_website"] is False
+    assert loaded.json()["admin"]["has_social_media"] is False
 
 
 def test_onboarding_session_accepts_valid_start_fields() -> None:
@@ -618,6 +637,27 @@ def test_onboarding_verification_resend_is_rate_limited() -> None:
     assert int(resend.headers["Retry-After"]) > 0
 
 
+@pytest.mark.parametrize("email", ["admin@hustlehq.example", "sales@HUSTLEHQ.example"])
+def test_website_reuses_verified_account_domain_without_email(email: str) -> None:
+    with TestClient(app) as client:
+        response = client.post("/onboarding/sessions", json=onboarding_session_payload())
+        session_id = response.json()["session_id"]
+        verify_onboarding_username_email(client, session_id)
+        sent = client.app.state.container.email_sender.sent_messages
+        before = len(sent)
+        saved = client.patch(
+            f"/onboarding/sessions/{session_id}/website",
+            json=onboarding_website_payload("https://hustlehq.example", email),
+        )
+        assert saved.status_code == 200
+        assert saved.json()["website_email_verified"] is True
+        assert saved.json()["current_step"] == "analyzing"
+        assert saved.json()["website_email_verification_expires_at"] is None
+        assert len(sent) == before
+        loaded = client.get(f"/onboarding/sessions/{session_id}").json()
+        assert loaded["website_email_verified"] is True
+
+
 def test_resaving_same_website_cannot_bypass_resend_cooldown() -> None:
     with TestClient(app) as client:
         response = client.post(
@@ -628,11 +668,11 @@ def test_resaving_same_website_cannot_bypass_resend_cooldown() -> None:
         verify_onboarding_username_email(client, session_id)
         first = client.patch(
             f"/onboarding/sessions/{session_id}/website",
-            json=onboarding_website_payload(),
+            json=onboarding_website_payload("https://another.example", "admin@another.example"),
         )
         repeated = client.patch(
             f"/onboarding/sessions/{session_id}/website",
-            json=onboarding_website_payload(),
+            json=onboarding_website_payload("https://another.example", "admin@another.example"),
         )
 
     assert first.status_code == 200
@@ -1033,9 +1073,8 @@ def test_onboarding_session_rejects_invalid_admin_phone() -> None:
     )
 
 
-def test_onboarding_session_requires_authority_and_terms() -> None:
+def test_onboarding_session_requires_terms() -> None:
     payload = onboarding_session_payload()
-    payload["admin"]["authority_confirmed"] = False
     payload["admin"]["terms_accepted"] = False
 
     with TestClient(app) as client:
@@ -1043,13 +1082,11 @@ def test_onboarding_session_requires_authority_and_terms() -> None:
 
     assert response.status_code == 422
     messages = validation_messages(response)
-    assert any("authority_confirmed must be accepted" in message for message in messages)
     assert any("terms_accepted must be accepted" in message for message in messages)
 
 
-def test_onboarding_session_rejects_missing_authority_and_terms() -> None:
+def test_onboarding_session_rejects_missing_terms() -> None:
     payload = onboarding_session_payload()
-    payload["admin"].pop("authority_confirmed")
     payload["admin"].pop("terms_accepted")
 
     with TestClient(app) as client:
@@ -1057,7 +1094,7 @@ def test_onboarding_session_rejects_missing_authority_and_terms() -> None:
 
     assert response.status_code == 422
     messages = validation_messages(response)
-    assert messages.count("Field required") == 2
+    assert messages.count("Field required") == 1
 
 
 def test_onboarding_session_rejects_mismatched_admin_email_domain() -> None:
@@ -2167,12 +2204,19 @@ def test_telegram_webhook_ignores_non_text_updates() -> None:
 
 
 class FakeWhatsAppConnections:
+    @asynccontextmanager
+    async def delivery_lock(self, waba, phone):
+        yield self
+
     def __init__(self):
         self.seen = set()
         self.pool = self
 
     async def resolve_active(self, waba, phone):
         return "default" if (waba, phone) == ("123", "456") else None
+
+    async def is_paused(self, waba, phone, chat):
+        return False
 
     async def claim_message(self, waba, phone, event, *, active):
         key = (waba, phone, event)
@@ -2243,6 +2287,45 @@ def test_whatsapp_webhook_verification_rejects_invalid_verify_token() -> None:
 
     assert response.status_code == 403
     assert resolver.tenant_ids == []
+
+
+def test_paused_whatsapp_chat_does_not_invoke_graph_or_send(monkeypatch) -> None:
+    from unittest.mock import AsyncMock
+
+    graph = AsyncMock(side_effect=AssertionError("Paused chat must not invoke the graph"))
+    monkeypatch.setattr("app.main.invoke_service_graph", graph)
+    sender = FakeWhatsAppSender()
+    with TestClient(app) as client:
+        repository = FakeWhatsAppConnections()
+        repository.is_paused = AsyncMock(return_value=True)
+        client.app.state.container.whatsapp_connections = repository
+        client.app.state.container.whatsapp_sender = sender
+        response = signed_whatsapp_post(
+            client,
+            json={
+                "entry": [
+                    {
+                        "changes": [
+                            {
+                                "value": {
+                                    "messages": [
+                                        {
+                                            "from": "254700000001",
+                                            "id": "paused-1",
+                                            "type": "text",
+                                            "text": {"body": "Thank you"},
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+        )
+    assert response.status_code == 200
+    graph.assert_not_awaited()
+    assert sender.sent_messages == []
 
 
 def test_whatsapp_webhook_receives_customer_message_and_sends_reply() -> None:

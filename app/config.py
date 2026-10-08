@@ -69,6 +69,10 @@ class Settings(BaseSettings):
     meta_webhook_verification_token: SecretStr | None = None
     meta_graph_api_version: str = "v25.0"
     meta_graph_api_base_url: str = "https://graph.facebook.com"
+    google_drive_client_id: str | None = None
+    google_drive_client_secret: SecretStr | None = None
+    google_drive_test_base_url: str | None = None
+    media_archive_max_bytes: int = Field(default=100_000_000, gt=0, le=100_000_000)
     openbao_url: str | None = None
     openbao_ca_file: str | None = None
     openbao_role: str = "customer-service"

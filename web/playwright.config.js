@@ -89,6 +89,9 @@ export default defineConfig({
         AGENT_META_APP_SECRET: "test-meta-secret",
         AGENT_META_WEBHOOK_VERIFICATION_TOKEN: "test-webhook-token",
         AGENT_META_GRAPH_API_BASE_URL: wireMockUrl,
+        AGENT_GOOGLE_DRIVE_CLIENT_ID: "test-google-client",
+        AGENT_GOOGLE_DRIVE_CLIENT_SECRET: "test-google-secret",
+        AGENT_GOOGLE_DRIVE_TEST_BASE_URL: wireMockUrl,
         AGENT_ISSUE_PROCESSING_ENABLED: "false",
         AGENT_DATABASE_URL:
           process.env.AGENT_E2E_DATABASE_URL ||

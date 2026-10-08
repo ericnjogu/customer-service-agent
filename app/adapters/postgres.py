@@ -1102,6 +1102,7 @@ class PostgresOnboardingRepository:
         *,
         website_url: str,
         website_verification_email: str,
+        verified: bool = False,
     ) -> OnboardingSessionRecord:
         session = await self._require_session(session_id)
         payload = session_payload(session)
@@ -1118,11 +1119,11 @@ class PostgresOnboardingRepository:
         row = await self.database.pool.fetchrow(
             """
             UPDATE onboarding_sessions
-            SET status = 'website_verification_pending',
-                current_step = 'website-email-verification',
+            SET status = CASE WHEN $5 THEN 'draft' ELSE 'website_verification_pending' END,
+                current_step = CASE WHEN $5 THEN 'analyzing' ELSE 'website-email-verification' END,
                 website_url = $2,
                 website_verification_email = $3,
-                website_email_verified = false,
+                website_email_verified = $5,
                 website_email_verification_token_hash = NULL,
                 website_email_verification_expires_at = NULL,
                 website_email_verification_token_used_at = NULL,
@@ -1144,6 +1145,7 @@ class PostgresOnboardingRepository:
             website_url,
             website_verification_email.lower(),
             json.dumps(payload),
+            verified,
         )
         return row_to_onboarding_session(row)
 
@@ -2187,12 +2189,12 @@ SET username_email_verified = admin_email_verified,
         username_email_verification_token_used_at,
         admin_email_verification_token_used_at
     )
-WHERE EXISTS (
-    SELECT 1
-    FROM information_schema.columns
-    WHERE table_name = 'onboarding_sessions'
-      AND column_name = 'admin_email_verified'
-);
+-- Only untouched legacy records may inherit the retired verification state.
+-- Re-running startup DDL must never reset verification or a newly issued code.
+WHERE username_email_verified = false
+  AND username_email_verification_token_hash IS NULL
+  AND username_email_verification_expires_at IS NULL
+  AND username_email_verification_token_used_at IS NULL;
 
 UPDATE onboarding_sessions
 SET website_verification_email = COALESCE(website_verification_email, admin_email),

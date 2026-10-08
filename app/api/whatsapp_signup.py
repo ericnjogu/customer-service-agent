@@ -31,7 +31,9 @@ async def authorize_browser(request: Request, session_id: UUID):
         await service.require_browser(session_id, browser)
     except WhatsAppSignupError:
         raise HTTPException(
-            403, "Verify your account email in this browser before continuing"
+            403,
+            "Verify your account email in this browser before continuing",
+            headers={"X-Onboarding-Error": "browser_verification_required"},
         ) from None
     if request.method != "GET":
         public = urlsplit(get_settings().web_public_base_url)
@@ -59,6 +61,20 @@ class SignupCompletion(BaseModel):
     code: SecretStr
     waba_id: str = Field(pattern=r"^[0-9]{1,32}$")
     phone_number_id: str = Field(pattern=r"^[0-9]{1,32}$")
+
+
+class SignupCancellation(BaseModel):
+    attempt_id: UUID
+    state: str = Field(min_length=32, max_length=200)
+
+
+@router.post("/sessions/{session_id}/whatsapp/cancel")
+async def cancel(request: Request, session_id: UUID, payload: SignupCancellation):
+    service, browser = await authorize_browser(request, session_id)
+    try:
+        return await service.cancel(session_id, browser, **payload.model_dump())
+    except WhatsAppSignupError as error:
+        raise HTTPException(409, str(error)) from None
 
 
 @router.post("/sessions/{session_id}/whatsapp/start")

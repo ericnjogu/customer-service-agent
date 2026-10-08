@@ -186,6 +186,16 @@ spec:
               value: {{ .Values.openbao.mount | quote }}
             - name: AGENT_META_GRAPH_API_VERSION
               value: {{ .Values.openbao.metaGraphApiVersion | quote }}
+            - name: AGENT_MEDIA_ARCHIVE_MAX_BYTES
+              value: {{ .Values.mediaArchive.maxBytes | quote }}
+            {{- range $key := list "AGENT_GOOGLE_DRIVE_CLIENT_ID" "AGENT_GOOGLE_DRIVE_CLIENT_SECRET" }}
+            - name: {{ $key }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.openbao.metaConfigSecret }}
+                  key: {{ $key }}
+                  optional: true
+            {{- end }}
             {{- range $key := list "AGENT_META_APP_ID" "AGENT_META_SIGNUP_CONFIGURATION_ID" "AGENT_META_APP_SECRET" "AGENT_META_WEBHOOK_VERIFICATION_TOKEN" }}
             - name: {{ $key }}
               valueFrom:

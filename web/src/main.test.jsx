@@ -11,6 +11,24 @@ function stubOnboardingFetch(fetchMock) {
     : fetchMock(url, options));
 }
 
+test.each([undefined, true, false])("skipped website is excluded from resumed progress (preference=%s)", (hasWebsite) => {
+  render(<Progress step="whatsapp" session={{ website_url: null,
+    admin: { has_website: hasWebsite, has_social_media: false } }} />);
+  expect(screen.getByText("Step 4 of 5: whatsapp")).toBeInTheDocument();
+});
+
+test("enabled contact step still counts when website is skipped", () => {
+  render(<Progress step="whatsapp" session={{ website_url: null,
+    admin: { has_website: true, has_social_media: true } }} />);
+  expect(screen.getByText("Step 5 of 6: whatsapp")).toBeInTheDocument();
+});
+
+test("website path retains its active steps", () => {
+  render(<Progress step="whatsapp" session={{ website_url: "https://example.com",
+    admin: { has_website: true, has_social_media: false } }} />);
+  expect(screen.getByText("Step 7 of 8: whatsapp")).toBeInTheDocument();
+});
+
 vi.mock("@mdxeditor/editor", () => {
   const ToolbarButton = ({ label }) => <button type="button">{label}</button>;
   return {
@@ -52,6 +70,7 @@ vi.mock("@mdxeditor/editor", () => {
 });
 
 import {
+  Progress,
   AnalysisScreen,
   App,
   ContactInfoScreen,
@@ -138,8 +157,6 @@ function validStartForm(overrides = {}) {
     given_name: "John",
     family_name: "Doe",
     admin_phone_number: "+254110101010",
-    admin_role_title: "Owner",
-    authority_confirmed: true,
     terms_accepted: true,
     ...overrides,
   };
@@ -159,8 +176,6 @@ function validAdmin(overrides = {}) {
     given_name: "John",
     family_name: "Doe",
     phone_number: "+254110101010",
-    role_title: "Owner",
-    authority_confirmed: true,
     terms_accepted: true,
     ...overrides,
   };
@@ -228,13 +243,13 @@ describe("website URL validation", () => {
       />,
     );
 
-    await user.click(screen.getByLabelText(/username email/i));
+    await user.click(screen.getByLabelText(/^email/i));
     await user.tab();
 
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 
     await user.click(
-      screen.getByRole("button", { name: /send account verification code/i }),
+      screen.getByRole("button", { name: /Send account verification code to email/i }),
     );
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
@@ -249,20 +264,16 @@ describe("website URL validation", () => {
     ).toEqual({});
   });
 
-  test("requires admin phone, role, authority, and terms", () => {
+  test("requires phone and terms without a role or authority confirmation", () => {
     expect(
       validateAccountForm(
         validStartForm({
           admin_phone_number: "",
-          admin_role_title: "",
-          authority_confirmed: false,
           terms_accepted: false,
         }),
       ),
     ).toMatchObject({
-      admin_phone_number: "Admin phone number is required.",
-      admin_role_title: "Admin role/title is required.",
-      authority_confirmed: "Authority confirmation is required.",
+      admin_phone_number: "Phone number is required.",
       terms_accepted: "Terms of service acceptance is required.",
     });
   });
@@ -310,17 +321,16 @@ describe("website URL validation", () => {
 
     render(<App />);
     await user.type(
-      screen.getByLabelText(/username email/i),
+      screen.getByLabelText(/^email/i),
       "admin@example.co.ke",
     );
     await user.type(screen.getByLabelText(/given name/i), "John");
     await user.type(screen.getByLabelText(/family name/i), "Doe");
-    await user.type(screen.getByLabelText(/admin phone number/i), "+254110101010");
-    await user.type(screen.getByLabelText(/admin role\/title/i), "Owner");
-    await user.click(screen.getByLabelText(/authorized to configure/i));
+    await user.type(screen.getByLabelText(/phone number/i), "+254110101010");
+    expect(screen.queryByLabelText(/admin role\/title/i)).not.toBeInTheDocument();
     await user.click(screen.getByLabelText(/accept the beta terms of service/i));
     await user.click(
-      screen.getByRole("button", { name: /send account verification code/i }),
+      screen.getByRole("button", { name: /Send account verification code to email/i }),
     );
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
@@ -331,11 +341,10 @@ describe("website URL validation", () => {
         given_name: "John",
         family_name: "Doe",
         phone_number: "+254110101010",
-        role_title: "Owner",
-        authority_confirmed: true,
         terms_accepted: true,
       },
     });
+    expect(JSON.parse(options.body).admin).not.toHaveProperty("role_title");
   });
 
   test("website verification validates domain mismatch on blur and submit", async () => {

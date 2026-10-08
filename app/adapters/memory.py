@@ -570,21 +570,26 @@ class MemoryOnboardingRepository:
         *,
         website_url: str,
         website_verification_email: str,
+        verified: bool = False,
     ) -> OnboardingSessionRecord:
         session = self._require_session(session_id)
+        self.session_website_email_token_hashes.pop(session_id, None)
+        self.session_website_email_token_used_at.pop(session_id, None)
+        self.session_website_email_failed_attempts.pop(session_id, None)
         updated = session.model_copy(
             update={
                 "website_url": website_url,
                 "website_verification_email": website_verification_email,
-                "website_email_verified": False,
+                "website_email_verified": verified,
+                "website_email_verification_expires_at": None,
                 "website_email_verification_resend_available_at": None,
                 "analysis": None,
                 "business_profile": None,
                 "business_summary": None,
                 "contact_info": [],
                 "knowledge_sources": [],
-                "status": "website_verification_pending",
-                "current_step": "website-email-verification",
+                "status": "draft" if verified else "website_verification_pending",
+                "current_step": "analyzing" if verified else "website-email-verification",
                 "updated_at": datetime.now(timezone.utc),
             }
         )

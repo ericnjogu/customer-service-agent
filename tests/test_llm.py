@@ -1007,8 +1007,6 @@ async def test_website_analysis_prompt_only_includes_website_url() -> None:
                 name="John Doe",
                 email="admin@hustlehq.example",
                 phone_number="+254110101010",
-                role_title="Owner",
-                authority_confirmed=True,
                 terms_accepted=True,
             ),
         )
@@ -1062,8 +1060,6 @@ async def test_website_analysis_can_optionally_send_temperature() -> None:
                 name="John Doe",
                 email="admin@hustlehq.example",
                 phone_number="+254110101010",
-                role_title="Owner",
-                authority_confirmed=True,
                 terms_accepted=True,
             ),
         )

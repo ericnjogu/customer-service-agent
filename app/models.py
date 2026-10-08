@@ -280,12 +280,12 @@ def normalize_onboarding_admin_payload(data: dict) -> dict:
 
 
 class OnboardingAdmin(BaseModel):
+    has_website: bool = True
+    has_social_media: bool = True
     username_email: EmailStr
     given_name: str = Field(min_length=1, max_length=200)
     family_name: str = Field(min_length=1, max_length=200)
     phone_number: str = Field(min_length=1, max_length=100)
-    role_title: str = Field(min_length=1, max_length=200)
-    authority_confirmed: bool
     terms_accepted: bool
 
     @field_validator("given_name", "family_name", mode="before")
@@ -328,13 +328,6 @@ class OnboardingAdmin(BaseModel):
             parsed,
             phonenumbers.PhoneNumberFormat.E164,
         )
-
-    @field_validator("authority_confirmed")
-    @classmethod
-    def validate_authority_confirmed(cls, value: bool) -> bool:
-        if not value:
-            raise ValueError("authority_confirmed must be accepted")
-        return value
 
     @field_validator("terms_accepted")
     @classmethod

@@ -9,7 +9,9 @@ logger = logging.getLogger(__name__)
 
 
 class EmailSender(Protocol):
-    async def send_email(self, *, to: list[str], subject: str, text: str) -> None: ...
+    async def send_email(
+        self, *, to: list[str], subject: str, text: str, html: str | None = None
+    ) -> None: ...
 
 
 @dataclass
@@ -17,14 +19,17 @@ class SentEmail:
     to: list[str]
     subject: str
     text: str
+    html: str | None = None
 
 
 @dataclass
 class LoggingEmailSender:
     sent_messages: list[SentEmail] = field(default_factory=list)
 
-    async def send_email(self, *, to: list[str], subject: str, text: str) -> None:
-        message = SentEmail(to=to, subject=subject, text=text)
+    async def send_email(
+        self, *, to: list[str], subject: str, text: str, html: str | None = None
+    ) -> None:
+        message = SentEmail(to=to, subject=subject, text=text, html=html)
         self.sent_messages.append(message)
         logger.info("Email notification recorded subject=%s to=%s", subject, ",".join(to))
 
@@ -41,7 +46,9 @@ class ResendEmailSender:
         self.from_email = from_email
         self.api_base_url = api_base_url.rstrip("/")
 
-    async def send_email(self, *, to: list[str], subject: str, text: str) -> None:
+    async def send_email(
+        self, *, to: list[str], subject: str, text: str, html: str | None = None
+    ) -> None:
         started_at = time.perf_counter()
         logger.info(
             "Sending email via Resend subject=%s from=%s to=%s timeout_seconds=10",
@@ -63,6 +70,7 @@ class ResendEmailSender:
                         "to": to,
                         "subject": subject,
                         "text": text,
+                        **({"html": html} if html is not None else {}),
                     },
                 )
                 response.raise_for_status()
@@ -80,8 +88,7 @@ class ResendEmailSender:
                 raise
             except Exception:
                 logger.exception(
-                    "Failed to send email via Resend subject=%s from=%s to=%s "
-                    "elapsed_seconds=%.3f",
+                    "Failed to send email via Resend subject=%s from=%s to=%s elapsed_seconds=%.3f",
                     subject,
                     self.from_email,
                     ",".join(to),

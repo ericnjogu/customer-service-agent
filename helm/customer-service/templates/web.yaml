@@ -29,6 +29,14 @@ data:
             proxy_set_header X-Forwarded-Proto $scheme;
         }
 
+        # OAuth codes must not enter access logs.
+        location = /api/onboarding/drive/callback {
+            access_log off;
+            proxy_pass http://{{ include "customer-service.fullname" . }}-app:{{ .Values.service.port }}/onboarding/drive/callback;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
         location / {
             try_files $uri $uri/ /index.html;
         }

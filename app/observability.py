@@ -34,7 +34,11 @@ def configure_tracing(app: FastAPI, settings: Settings) -> TracerProvider | None
     provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint)))
     trace.set_tracer_provider(provider)
 
-    FastAPIInstrumentor.instrument_app(app, tracer_provider=provider, excluded_urls=".*/healthz")
+    FastAPIInstrumentor.instrument_app(
+        app,
+        tracer_provider=provider,
+        excluded_urls=".*/healthz,.*/onboarding/drive/callback",
+    )
     HTTPXClientInstrumentor().instrument(tracer_provider=provider)
     AsyncPGInstrumentor().instrument(tracer_provider=provider)
     RedisInstrumentor().instrument(tracer_provider=provider)

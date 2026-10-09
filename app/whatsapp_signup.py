@@ -9,7 +9,6 @@ from pydantic import SecretStr
 
 from app.adapters.credential_store import (
     ConnectionCredentials,
-    CredentialNotFound,
     CredentialStore,
 )
 from app.adapters.meta_signup import MetaSignupClient
@@ -52,12 +51,21 @@ class WhatsAppSignupService:
         return token
 
     async def require_browser(self, session_id: UUID, browser: str) -> None:
-        valid = await self.repository.pool.fetchval(
-            "SELECT 1 FROM onboarding_browser_sessions b JOIN onboarding_sessions s "
-            "USING(session_id) WHERE b.session_id=$1 AND b.browser_hash=$2 "
-            "AND b.expires_at>now() AND s.username_email_verified",
+        row = await self.repository.pool.fetchrow(
+            "SELECT s.username_email_verified, b.session_id IS NOT NULL AS browser_exists, "
+            "b.browser_hash=$2 AS browser_matches, b.expires_at>now() AS browser_unexpired, "
+            "b.expires_at FROM onboarding_sessions s LEFT JOIN onboarding_browser_sessions b "
+            "USING(session_id) WHERE s.session_id=$1",
             session_id,
             capability_hash(browser),
+        )
+        valid = bool(
+            browser
+            and row
+            and row["username_email_verified"]
+            and row["browser_exists"]
+            and row["browser_matches"]
+            and row["browser_unexpired"]
         )
         if not valid:
             raise WhatsAppSignupError("verified_browser_required")
@@ -68,6 +76,25 @@ class WhatsAppSignupService:
         async with self.repository.pool.acquire() as connection, connection.transaction():
             await connection.execute(
                 "SELECT pg_advisory_xact_lock(hashtextextended($1,0))", str(session_id)
+            )
+            await connection.execute(
+                "INSERT INTO "
+                "whatsapp_archive_preferences(session_id) VALUES($1) ON CONFLICT DO NOTHING",
+                session_id,
+            )
+            preference = await connection.fetchrow(
+                "SELECT * FROM whatsapp_archive_preferences WHERE session_id=$1 FOR UPDATE",
+                session_id,
+            )
+            if preference["import_enabled"] and not await connection.fetchval(
+                "SELECT 1 FROM drive_connections WHERE id=$1 AND session_id=$2 AND status='ready'",
+                preference["drive_id"],
+                session_id,
+            ):
+                raise WhatsAppSignupError("drive_connection_required")
+            await connection.execute(
+                "UPDATE whatsapp_archive_preferences SET locked=true WHERE session_id=$1",
+                session_id,
             )
             await connection.execute(
                 "UPDATE whatsapp_signup_attempts SET consumed_at=now() "
@@ -96,16 +123,6 @@ class WhatsAppSignupService:
         phone_number_id: str,
     ):
         await self.require_browser(session_id, browser)
-        if not await self.repository.consume_attempt(
-            attempt_id, session_id, capability_hash(browser), capability_hash(state)
-        ):
-            raise WhatsAppSignupError("signup_attempt_invalid_or_used")
-        # Validate BEFORE assigning the globally unique phone number. A malicious
-        # browser must not reserve arbitrary numbers belonging to another client.
-        token = await self.meta.exchange(code)
-        asset = await self.meta.verify_asset(
-            token, waba_id=waba_id, phone_number_id=phone_number_id
-        )
         try:
             async with self.repository.pool.acquire() as connection:
                 # Session-level lock spans independent durable progress commits.
@@ -114,6 +131,23 @@ class WhatsAppSignupService:
                     "SELECT pg_advisory_lock(hashtextextended($1,0))", str(session_id)
                 )
                 try:
+                    if not await connection.fetchval(
+                        "UPDATE whatsapp_signup_attempts SET consumed_at=now() "
+                        "WHERE attempt_id=$1 AND session_id=$2 AND browser_hash=$3 "
+                        "AND state_hash=$4 AND consumed_at IS NULL AND expires_at>now() "
+                        "RETURNING attempt_id",
+                        attempt_id,
+                        session_id,
+                        capability_hash(browser),
+                        capability_hash(state),
+                    ):
+                        raise WhatsAppSignupError("signup_attempt_invalid_or_used")
+                    token = await self.meta.exchange(code)
+                    asset = await self.meta.verify_asset(
+                        token, waba_id=waba_id, phone_number_id=phone_number_id
+                    )
+                    if not asset.is_on_biz_app:
+                        raise WhatsAppSignupError("coexistence_business_app_number_required")
                     return await self._connect(connection, session_id, token, asset)
                 finally:
                     await connection.execute(
@@ -121,6 +155,45 @@ class WhatsAppSignupService:
                     )
         except asyncpg.UniqueViolationError:
             raise WhatsAppSignupError("phone_already_assigned") from None
+
+    async def cancel(self, session_id, browser, *, attempt_id, state):
+        await self.require_browser(session_id, browser)
+        async with self.repository.pool.acquire() as sql, sql.transaction():
+            await sql.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended($1,0))", str(session_id)
+            )
+            attempt = await sql.fetchrow(
+                "SELECT * FROM whatsapp_signup_attempts WHERE attempt_id=$1 AND session_id=$2 "
+                "AND browser_hash=$3 AND state_hash=$4",
+                attempt_id,
+                session_id,
+                capability_hash(browser),
+                capability_hash(state),
+            )
+            if not attempt:
+                raise WhatsAppSignupError("signup_attempt_invalid_or_used")
+            if await sql.fetchval(
+                "SELECT 1 FROM whatsapp_connections WHERE session_id=$1 "
+                "AND status IN ('connected','active')",
+                session_id,
+            ):
+                return {"locked": True}
+            # A late cancellation must never unlock a newer signup attempt.
+            if await sql.fetchval(
+                "SELECT 1 FROM whatsapp_signup_attempts WHERE session_id=$1 AND created_at>$2",
+                session_id,
+                attempt["created_at"],
+            ):
+                return {"locked": True}
+            await sql.execute(
+                "UPDATE whatsapp_signup_attempts SET consumed_at=now() WHERE attempt_id=$1",
+                attempt_id,
+            )
+            await sql.execute(
+                "UPDATE whatsapp_archive_preferences SET locked=false WHERE session_id=$1",
+                session_id,
+            )
+            return {"locked": False}
 
     async def _connect(self, sql, session_id, token, asset):
         row = await sql.fetchrow(
@@ -139,13 +212,17 @@ class WhatsAppSignupService:
         if existing and existing.status == "active":
             raise WhatsAppSignupError("connection_already_active")
         connection_id = existing.connection_id if existing else uuid4()
+        preference = await sql.fetchrow(
+            "SELECT * FROM whatsapp_archive_preferences WHERE session_id=$1", session_id
+        )
+        import_enabled = bool(preference and preference["import_enabled"])
         reference = f"whatsapp/{connection_id}"
         await sql.execute(
             "INSERT INTO whatsapp_connections(connection_id,session_id,waba_id,phone_number_id, "
-            "display_number,credential_reference) VALUES($1,$2,$3,$4,$5,$6) "
+            "display_number,credential_reference,coexistence) VALUES($1,$2,$3,$4,$5,$6,true) "
             "ON CONFLICT(session_id) DO UPDATE SET waba_id=EXCLUDED.waba_id, "
             "phone_number_id=EXCLUDED.phone_number_id,display_number=EXCLUDED.display_number, "
-            "status='connecting',error_code=NULL,updated_at=now()",
+            "status='connecting',coexistence=true,error_code=NULL,updated_at=now()",
             connection_id,
             session_id,
             asset.waba_id,
@@ -153,24 +230,18 @@ class WhatsAppSignupService:
             asset.display_number,
             reference,
         )
+        await sql.execute(
+            "UPDATE whatsapp_connections SET import_history_enabled=$2,archive_media_enabled=$2, "
+            "drive_connection_id=$3 WHERE connection_id=$1",
+            connection_id,
+            import_enabled,
+            preference["drive_id"] if import_enabled else None,
+        )
         try:
-            # Preserve the PIN on retries after registration; do not reset it.
-            try:
-                previous = await self.credentials.read(connection_id) if existing else None
-            except CredentialNotFound:
-                if existing and existing.registered_at:
-                    raise
-                previous = None
-            pin = (
-                previous.registration_pin
-                if previous
-                else SecretStr(f"{secrets.randbelow(10**6):06d}")
-            )
             await self.credentials.write(
                 connection_id,
                 ConnectionCredentials(
                     access_token=token,
-                    registration_pin=pin,
                 ),
             )
             if not existing or not existing.subscribed_at:
@@ -180,9 +251,18 @@ class WhatsAppSignupService:
                     connection_id,
                 )
             if not existing or not existing.registered_at:
-                await self.meta.register(token, asset.phone_number_id, pin)
+                # Meta's coexistence flow has already registered the number.
+                # Never reset its PIN or call /register here.
                 await sql.execute(
                     "UPDATE whatsapp_connections SET registered_at=now() WHERE connection_id=$1",
+                    connection_id,
+                )
+            if import_enabled and (not existing or not existing.history_requested_at):
+                await self.meta.request_history(token, asset.phone_number_id)
+                await sql.execute(
+                    "UPDATE whatsapp_connections SET history_requested_at=now(), "
+                    "history_status=CASE WHEN history_status='not_requested' THEN 'requested' "
+                    "ELSE history_status END WHERE connection_id=$1",
                     connection_id,
                 )
             await sql.execute(

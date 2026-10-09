@@ -199,6 +199,9 @@ openbao:
   metaConfigSecret: app-configs
   metaGraphApiVersion: v25.0
 
+mediaArchive:
+  maxBytes: "100000000"
+
 llm:
   model: gpt-5-mini
   temperature: "0"

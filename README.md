@@ -168,6 +168,36 @@ Then run the browser scenarios from `web/`:
 npm run test:e2e -- --headed
 ```
 
+After each completed change, run **both** channels from the repository root:
+
+```bash
+bash scripts/run-browser-qa-all.sh
+# Equivalent: npm --prefix web run test:e2e:all
+```
+
+The combined command runs Telegram then WhatsApp with fresh containers for each,
+stopping on the first failure. Arguments such as `--headed` are forwarded to both.
+The single-suite command defaults to WhatsApp; use `AGENT_E2E_CHANNEL=telegram`
+to select Telegram explicitly.
+
+Install the local push gate once per clone:
+
+```bash
+bash scripts/install-git-hooks.sh
+```
+
+Every push then runs both suites and is blocked on failure (including missing
+dependencies or an unavailable container engine). Hooks are not automatically
+enabled by cloning; the installer refuses to replace an existing custom hook.
+The hook tests the current working tree, so commit the intended changes first.
+Use unit/frontend tests during editing; full browser QA runs after a completed
+change and before pushing, not after every file save.
+
+GitHub Actions independently runs both channels. Repository administrators should
+require both `onboarding-browser-qa / browser-qa (telegram)` and
+`onboarding-browser-qa / browser-qa (whatsapp)` checks in the main branch ruleset;
+local hooks alone cannot enforce merge protection.
+
 To slow browser actions for human verification, set a delay in milliseconds:
 
 ```bash

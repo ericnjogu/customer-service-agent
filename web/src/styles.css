@@ -420,6 +420,20 @@ textarea {
   color: #66728b;
 }
 
+.whatsapp-actions {
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+@media (max-width: 480px) {
+  .whatsapp-actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+}
+
 .terms {
   line-height: 1.65;
   max-width: 980px;

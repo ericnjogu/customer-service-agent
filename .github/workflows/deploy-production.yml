@@ -50,6 +50,8 @@ jobs:
         with:
           context: web
           file: web/Dockerfile
+          build-args: |
+            VITE_API_BASE_URL=/api
           platforms: linux/amd64
           push: true
           tags: ${{ env.WEB_IMAGE }}:${{ github.sha }}

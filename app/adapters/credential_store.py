@@ -17,7 +17,7 @@ class ConnectionCredentials(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     access_token: SecretStr
-    registration_pin: SecretStr
+    registration_pin: SecretStr | None = None
 
 
 class CredentialStoreError(RuntimeError):
@@ -156,7 +156,31 @@ class OpenBaoCredentialStore:
                 json={
                     "data": {
                         "access_token": value.access_token.get_secret_value(),
-                        "registration_pin": value.registration_pin.get_secret_value(),
+                        **(
+                            {"registration_pin": value.registration_pin.get_secret_value()}
+                            if value.registration_pin
+                            else {}
+                        ),
                     }
                 },
             )
+
+    async def write_drive_token(self, connection_id: UUID, refresh_token: SecretStr) -> None:
+        async with self._lock:
+            await self._request(
+                "POST", f"/v1/{self.mount}/data/google-drive/{UUID(str(connection_id))}",
+                json={"data": {"refresh_token": refresh_token.get_secret_value()}},
+            )
+
+    async def read_drive_token(self, connection_id: UUID) -> SecretStr:
+        async with self._lock:
+            result = await self._request(
+                "GET", f"/v1/{self.mount}/data/google-drive/{UUID(str(connection_id))}"
+            )
+            try:
+                token = result["data"]["data"]["refresh_token"]
+                if not isinstance(token, str) or not token:
+                    raise ValueError()
+                return SecretStr(token)
+            except (KeyError, TypeError, ValueError):
+                raise CredentialStoreError("No usable Drive credentials") from None

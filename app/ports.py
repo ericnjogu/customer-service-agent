@@ -224,6 +224,7 @@ class OnboardingRepository(Protocol):
         *,
         website_url: str,
         website_verification_email: str,
+        verified: bool = False,
     ) -> OnboardingSessionRecord: ...
 
     async def clear_session_website(self, session_id: UUID) -> OnboardingSessionRecord: ...

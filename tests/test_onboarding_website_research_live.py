@@ -117,8 +117,6 @@ async def test_live_hybrid_website_analysis_finds_expected_contact_links() -> No
                 name="Live Test Admin",
                 email="admin@example.com",
                 phone_number="+254110101010",
-                role_title="Owner",
-                authority_confirmed=True,
                 terms_accepted=True,
             ),
         )

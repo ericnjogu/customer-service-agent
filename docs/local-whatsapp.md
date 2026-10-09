@@ -92,3 +92,17 @@ delete an existing vault or credentials. Add
 
 Browser QA still uses mocked Meta/OpenBao endpoints. Do not use its dummy
 configuration or `AGENT_DEPLOYMENT_ENVIRONMENT=test` for real customer signup.
+
+## Resuming in another browser
+
+The session ID in a resume link identifies a draft; it does not authorize WhatsApp
+or Drive access. If the `onboarding-<session-id>` cookie is missing or expired,
+the WhatsApp screen offers **Verify this browser**. Request a code, enter it in
+the same browser, then continue from the saved step. The email goes only to the
+session's existing account address. Account verification and the draft are not reset.
+
+Recovery uses separate HMAC-hashed codes, a Strict/HttpOnly challenge cookie,
+a ten-minute expiry, five attempts, and a 60-second resend cooldown. Resending
+invalidates the earlier challenge. Successful recovery replaces the session's
+authorized-browser token, so the previously authorized browser must reverify
+before further protected operations. Cookies are Secure when the public URL is HTTPS.

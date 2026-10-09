@@ -20,11 +20,27 @@ class WhatsAppConnection(BaseModel):
     error_code: str | None = None
     subscribed_at: datetime | None = None
     registered_at: datetime | None = None
+    coexistence: bool = False
+    pause_on_human_reply: bool = True
+    history_requested_at: datetime | None = None
+    history_status: str = "not_requested"
+    import_history_enabled: bool | None = None
+    archive_media_enabled: bool = False
+    drive_connection_id: UUID | None = None
     created_at: datetime
     updated_at: datetime
 
 
 WHATSAPP_SCHEMA = """
+CREATE TABLE IF NOT EXISTS onboarding_browser_challenges (
+    session_id uuid PRIMARY KEY REFERENCES onboarding_sessions(session_id) ON DELETE CASCADE,
+    browser_hash text NOT NULL,
+    code_hash text NOT NULL,
+    expires_at timestamptz NOT NULL,
+    resend_at timestamptz NOT NULL,
+    attempts integer NOT NULL DEFAULT 0,
+    used_at timestamptz
+);
 CREATE TABLE IF NOT EXISTS whatsapp_connections (
     connection_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id uuid NOT NULL UNIQUE REFERENCES onboarding_sessions(session_id),
@@ -54,6 +70,33 @@ CREATE TABLE IF NOT EXISTS whatsapp_signup_attempts (
     consumed_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE whatsapp_connections
+    ADD COLUMN IF NOT EXISTS coexistence boolean NOT NULL DEFAULT false;
+ALTER TABLE whatsapp_connections
+    ADD COLUMN IF NOT EXISTS pause_on_human_reply boolean NOT NULL DEFAULT true;
+ALTER TABLE whatsapp_connections ADD COLUMN IF NOT EXISTS history_requested_at timestamptz;
+ALTER TABLE whatsapp_connections
+    ADD COLUMN IF NOT EXISTS history_status text NOT NULL DEFAULT 'not_requested'
+    CHECK (history_status IN
+        ('not_requested','requested','receiving','completed','declined','failed'));
+CREATE TABLE IF NOT EXISTS whatsapp_imported_messages (
+    connection_id uuid NOT NULL REFERENCES whatsapp_connections(connection_id),
+    message_id text NOT NULL,
+    chat_id text NOT NULL,
+    sender_type text NOT NULL CHECK (sender_type IN ('CUSTOMER','AGENT')),
+    body text NOT NULL,
+    message_type text NOT NULL,
+    sent_at timestamptz NOT NULL,
+    is_history boolean NOT NULL,
+    imported_at timestamptz,
+    PRIMARY KEY(connection_id,message_id)
+);
+CREATE TABLE IF NOT EXISTS whatsapp_paused_chats (
+    connection_id uuid NOT NULL REFERENCES whatsapp_connections(connection_id),
+    chat_id text NOT NULL,
+    paused_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY(connection_id,chat_id)
+);
 CREATE INDEX IF NOT EXISTS whatsapp_signup_attempts_session
     ON whatsapp_signup_attempts(session_id);
 CREATE TABLE IF NOT EXISTS onboarding_browser_sessions (
@@ -79,6 +122,19 @@ class PostgresWhatsAppConnections:
 
     async def initialize(self) -> None:
         await self.pool.execute(WHATSAPP_SCHEMA)
+        from app.media_archive import SCHEMA
+        await self.pool.execute(SCHEMA)
+
+    @asynccontextmanager
+    async def delivery_lock(self, waba_id: str, phone_id: str):
+        """Order business-app echoes against outbound sends across replicas."""
+        key = f"whatsapp-delivery:{waba_id}:{phone_id}"
+        async with self.pool.acquire() as sql:
+            await sql.execute("SELECT pg_advisory_lock(hashtextextended($1,0))", key)
+            try:
+                yield sql
+            finally:
+                await sql.execute("SELECT pg_advisory_unlock(hashtextextended($1,0))", key)
 
     @asynccontextmanager
     async def provisioning_lock(self, job_id: UUID):
@@ -114,6 +170,9 @@ class PostgresWhatsAppConnections:
             )
             if not changed:
                 raise ValueError("Verified connection does not belong to this provisioning job")
+            from app.whatsapp_coexistence import import_pending
+
+            await import_pending(sql, connection_id, tenant_id)
             completed = await sql.fetchval(
                 "UPDATE onboarding_jobs SET status='succeeded',tenant_id=$2,tenant_slug=$3, "
                 "error=NULL,updated_at=now() WHERE job_id=$1 RETURNING job_id",
@@ -136,6 +195,17 @@ class PostgresWhatsAppConnections:
             "WHERE waba_id=$1 AND phone_number_id=$2 AND status='active'",
             waba_id,
             phone_number_id,
+        )
+
+    async def is_paused(self, waba_id: str, phone_number_id: str, chat_id: str) -> bool:
+        return bool(
+            await self.pool.fetchval(
+                "SELECT 1 FROM whatsapp_paused_chats p JOIN whatsapp_connections c "
+                "USING(connection_id) WHERE c.waba_id=$1 AND c.phone_number_id=$2 AND p.chat_id=$3",
+                waba_id,
+                phone_number_id,
+                chat_id,
+            )
         )
 
     async def consume_attempt(
@@ -161,7 +231,10 @@ class PostgresWhatsAppConnections:
         return bool(
             await self.pool.fetchval(
                 "INSERT INTO whatsapp_webhook_receipts "
-                "(waba_id,phone_number_id,message_id,status) VALUES($1,$2,$3,$4) "
+                "(waba_id,phone_number_id,message_id,status) SELECT $1,$2,$3,$4 "
+                "WHERE NOT EXISTS (SELECT 1 FROM whatsapp_imported_messages m "
+                "JOIN whatsapp_connections c USING(connection_id) WHERE c.waba_id=$1 "
+                "AND c.phone_number_id=$2 AND 'whatsapp:' || m.message_id=$3) "
                 "ON CONFLICT DO NOTHING RETURNING message_id",
                 waba_id,
                 phone_number_id,

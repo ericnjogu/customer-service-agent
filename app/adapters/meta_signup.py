@@ -21,6 +21,7 @@ class VerifiedWhatsAppAsset:
     waba_id: str
     phone_number_id: str
     display_number: str
+    is_on_biz_app: bool = False
 
 
 def verify_meta_signature(body: bytes, signature: str | None, app_secret: str) -> bool:
@@ -119,7 +120,12 @@ class MetaSignupClient:
         cursor = None
         seen = set()
         for _ in range(20):
-            params = {"fields": "id,display_phone_number,code_verification_status", "limit": "100"}
+            params = {
+                "fields": (
+                    "id,display_phone_number,code_verification_status,is_on_biz_app,platform_type"
+                ),
+                "limit": "100",
+            }
             if cursor:
                 params["after"] = cursor
             phones = await self._request(
@@ -137,7 +143,13 @@ class MetaSignupClient:
                     display = phone.get("display_phone_number")
                     if not isinstance(display, str) or not display:
                         raise MetaSignupError("meta_phone_invalid")
-                    return VerifiedWhatsAppAsset(waba_id, phone_number_id, display)
+                    return VerifiedWhatsAppAsset(
+                        waba_id,
+                        phone_number_id,
+                        display,
+                        phone.get("is_on_biz_app") is True
+                        and phone.get("platform_type") == "CLOUD_API",
+                    )
             paging = phones.get("paging", {})
             if not isinstance(paging, dict) or not isinstance(paging.get("cursors", {}), dict):
                 raise MetaSignupError("meta_phone_invalid")
@@ -175,3 +187,13 @@ class MetaSignupClient:
         )
         if result.get("success") is not True:
             raise MetaSignupError("meta_registration_failed")
+
+    async def request_history(self, token: SecretStr, phone_number_id: str) -> None:
+        if not re.fullmatch(r"[0-9]+", phone_number_id):
+            raise MetaSignupError("meta_asset_invalid")
+        await self._request(
+            "POST",
+            f"{phone_number_id}/smb_app_data",
+            headers={"Authorization": f"Bearer {token.get_secret_value()}"},
+            json={"sync_type": "history"},
+        )

@@ -94,6 +94,31 @@ test("a business with a website completes verification and reviews analyzed deta
   expect(openAiPayload.input).toContain("Hustle Bakery");
 });
 
+for (const sameEmail of [true, false]) {
+  test(`verified account ${sameEmail ? "email" : "domain"} skips website code delivery`, async ({ page }) => {
+    const identity = uniqueIdentity("verified-website");
+    identity.websiteEmail = sameEmail ? identity.accountEmail : identity.accountEmail.replace("amina+", "owner+");
+    await startAndVerifyAccount(page, identity);
+    // Distinct loopback hostname avoids the earlier draft's duplicate-domain guard.
+    await page.getByLabel("Website URL").fill(websiteUrl.replace("127.0.0.1", "localhost"));
+    await page.getByLabel("Website verification email").fill(identity.websiteEmail);
+    await page.getByRole("button", { name: "Send website verification code" }).click();
+    await expect(page.getByRole("heading", { name: "Business information" })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("heading", { name: "Verify website email" })).toHaveCount(0);
+    const sessionId = await page.evaluate(() => localStorage.getItem("onboarding_session_id"));
+    const saved = await (await page.request.get(`${apiBaseUrl}/onboarding/sessions/${sessionId}`)).json();
+    expect(saved.username_email_verified).toBe(true);
+    expect(saved.website_email_verified).toBe(true);
+    expect(saved.website_verification_email).toBe(identity.websiteEmail);
+    expect(await requestsFor("/emails")).toHaveLength(1);
+    await waitForRequest("/v1/responses");
+    // Release this draft's website before the next scenario uses the same mock host.
+    await page.getByRole("button", { name: "Back", exact: true }).click();
+    await page.getByRole("button", { name: "Continue without a website" }).click();
+    await expect(page.getByRole("heading", { name: "Business information" })).toBeVisible();
+  });
+}
+
 test("a business without a website can submit manual details and complete Telegram setup", async ({
   page,
 }) => {
@@ -195,7 +220,7 @@ test("a user sees browser validation, recovers from a wrong code, and cannot sub
 }) => {
   const identity = uniqueIdentity("recovery");
   await fillAccount(page, identity);
-  await page.getByRole("button", { name: "Send account verification code" }).click();
+  await page.getByRole("button", { name: "Send account verification code to email" }).click();
 
   const code = await verificationCodeFor(identity.accountEmail);
   const wrongCode = code === "000000" ? "000001" : "000000";
@@ -217,7 +242,7 @@ test("a user sees browser validation, recovers from a wrong code, and cannot sub
 
 async function startAndVerifyAccount(page, identity) {
   await fillAccount(page, identity);
-  await page.getByRole("button", { name: "Send account verification code" }).click();
+  await page.getByRole("button", { name: "Send account verification code to email" }).click();
   await expect(page.getByRole("heading", { name: "Verify account email" })).toBeVisible();
   const code = await verificationCodeFor(identity.accountEmail);
   await page.getByLabel("Verify account email six-digit code").fill(code);
@@ -227,21 +252,21 @@ async function startAndVerifyAccount(page, identity) {
 
 async function fillAccount(page, identity) {
   await page.goto("/");
-  await page.getByLabel("Username email").fill(identity.accountEmail);
+  await page.getByLabel(/^Email/).fill(identity.accountEmail);
   await page.getByLabel("Given name").fill("Amina");
   await page.getByLabel("Family name").fill("Kamau");
-  await page.getByLabel("Admin phone number").fill("+254712345678");
-  await page.getByLabel("Admin role/title").fill("Owner");
-  const checkboxes = page.locator('input[type="checkbox"]');
-  await checkboxes.nth(0).check();
-  await checkboxes.nth(1).check();
+  await page.getByLabel("Phone number").fill("+254712345678");
+  await expect(page.getByLabel("Admin role/title")).toHaveCount(0);
+  await page.getByLabel("I have a website").check();
+  await page.getByLabel("I have social media pages").check();
+  await page.getByLabel(/I accept the/).check();
 }
 
 function uniqueIdentity(scenario) {
   const suffix = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
   return {
     accountEmail: `amina+${scenario}-${suffix}@example.com`,
-    websiteEmail: `owner+${scenario}-${suffix}@example.com`,
+    websiteEmail: `owner+${scenario}-${suffix}@bakery.example.com`,
     businessName: `Manual Bakery ${suffix}`,
   };
 }

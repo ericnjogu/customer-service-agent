@@ -63,9 +63,9 @@ function App() {
     given_name: "",
     family_name: "",
     admin_phone_number: "",
-    admin_role_title: "",
-    authority_confirmed: false,
     terms_accepted: false,
+    has_website: false,
+    has_social_media: false,
   });
   const [websiteForm, setWebsiteForm] = useState({
     website_url: "",
@@ -155,7 +155,9 @@ function App() {
           status: response.status,
           body,
         });
-        throw new Error(readApiError(body));
+        const error = new Error(readApiError(body));
+        error.code = response.headers.get("X-Onboarding-Error");
+        throw error;
       }
       return body;
     } catch (error) {
@@ -216,9 +218,9 @@ function App() {
             given_name: startForm.given_name,
             family_name: startForm.family_name,
             phone_number: startForm.admin_phone_number,
-            role_title: startForm.admin_role_title,
-            authority_confirmed: startForm.authority_confirmed,
             terms_accepted: startForm.terms_accepted,
+            has_website: startForm.has_website,
+            has_social_media: startForm.has_social_media,
           },
         }),
       });
@@ -257,8 +259,12 @@ function App() {
       );
       replaceUrlWithResumeLink(verified.session_id);
       setSession(verified);
-      setStep("website");
-      showInfo("Account email verified. Add a website or continue without one.");
+      if (verified.admin?.has_website === false) {
+        await skipWebsite(verified);
+      } else {
+        setStep("website");
+        showInfo("Account email verified. Add a website or continue without one.");
+      }
       return verified;
     } catch (error) {
       showError(error.message);
@@ -305,6 +311,11 @@ function App() {
           websiteForm.website_verification_email,
       });
       setSession(updated);
+      if (updated.website_email_verified) {
+        showInfo("Website email verification completed using your verified account email domain.");
+        await analyzeWebsiteForSession(updated.session_id);
+        return;
+      }
       setStep("website-email-verification");
       showInfo(
         "Website verification code sent. Please check that inbox to continue.",
@@ -316,11 +327,11 @@ function App() {
     }
   }
 
-  async function skipWebsite() {
+  async function skipWebsite(target = session) {
     setBusyAction("skip-website");
     setAlert(null);
     try {
-      const updated = await api(`/onboarding/sessions/${session.session_id}/website`, {
+      const updated = await api(`/onboarding/sessions/${target.session_id}/website`, {
         method: "PATCH",
         body: JSON.stringify({
           website_url: null,
@@ -535,7 +546,7 @@ function App() {
           </p>
         </header>
 
-        <Progress step={step} session={session} telegramEnabled={config.telegram_enabled} />
+        <Progress step={step} session={session || { admin: startForm }} telegramEnabled={config.telegram_enabled} />
 
         {alert && (
           <div className={`alert ${alert.type}`}>
@@ -564,7 +575,7 @@ function App() {
               verifyUsernameEmail(session.session_id, { code })
             }
             onResend={resendUsernameEmailVerification}
-            onContinue={() => setStep("website")}
+            onContinue={() => session.admin?.has_website === false ? skipWebsite() : setStep("website")}
             busy={busy}
             busyAction={busyAction}
           />
@@ -575,7 +586,7 @@ function App() {
             form={websiteForm}
             setForm={setWebsiteForm}
             onSubmit={continueFromWebsite}
-            onSkip={skipWebsite}
+            onSkip={() => skipWebsite()}
             onBack={() => setStep("username-email-verification")}
             busy={busy}
           />
@@ -603,8 +614,12 @@ function App() {
         {session && step === "analysis" && (
           <AnalysisScreen
             session={session}
-            onBack={() => setStep("website")}
-            onNext={(draft) => patchSession(draft, "contact")}
+            onBack={() => setStep(session.admin?.has_website === false ? "username-email-verification" : "website")}
+            onNext={async (draft) => {
+              if (session.admin?.has_social_media !== false) return patchSession(draft, "contact");
+              const updated = await patchSession(draft, config.telegram_enabled ? "awaiting-review" : "whatsapp");
+              if (config.telegram_enabled) await requestTelegramSetup(updated.session_id);
+            }}
             busy={busy}
           />
         )}
@@ -624,14 +639,14 @@ function App() {
         )}
 
         {config.telegram_enabled && session && step === "awaiting-review" && !actionParams.isTelegramSetup && (
-          <WaitingForReviewScreen session={session} onBack={() => setStep("contact")} />
+          <WaitingForReviewScreen session={session} onBack={() => setStep(session.admin?.has_social_media === false ? "analysis" : "contact")} />
         )}
 
         {config.telegram_enabled && session && step === "telegram" && actionParams.isTelegramSetup && (
           <TelegramScreen
             session={session}
             token={actionParams.token}
-            onBack={() => setStep("contact")}
+            onBack={() => setStep(session.admin?.has_social_media === false ? "analysis" : "contact")}
             onSubmit={submitTelegramSetup}
             busy={busy}
           />
@@ -640,7 +655,7 @@ function App() {
         {session && (step === "whatsapp" || (!config.telegram_enabled &&
           ["telegram", "awaiting-review"].includes(step))) && (
           <WhatsAppScreen session={session} config={config} api={api}
-            onBack={() => setStep("contact")} onSubmit={submitProvisioning} busy={busy} />
+            onBack={() => setStep(session.admin?.has_social_media === false ? "analysis" : "contact")} onSubmit={submitProvisioning} busy={busy} />
         )}
 
         {session && step === "complete" && !config.telegram_enabled && (
@@ -778,7 +793,9 @@ function Progress({ step, session, telegramEnabled = false }) {
     session &&
     !session.website_url &&
     !["account", "username-email-verification", "website"].includes(step);
-  const legacySteps = websiteWasSkipped ? noWebsiteSteps : websiteSteps;
+  const legacySteps = (websiteWasSkipped || session?.admin?.has_website === false ? noWebsiteSteps : websiteSteps)
+    .filter((item) => !(item === "website" && (websiteWasSkipped || session?.admin?.has_website === false)))
+    .filter((item) => !(item === "contact" && session?.admin?.has_social_media === false));
   const steps = telegramEnabled ? legacySteps : legacySteps
     .filter((item) => !["awaiting-review", "telegram"].includes(item))
     .flatMap((item) => item === "complete" ? ["whatsapp", "complete"] : [item]);
@@ -806,7 +823,7 @@ function StartScreen({ form, setForm, onSubmit, busy }) {
       <h2>Account setup</h2>
       <FormErrorSummary errors={validation.errors} ref={validation.summaryRef} />
       <Field
-        label="Username email"
+        label="Email"
         name="username_email"
         error={validation.errorFor("username_email")}
         help="This email will be used as a username for login to the admin dashboard."
@@ -856,10 +873,10 @@ function StartScreen({ form, setForm, onSubmit, busy }) {
         />
       </Field>
       <Field
-        label="Admin phone number"
+        label="Phone number"
         name="admin_phone_number"
         error={validation.errorFor("admin_phone_number")}
-        help="We use this as a backup contact for onboarding and future account recovery or urgent setup issues."
+        help="We use this as your admin contact for onboarding and setup issues. You will connect your WhatsApp number through Meta later."
       >
         <input
           type="tel"
@@ -873,43 +890,20 @@ function StartScreen({ form, setForm, onSubmit, busy }) {
           placeholder="+254723921716"
         />
       </Field>
-      <Field
-        label="Admin role/title"
-        name="admin_role_title"
-        error={validation.errorFor("admin_role_title")}
-        help="This helps the SaaS team understand the admin's authority and relationship to the business."
-      >
-        <input
-          aria-invalid={Boolean(validation.errorFor("admin_role_title"))}
-          aria-describedby={fieldErrorId("admin_role_title")}
-          value={form.admin_role_title}
-          onChange={(event) =>
-            setForm({ ...form, admin_role_title: event.target.value })
-          }
-          onBlur={() => validation.validateField("admin_role_title")}
-          placeholder="Owner, manager, operations lead"
-        />
-      </Field>
-      <Field
-        label="Authority confirmation"
-        name="authority_confirmed"
-        error={validation.errorFor("authority_confirmed")}
-        help="This records that the submitter is allowed to configure customer-service automation for the business."
-      >
-        <div className="checkbox-row">
-          <input
-            type="checkbox"
-            aria-invalid={Boolean(validation.errorFor("authority_confirmed"))}
-            aria-describedby={fieldErrorId("authority_confirmed")}
-            checked={form.authority_confirmed}
-            onChange={(event) =>
-              setForm({ ...form, authority_confirmed: event.target.checked })
-            }
-            onBlur={() => validation.validateField("authority_confirmed")}
-          />
-          <span>I am authorized to configure customer-service automation for this business.</span>
-        </div>
-      </Field>
+      <fieldset>
+        <legend>Optional setup</legend>
+        <p>Each selected option adds an onboarding step. Leave it unchecked to skip that step.</p>
+        <label className="checkbox-row">
+          <input type="checkbox" checked={Boolean(form.has_website)}
+            onChange={(event) => setForm({ ...form, has_website: event.target.checked })} />
+          <span>I have a website that I want to use as a knowledge base for the chatbot.</span>
+        </label>
+        <label className="checkbox-row">
+          <input type="checkbox" checked={Boolean(form.has_social_media)}
+            onChange={(event) => setForm({ ...form, has_social_media: event.target.checked })} />
+          <span>I have social media pages that customers can be referred to for further support</span>
+        </label>
+      </fieldset>
       <Field
         label="Terms of service"
         name="terms_accepted"
@@ -937,7 +931,7 @@ function StartScreen({ form, setForm, onSubmit, busy }) {
         </div>
       </Field>
       <button disabled={busy}>
-        {busy ? "Sending..." : "Send account verification code"}
+        {busy ? "Sending..." : "Send account verification code to email"}
       </button>
     </form>
   );
@@ -1212,7 +1206,7 @@ function AnalysisScreen({ session, onBack, onNext, busy }) {
           onBlur={() => validation.validateField("business_summary")}
         />
       </MarkdownField>
-      <NavButtons onBack={onBack} busy={busy} submitLabel="Review contact information" />
+      <NavButtons onBack={onBack} busy={busy} submitLabel={session.admin?.has_social_media === false ? "Continue to connection" : "Review contact information"} />
     </form>
   );
 }
@@ -1471,8 +1465,7 @@ function OnboardingSummary({ session }) {
   const fields = [
     ["Website", session.website_url],
     ["Tenant admin", `${adminDisplayName(session.admin)} <${session.admin?.username_email || ""}>`],
-    ["Admin phone", session.admin?.phone_number],
-    ["Admin role/title", session.admin?.role_title],
+    ["Phone number", session.admin?.phone_number],
     ["Business name", profile.business_name],
     ["Location name", profile.location_name],
     ["Physical location", profile.physical_location],
@@ -1691,9 +1684,9 @@ function useFormValidation(values, validate) {
 function validateAccountForm(form) {
   const errors = {};
   if (!form.username_email.trim()) {
-    errors.username_email = "Username email is required.";
+    errors.username_email = "Email is required.";
   } else if (!isValidEmail(form.username_email)) {
-    errors.username_email = "Username email must be valid.";
+    errors.username_email = "Email must be valid.";
   }
 
   if (!form.given_name.trim()) {
@@ -1705,20 +1698,14 @@ function validateAccountForm(form) {
   }
 
   if (!form.admin_phone_number.trim()) {
-    errors.admin_phone_number = "Admin phone number is required.";
+    errors.admin_phone_number = "Phone number is required.";
   } else if (!isValidAdminPhoneNumber(form.admin_phone_number)) {
     errors.admin_phone_number = (
-      "Admin phone number must use international format, for example +254723921716."
+      "Phone number must use international format, for example +254723921716."
     );
   }
 
-  if (!form.admin_role_title.trim()) {
-    errors.admin_role_title = "Admin role/title is required.";
-  }
 
-  if (!form.authority_confirmed) {
-    errors.authority_confirmed = "Authority confirmation is required.";
-  }
 
   if (!form.terms_accepted) {
     errors.terms_accepted = "Terms of service acceptance is required.";
@@ -2044,6 +2031,7 @@ if (root) {
 }
 
 export {
+  Progress,
   AnalysisScreen,
   App,
   ContactInfoScreen,

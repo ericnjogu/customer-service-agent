@@ -187,9 +187,12 @@ class Container:
     issues: object | None = None
     whatsapp_connections: object | None = None
     whatsapp_signup: object | None = None
+    media_archive: object | None = None
     credential_http_clients: tuple = ()
 
     async def close(self) -> None:
+        if self.media_archive:
+            await self.media_archive.close()
         for client in self.credential_http_clients:
             await client.aclose()
         if self.issues:
@@ -318,6 +321,7 @@ async def create_container(settings: Settings) -> Container:
     await onboarding.initialize()
     whatsapp_connections = None
     whatsapp_signup = None
+    media_archive = None
     credential_http_clients = ()
     vault_credentials = None
     if database:
@@ -344,8 +348,10 @@ async def create_container(settings: Settings) -> Container:
             timeout=10,
             verify=ssl.create_default_context(cafile=settings.openbao_ca_file),
         )
-        if (settings.deployment_environment != "test"
-                and settings.meta_graph_api_base_url != "https://graph.facebook.com"):
+        if (
+            settings.deployment_environment != "test"
+            and settings.meta_graph_api_base_url != "https://graph.facebook.com"
+        ):
             raise ValueError("Meta Graph endpoint overrides are allowed only in tests")
         meta_http = httpx.AsyncClient(base_url=settings.meta_graph_api_base_url, timeout=20)
         credential_http_clients = (vault_http, meta_http)
@@ -365,6 +371,28 @@ async def create_container(settings: Settings) -> Container:
                 version=settings.meta_graph_api_version,
             ),
         )
+        from app.adapters.google_drive import GoogleDrive
+        from app.media_archive import MediaArchive
+
+        google = None
+        if bool(settings.google_drive_client_id) != bool(settings.google_drive_client_secret):
+            raise ValueError(
+                "Configure both AGENT_GOOGLE_DRIVE_CLIENT_ID and AGENT_GOOGLE_DRIVE_CLIENT_SECRET"
+            )
+        if settings.google_drive_client_id:
+            if settings.google_drive_test_base_url and settings.deployment_environment != "test":
+                raise ValueError("Google endpoint overrides are allowed only in tests")
+            google_http = httpx.AsyncClient(timeout=60, follow_redirects=False)
+            credential_http_clients += (google_http,)
+            google = GoogleDrive(
+                google_http,
+                settings.google_drive_client_id,
+                settings.google_drive_client_secret,
+                settings.web_public_base_url.rstrip("/") + "/api/onboarding/drive/callback",
+                test_base_url=settings.google_drive_test_base_url,
+            )
+        media_archive = MediaArchive(database.pool, vault_credentials, google, settings, meta_http)
+        await media_archive.initialize()
     await retrieval.initialize()
 
     logger.info(f"answer provider '{settings.answer_provider}'")
@@ -570,5 +598,6 @@ async def create_container(settings: Settings) -> Container:
         issues=issues,
         whatsapp_connections=whatsapp_connections,
         whatsapp_signup=whatsapp_signup,
+        media_archive=media_archive,
         credential_http_clients=credential_http_clients,
     )

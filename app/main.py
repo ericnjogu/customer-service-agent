@@ -11,6 +11,8 @@ from fastapi.responses import JSONResponse
 from app.adapters.meta_signup import verify_meta_signature
 from app.adapters.telegram import telegram_reply_text, telegram_update_to_incoming_message
 from app.adapters.whatsapp import whatsapp_reply_text, whatsapp_update_to_incoming_messages
+from app.api.browser_recovery import router as browser_recovery_router
+from app.api.media_archive import router as media_archive_router
 from app.api.onboarding_jobs import router as onboarding_jobs_router
 from app.api.onboarding_sessions import router as onboarding_sessions_router
 from app.api.tenants import router as tenants_router
@@ -107,6 +109,8 @@ async def lifespan(app: FastAPI):
     try:
         if app.state.container.issues:
             await app.state.container.issues.start()
+        if app.state.container.media_archive:
+            await app.state.container.media_archive.start()
         yield
     finally:
         await app.state.container.close()
@@ -127,6 +131,8 @@ app.include_router(onboarding_jobs_router)
 app.include_router(onboarding_sessions_router)
 app.include_router(tenants_router)
 app.include_router(whatsapp_signup_router)
+app.include_router(media_archive_router)
+app.include_router(browser_recovery_router)
 
 
 @app.exception_handler(HTTPException)
@@ -332,7 +338,18 @@ async def whatsapp_webhook(
             phone_id = str(value["metadata"].get("phone_number_id", ""))
             if not waba_id or not phone_id:
                 continue
+            if change.get("field") in {"history", "smb_message_echoes"}:
+                from app.whatsapp_coexistence import handle_coexistence
+
+                await handle_coexistence(repository, waba_id, phone_id, change["field"], value)
+                continue
+            if change.get("field") not in {None, "messages"}:
+                continue
             tenant = await repository.resolve_active(waba_id, phone_id)
+            if tenant and getattr(container, "media_archive", None):
+                from app.whatsapp_coexistence import handle_coexistence
+
+                await handle_coexistence(repository, waba_id, phone_id, "messages", value)
             messages = whatsapp_update_to_incoming_messages({"entry": [{"changes": [change]}]})
             for message in messages:
                 claimed = await repository.claim_message(
@@ -344,6 +361,27 @@ async def whatsapp_webhook(
                 if not claimed or not tenant:
                     continue
                 message = message.model_copy(update={"tenant_id": tenant})
+                if await repository.is_paused(waba_id, phone_id, message.external_chat_id):
+                    from app.models import StoredMessage
+
+                    conversation = await container.conversations.get_or_create(message)
+                    await container.conversations.save_message(
+                        StoredMessage(
+                            tenant_id=tenant,
+                            conversation_id=conversation.id,
+                            event_id=message.event_id,
+                            sender_type="CUSTOMER",
+                            body=message.text,
+                        )
+                    )
+                    await repository.pool.execute(
+                        "UPDATE whatsapp_webhook_receipts SET status='ignored',updated_at=now() "
+                        "WHERE waba_id=$1 AND phone_number_id=$2 AND message_id=$3",
+                        waba_id,
+                        phone_id,
+                        message.event_id,
+                    )
+                    continue
                 outcome = "unknown"
                 receipt_status = "failed"
                 sending = False
@@ -354,12 +392,17 @@ async def whatsapp_webhook(
                     )
                     if not container.whatsapp_sender:
                         raise RuntimeError("WhatsApp sender unavailable")
-                    sending = True
-                    await container.whatsapp_sender.send_message(
-                        message.external_chat_id,
-                        whatsapp_reply_text(reply),
-                        tenant_id=tenant,
-                    )
+                    async with repository.delivery_lock(waba_id, phone_id):
+                        if await repository.is_paused(waba_id, phone_id, message.external_chat_id):
+                            receipt_status = "ignored"
+                            outcome = "failed"
+                            continue
+                        sending = True
+                        await container.whatsapp_sender.send_message(
+                            message.external_chat_id,
+                            whatsapp_reply_text(reply),
+                            tenant_id=tenant,
+                        )
                     outcome = "accepted"
                     receipt_status = "sent"
                 except Exception:

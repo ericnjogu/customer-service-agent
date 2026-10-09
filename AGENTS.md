@@ -11,6 +11,15 @@
 ## Database fields policy
 prefer explicit fields over fields stored in jsonb fields
 
+## Local validation policy
+
+- After each completed onboarding change, run both browser QA channels with
+  `bash scripts/run-browser-qa-all.sh`; a single channel is not sufficient.
+- Install the repository pre-push hook with `bash scripts/install-git-hooks.sh`.
+  Every push must pass both suites. Do not bypass the hook to push failing tests.
+- Run relevant unit/frontend tests during editing as well. Report checks that
+  could not run; do not claim that local success confirms GitHub CI success.
+
 ## Pull request branch policy
 
 - Before committing or opening a pull request while a feature branch is checked out,

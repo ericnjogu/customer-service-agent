@@ -166,7 +166,11 @@ export default function WhatsAppScreen({ session, config, api, onSubmit, onBack,
       if (current.current === attempt) setArchive((value) => ({ ...value, locked: result.locked }));
     } catch {
       if (current.current === attempt) setMessage("Could not release signup settings. Please retry connection.");
-    } finally { if (current.current === attempt) setPreparing(false); }
+    } finally { if (current.current === attempt) {
+      setPreparing(false);
+      // The SDK remains loaded after cancellation; the next click can open Meta.
+      setReady(Boolean(window.FB));
+    } }
   }
 
   async function prepareConnection() {
@@ -227,8 +231,9 @@ export default function WhatsAppScreen({ session, config, api, onSubmit, onBack,
   function connect() {
     const attempt = current.current;
     if (!ready || !attempt || driveBusy || (archive?.import_enabled && archive.drive_status !== "ready")) return;
+    Object.assign(attempt, { code: null, assets: null, sent: false, parameters: null });
     attempt.active = true;
-    setConnecting(true); setReady(false); setMessage("Complete the Meta signup window.");
+    setFailed(false); setConnecting(true); setReady(false); setMessage("Complete the Meta signup window.");
     // Start the server attempt in parallel; do not await before opening the popup.
     attempt.startPromise = apiRef.current(`${base}/start`, { method: "POST" }).then((parameters) => {
       attempt.parameters = parameters;
@@ -239,6 +244,7 @@ export default function WhatsAppScreen({ session, config, api, onSubmit, onBack,
       if (current.current !== attempt || !attempt.active) return;
       attempt.active = false; attempt.code = null;
       setConnecting(false); setFailed(true); setMessage(error.message);
+      setReady(true);
       if (error.code === "browser_verification_required") setNeedsBrowser(true);
     });
     window.FB.login((response) => {
@@ -328,7 +334,7 @@ export default function WhatsAppScreen({ session, config, api, onSubmit, onBack,
         : connecting
           ? <button type="button" disabled>Connecting…</button>
           : ready
-            ? <button type="button" onClick={connect} disabled={busy || driveBusy || (archive?.import_enabled && archive.drive_status !== "ready")}>Connect WhatsApp</button>
+            ? <button type="button" onClick={connect} disabled={busy || preparing || driveBusy || (archive?.import_enabled && archive.drive_status !== "ready")}>{failed ? "Retry connection" : "Connect WhatsApp"}</button>
             : <button type="button" onClick={prepareConnection}
                 disabled={busy || preparing || driveBusy || !failed || (archive?.import_enabled && archive.drive_status !== "ready")}>
                 {preparing ? "Preparing…" : failed ? "Retry connection" : "Connect WhatsApp"}</button>)}

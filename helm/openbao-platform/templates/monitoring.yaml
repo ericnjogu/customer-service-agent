@@ -1,0 +1,38 @@
+{{- if .Values.monitoring.enabled }}
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMRule
+metadata:
+  name: openbao-recovery-readiness
+  namespace: {{ .Values.monitoringNamespace }}
+spec:
+  groups:
+    - name: openbao-readiness
+      rules:
+        - alert: OpenBaoReplicaUnavailable
+          expr: (kube_statefulset_status_replicas_ready{namespace="{{ .Release.Namespace }}",statefulset="openbao"} < 3) or absent(kube_statefulset_status_replicas_ready{namespace="{{ .Release.Namespace }}",statefulset="openbao"})
+          for: 5m
+          labels: { severity: warning }
+          annotations: { summary: "An OpenBao replica is sealed, unavailable, or not reporting readiness" }
+        - alert: OpenBaoQuorumAtRisk
+          expr: (kube_statefulset_status_replicas_ready{namespace="{{ .Release.Namespace }}",statefulset="openbao"} < 2) or absent(kube_statefulset_status_replicas_ready{namespace="{{ .Release.Namespace }}",statefulset="openbao"})
+          for: 1m
+          labels: { severity: critical }
+          annotations: { summary: "Fewer than two ready OpenBao replicas; investigate quorum immediately" }
+        - alert: OpenBaoStoragePressure
+          expr: kubelet_volume_stats_available_bytes{namespace="{{ .Release.Namespace }}"} / kubelet_volume_stats_capacity_bytes{namespace="{{ .Release.Namespace }}"} < 0.2
+          for: 10m
+          labels: { severity: warning }
+          annotations: { summary: "OpenBao volume has less than 20 percent free capacity" }
+        - alert: OpenBaoCertificateExpiring
+          expr: certmanager_certificate_expiration_timestamp_seconds{namespace="{{ .Release.Namespace }}"} - time() < 1209600
+          for: 15m
+          labels: { severity: warning }
+          annotations: { summary: "OpenBao certificate expires in less than fourteen days" }
+{{- if .Values.backups.enabled }}
+        - alert: OpenBaoBackupStale
+          expr: (time() - kube_cronjob_status_last_successful_time{namespace="{{ .Release.Namespace }}",cronjob="openbao-backup-frequent"} > 1800) or absent(kube_cronjob_status_last_successful_time{namespace="{{ .Release.Namespace }}",cronjob="openbao-backup-frequent"})
+          for: 5m
+          labels: { severity: critical }
+          annotations: { summary: "No successful OpenBao snapshot upload job in thirty minutes" }
+{{- end }}
+{{- end }}

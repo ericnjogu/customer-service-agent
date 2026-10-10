@@ -10,6 +10,21 @@ test.beforeEach(async () => {
   await installExternalServiceStubs();
 });
 
+test.afterEach(async ({ page }) => {
+  // WireMock resets do not reset PostgreSQL. Release the website even on failed
+  // assertions so a Playwright retry cannot collide with this abandoned draft.
+  const sessionId = await page.evaluate(() => localStorage.getItem("onboarding_session_id"));
+  if (!sessionId) return;
+  const response = await page.request.get(`${apiBaseUrl}/onboarding/sessions/${sessionId}`);
+  if (!response.ok()) return;
+  const session = await response.json();
+  if (!session.website_url || !session.username_email_verified) return;
+  const cleared = await page.request.patch(`${apiBaseUrl}/onboarding/sessions/${sessionId}/website`, {
+    data: { website_url: null, website_verification_email: null },
+  });
+  expect(cleared.ok()).toBeTruthy();
+});
+
 test("a business with a website completes verification and reviews analyzed details", async ({
   page,
 }) => {
@@ -39,7 +54,22 @@ test("a business with a website completes verification and reviews analyzed deta
   await page.getByLabel("Business name").fill(identity.businessName);
   await page.getByRole("button", { name: "Review contact information" }).click();
   await expect(page.getByRole("heading", { name: "Contact information" })).toBeVisible();
+  // Reproduce a slow CI submission: success must not appear after the PATCH
+  // while the separate request-telegram-setup call is still pending.
+  let releaseSubmission;
+  const submissionGate = new Promise((resolve) => { releaseSubmission = resolve; });
+  let submissionStarted;
+  const started = new Promise((resolve) => { submissionStarted = resolve; });
+  await page.route("**/request-telegram-setup", async (route) => {
+    submissionStarted();
+    await submissionGate;
+    await route.continue();
+  });
   await page.getByRole("button", { name: "Continue to connection" }).click();
+  await started;
+  try {
+    await expect(page.getByRole("heading", { name: "Onboarding submitted for review" })).toHaveCount(0);
+  } finally { releaseSubmission(); }
   await expect(
     page.getByRole("heading", { name: "Onboarding submitted for review" }),
   ).toBeVisible();

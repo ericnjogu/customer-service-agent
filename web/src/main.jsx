@@ -617,7 +617,7 @@ function App() {
             onBack={() => setStep(session.admin?.has_website === false ? "username-email-verification" : "website")}
             onNext={async (draft) => {
               if (session.admin?.has_social_media !== false) return patchSession(draft, "contact");
-              const updated = await patchSession(draft, config.telegram_enabled ? "awaiting-review" : "whatsapp");
+              const updated = await patchSession(draft, config.telegram_enabled ? "analysis" : "whatsapp");
               if (config.telegram_enabled) await requestTelegramSetup(updated.session_id);
             }}
             busy={busy}
@@ -630,7 +630,7 @@ function App() {
             onBack={() => setStep("analysis")}
             onNext={(contact_info) =>
               config.telegram_enabled
-                ? patchSession({ contact_info }, "awaiting-review").then((updated) =>
+                ? patchSession({ contact_info }, "contact").then((updated) =>
                     requestTelegramSetup(updated.session_id))
                 : patchSession({ contact_info }, "whatsapp")
             }
@@ -1167,11 +1167,6 @@ function AnalysisScreen({ session, onBack, onNext, busy }) {
   return (
     <form className="card form" onSubmit={handleSubmit} noValidate>
       <h2>Business information</h2>
-      <p>
-        {session.website_url
-          ? "Review and edit business information as retrieved from the website. Add any additional relevant information."
-          : "Describe the business offerings, customers, service area, hours, policies, FAQs, and any other facts."}
-      </p>
       <p>The business name, information will be used as the initial knowledge base for the chatbot.</p>
       <FormErrorSummary errors={validation.errors} ref={validation.summaryRef} />
       <Field
@@ -1196,6 +1191,11 @@ function AnalysisScreen({ session, onBack, onNext, busy }) {
         error={validation.errorFor("business_summary")}
         help="This Markdown summary becomes business context for customer answers. It may contain up to 10,000 characters"
       >
+      <p>
+        {session.website_url
+          ? "Review and edit business information as retrieved from the website. Add any additional relevant information."
+          : "Describe the business offerings, customers, service area, hours, policies, FAQs, and any other facts."}
+      </p>
         <MarkdownRichEditor
           id="business-summary-faq-editor"
           ariaLabel="Business summary / FAQ"

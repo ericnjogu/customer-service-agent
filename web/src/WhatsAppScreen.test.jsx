@@ -71,9 +71,31 @@ test("rejects untrusted origins and supports cancellation", async () => {
   await waitFor(() => expect(screen.getByRole("checkbox")).toBeEnabled());
   expect(screen.queryByRole("button", { name: "Connect WhatsApp" })).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Retry connection" }));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Connect WhatsApp" })).toBeEnabled());
+  expect(window.FB.login).toHaveBeenCalledTimes(2);
+  expect(screen.getByRole("button", { name: "Connecting…" })).toBeDisabled();
   expect(screen.queryByRole("button", { name: "Retry connection" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Submit and provision" })).not.toBeInTheDocument();
+});
+
+test("retry clears failed completion data and completes a fresh signup in one click", async () => {
+  const { api, authorize } = setup();
+  await prepareMeta();
+  const original = api.getMockImplementation();
+  let failCompletion = true;
+  api.mockImplementation(async (path, options) => {
+    if (path.endsWith("/complete") && failCompletion) throw new Error("Try again");
+    return original(path, options);
+  });
+  await userEvent.click(screen.getByRole("button", { name: "Connect WhatsApp" }));
+  await act(async () => { authorize(); event(); });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Retry connection" })).toBeEnabled());
+  failCompletion = false;
+  await userEvent.click(screen.getByRole("button", { name: "Retry connection" }));
+  expect(window.FB.login).toHaveBeenCalledTimes(2);
+  await act(async () => authorize());
+  expect(api.mock.calls.filter(([path]) => path.endsWith("/complete"))).toHaveLength(1);
+  await act(async () => event());
+  expect(await screen.findByText("+254700000001")).toBeInTheDocument();
 });
 
 test("preloads without locking preferences; completion waits for the server attempt", async () => {

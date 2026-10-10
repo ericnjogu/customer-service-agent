@@ -617,7 +617,7 @@ function App() {
             onBack={() => setStep(session.admin?.has_website === false ? "username-email-verification" : "website")}
             onNext={async (draft) => {
               if (session.admin?.has_social_media !== false) return patchSession(draft, "contact");
-              const updated = await patchSession(draft, config.telegram_enabled ? "awaiting-review" : "whatsapp");
+              const updated = await patchSession(draft, config.telegram_enabled ? "analysis" : "whatsapp");
               if (config.telegram_enabled) await requestTelegramSetup(updated.session_id);
             }}
             busy={busy}
@@ -630,7 +630,7 @@ function App() {
             onBack={() => setStep("analysis")}
             onNext={(contact_info) =>
               config.telegram_enabled
-                ? patchSession({ contact_info }, "awaiting-review").then((updated) =>
+                ? patchSession({ contact_info }, "contact").then((updated) =>
                     requestTelegramSetup(updated.session_id))
                 : patchSession({ contact_info }, "whatsapp")
             }

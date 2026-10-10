@@ -1,0 +1,10 @@
+#: Enter the PR title on the first non-empty, non-comment line below.
+#: The title is also used as the commit message.
+
+
+#: Below the title, leave a blank line and describe the changes.
+#: Suggested sections: Summary, Validation, and Deployment considerations.
+#: Markdown headings (## Summary) and bullet lists are supported.
+#: Lines beginning with #: are removed; other content is preserved.
+#: Save and close the editor to continue. An empty title/body aborts.
+#: All staged, unstaged, and non-ignored untracked files will be committed.

@@ -42,6 +42,12 @@ spec:
     helm:
       valuesObject:
         deploymentMode: SingleBinary
+        lokiCanary:
+          # Keep the unique pod label; use the second canary label for service
+          # identity in both direct pushes and the canary's verification query.
+          extraArgs:
+            - -streamname=service_name
+            - -streamvalue=loki-canary
         loki:
           auth_enabled: false
           commonConfig: { replication_factor: 1 }

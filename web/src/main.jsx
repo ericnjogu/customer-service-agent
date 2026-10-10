@@ -1167,11 +1167,6 @@ function AnalysisScreen({ session, onBack, onNext, busy }) {
   return (
     <form className="card form" onSubmit={handleSubmit} noValidate>
       <h2>Business information</h2>
-      <p>
-        {session.website_url
-          ? "Review and edit business information as retrieved from the website. Add any additional relevant information."
-          : "Describe the business offerings, customers, service area, hours, policies, FAQs, and any other facts."}
-      </p>
       <p>The business name, information will be used as the initial knowledge base for the chatbot.</p>
       <FormErrorSummary errors={validation.errors} ref={validation.summaryRef} />
       <Field
@@ -1196,6 +1191,11 @@ function AnalysisScreen({ session, onBack, onNext, busy }) {
         error={validation.errorFor("business_summary")}
         help="This Markdown summary becomes business context for customer answers. It may contain up to 10,000 characters"
       >
+      <p>
+        {session.website_url
+          ? "Review and edit business information as retrieved from the website. Add any additional relevant information."
+          : "Describe the business offerings, customers, service area, hours, policies, FAQs, and any other facts."}
+      </p>
         <MarkdownRichEditor
           id="business-summary-faq-editor"
           ariaLabel="Business summary / FAQ"

@@ -27,6 +27,19 @@ const REQUIRE_ADMIN_EMAIL_DOMAIN_MATCH = parseBooleanEnv(
 );
 const TERMS_PATH = "/terms";
 const TERMS_VERSION = "beta-2026-08-28";
+const CONTACT_PLATFORMS = {
+  instagram: "Instagram", facebook: "Facebook", tiktok: "TikTok",
+  linkedin: "LinkedIn", x: "X", youtube: "YouTube", whatsapp: "WhatsApp",
+  telegram: "Telegram", pinterest: "Pinterest", threads: "Threads",
+  map: "Google Maps", website: "Website", email: "Email", phone: "Phone", other: "Other",
+};
+const HANDLE_HOSTS = {
+  instagram: "https://www.instagram.com/", facebook: "https://www.facebook.com/",
+  tiktok: "https://www.tiktok.com/@", linkedin: "https://www.linkedin.com/in/",
+  x: "https://x.com/", youtube: "https://www.youtube.com/@",
+  telegram: "https://t.me/", pinterest: "https://www.pinterest.com/",
+  threads: "https://www.threads.net/@",
+};
 
 const websiteSteps = [
   "account",
@@ -1170,7 +1183,7 @@ function AnalysisScreen({ session, onBack, onNext, busy }) {
       <p>The business name, information will be used as the initial knowledge base for the chatbot.</p>
       <FormErrorSummary errors={validation.errors} ref={validation.summaryRef} />
       <Field
-        label="Business name"
+        label="Organization name"
         name="business_profile.business_name"
         error={validation.errorFor("business_profile.business_name")}
         help="Your business name."
@@ -1266,7 +1279,7 @@ function ContactInfoScreen({ session, onBack, onNext, busy }) {
   function updateLink(index, field, value) {
     setLinks((current) =>
       current.map((link, linkIndex) =>
-        linkIndex === index ? { ...link, [field]: value } : link,
+        linkIndex === index ? { ...link, [field]: value, ...(field === "kind" ? { label: "" } : {}) } : link,
       ),
     );
   }
@@ -1324,7 +1337,7 @@ function ContactInfoScreen({ session, onBack, onNext, busy }) {
                 </button>
               </div>
               <Field
-                label="Type"
+                label="Platform"
                 name={`${baseName}.kind`}
                 error={validation.errorFor(`${baseName}.kind`)}
                 help="Classifies the contact point, such as website, email, phone, WhatsApp, Facebook, or map."
@@ -1332,29 +1345,20 @@ function ContactInfoScreen({ session, onBack, onNext, busy }) {
                 <input
                   aria-invalid={Boolean(validation.errorFor(`${baseName}.kind`))}
                   aria-describedby={fieldErrorId(`${baseName}.kind`)}
-                  value={link.kind}
-                  placeholder="website, email, phone, whatsapp"
-                  onChange={(event) => updateLink(index, "kind", event.target.value)}
+                  list={`contact-platforms-${index}`}
+                  aria-label="Platform"
+                  value={CONTACT_PLATFORMS[link.kind] || link.kind}
+                  placeholder="Search or choose a platform"
+                  onChange={(event) => updateLink(index, "kind",
+                    Object.keys(CONTACT_PLATFORMS).find(key => CONTACT_PLATFORMS[key].toLowerCase() === event.target.value.toLowerCase()) || event.target.value)}
                   onBlur={() => validation.validateField(`${baseName}.kind`)}
                 />
+                <datalist id={`contact-platforms-${index}`}>
+                  {Object.values(CONTACT_PLATFORMS).map(label => <option key={label} value={label} />)}
+                </datalist>
               </Field>
               <Field
-                label="Label"
-                name={`${baseName}.label`}
-                error={validation.errorFor(`${baseName}.label`)}
-                help="A human-friendly name for this contact point so admins and customers can tell links apart."
-              >
-                <input
-                  aria-invalid={Boolean(validation.errorFor(`${baseName}.label`))}
-                  aria-describedby={fieldErrorId(`${baseName}.label`)}
-                  value={link.label}
-                  placeholder="Main phone, Instagram, WhatsApp"
-                  onChange={(event) => updateLink(index, "label", event.target.value)}
-                  onBlur={() => validation.validateField(`${baseName}.label`)}
-                />
-              </Field>
-              <Field
-                label="URL or value"
+                label="URL or handle"
                 name={`${baseName}.url`}
                 error={validation.errorFor(`${baseName}.url`)}
                 help="The exact contact value the assistant may share, such as a URL, email address, or phone number."
@@ -1363,7 +1367,8 @@ function ContactInfoScreen({ session, onBack, onNext, busy }) {
                   aria-invalid={Boolean(validation.errorFor(`${baseName}.url`))}
                   aria-describedby={fieldErrorId(`${baseName}.url`)}
                   value={link.url}
-                  placeholder="https://..., hello@example.com, +254..."
+                  placeholder={link.kind === "other" ? "https://example.com/your-page" : "Profile URL or @handle (email / phone where applicable)"}
+                  aria-label="URL or handle"
                   onChange={(event) => updateLink(index, "url", event.target.value)}
                   onBlur={() => validation.validateField(`${baseName}.url`)}
                 />
@@ -1466,7 +1471,7 @@ function OnboardingSummary({ session }) {
     ["Website", session.website_url],
     ["Tenant admin", `${adminDisplayName(session.admin)} <${session.admin?.username_email || ""}>`],
     ["Phone number", session.admin?.phone_number],
-    ["Business name", profile.business_name],
+    ["Organization name", profile.business_name],
     ["Location name", profile.location_name],
     ["Physical location", profile.physical_location],
     ["Business phone", profile.business_phone],
@@ -1769,7 +1774,7 @@ function parseBooleanEnv(value, defaultValue) {
 function validateAnalysisDraft(draft) {
   const errors = {};
   if (!String(draft.business_profile?.business_name || "").trim()) {
-    errors["business_profile.business_name"] = "Business name is required.";
+    errors["business_profile.business_name"] = "Organization name is required.";
   }
   if (!draft.business_summary.trim()) {
     errors.business_summary = "Business summary / FAQ is required.";
@@ -1785,12 +1790,16 @@ function validateContactInfo(values) {
     );
     if (!hasAnyValue) return;
 
-    if (!link.kind.trim()) {
-      errors[`contact_info.${index}.kind`] = "Type is required.";
+    if (!Object.hasOwn(CONTACT_PLATFORMS, link.kind)) {
+      errors[`contact_info.${index}.kind`] = "Choose a listed platform or Other.";
     }
     if (!link.url.trim()) {
       errors[`contact_info.${index}.url`] = "Contact URL or value is required.";
-    } else if (!isValidContactValue(link.url)) {
+    } else if (link.kind === "other" && !/^https?:\/\//i.test(link.url.trim())) {
+      errors[`contact_info.${index}.url`] = "'Other' requires a full HTTP(S) URL.";
+    } else if (link.kind === "other" && !isValidHttpUrl(link.url)) {
+      errors[`contact_info.${index}.url`] = "Enter a valid HTTP(S) URL.";
+    } else if (!isValidContactValue(normalizeContactUrl(link.url, link.kind))) {
       errors[`contact_info.${index}.url`] = (
         "Enter a valid URL, email address, phone number, or contact URI."
       );
@@ -1861,12 +1870,15 @@ function normalizeContactUrl(value, kind = "") {
   if (isValidEmail(trimmed)) return `mailto:${trimmed}`;
   if (isLikelyPhoneNumber(trimmed)) return phoneContactUrl(trimmed, kind);
   if (isLikelyBareDomain(trimmed)) return normalizeWebsiteUrl(trimmed);
+  if (HANDLE_HOSTS[kind] && /^@?[a-z\d_][a-z\d_.-]*$/i.test(trimmed)) {
+    return HANDLE_HOSTS[kind] + trimmed.replace(/^@/, "");
+  }
   return trimmed;
 }
 
 function contactPointForSubmit(link) {
   const kind = link.kind.trim();
-  const label = link.label.trim() || kind;
+  const label = kind === "other" ? "Other" : link.label.trim() || CONTACT_PLATFORMS[kind] || kind;
   const rawContact = link.url.trim();
   const normalizedContact = normalizeContactUrl(rawContact, kind);
   const contact = { kind, label };
@@ -1894,7 +1906,7 @@ function normalizeContactInfo(links, baseUrl = "") {
       const contactValue = unwrapMarkdownLink(link.url || link.value || "");
       return {
         id: `link-${index}-${link.kind || "contact"}`,
-        kind: link.kind || "",
+        kind: Object.hasOwn(CONTACT_PLATFORMS, link.kind) ? link.kind : "other",
         label: link.label || link.kind || "",
         url: contactValue,
       };

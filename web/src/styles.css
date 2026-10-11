@@ -355,7 +355,7 @@ textarea {
   border-radius: 18px;
   display: grid;
   gap: 14px;
-  grid-template-columns: minmax(120px, 0.7fr) minmax(160px, 1fr) minmax(240px, 1.6fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
   margin: 0;
   padding: 16px;
 }
@@ -367,6 +367,10 @@ textarea {
   font-weight: 800;
   grid-column: 1 / -1;
   justify-content: space-between;
+}
+
+@media (max-width: 640px) {
+  .repeater-row { grid-template-columns: minmax(0, 1fr); }
 }
 
 .repeater-row legend {

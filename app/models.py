@@ -362,6 +362,14 @@ class OnboardingContactPoint(BaseModel):
     url: str | None = Field(default=None, max_length=1_000)
     is_primary: bool = False
 
+    @model_validator(mode="after")
+    def validate_other_url(self) -> "OnboardingContactPoint":
+        if self.kind.lower() == "other":
+            parsed = urlparse(self.url or "")
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                raise ValueError("'Other' requires a full HTTP(S) URL")
+        return self
+
     @field_validator("url", mode="before")
     @classmethod
     def validate_contact_url(cls, value: object) -> str | None:

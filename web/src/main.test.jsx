@@ -742,6 +742,30 @@ describe("email verification flow", () => {
 });
 
 describe("contact information form", () => {
+  test("Other requires a URL and known social platforms accept handles", async () => {
+    const user = userEvent.setup();
+    const onNext = vi.fn();
+    render(<ContactInfoScreen session={{}} onBack={vi.fn()} onNext={onNext} busy={false} />);
+    const platform = screen.getByRole("combobox", { name: "Platform" });
+    const contact = screen.getByLabelText("URL or handle");
+    expect(screen.getAllByRole("textbox")).toHaveLength(1);
+    await user.type(platform, "Other");
+    await user.type(contact, "@example");
+    await user.click(screen.getByRole("button", { name: /continue to connection/i }));
+    expect(onNext).not.toHaveBeenCalled();
+    expect(screen.getAllByText("'Other' requires a full HTTP(S) URL.").length).toBeGreaterThan(0);
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    await user.clear(contact);
+    await user.type(contact, "https://example.com/profile");
+    await user.click(screen.getByRole("button", { name: /continue to connection/i }));
+    expect(onNext).toHaveBeenLastCalledWith([{ kind: "other", label: "Other", url: "https://example.com/profile" }]);
+    await user.clear(platform);
+    await user.type(platform, "Instagram");
+    await user.clear(contact);
+    await user.type(contact, "@example");
+    await user.click(screen.getByRole("button", { name: /continue to connection/i }));
+    expect(onNext).toHaveBeenLastCalledWith([{ kind: "instagram", label: "Instagram", url: "https://www.instagram.com/example" }]);
+  });
   test("deduplicates equivalent URLs with different labels", () => {
     render(
       <ContactInfoScreen
@@ -809,7 +833,7 @@ describe("contact information form", () => {
       />,
     );
 
-    expect(screen.getByDisplayValue("website")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Website")).toBeInTheDocument();
     expect(screen.getByDisplayValue("mailto:hello@example.co.ke")).toBeInTheDocument();
 
     await user.click(
@@ -821,11 +845,9 @@ describe("contact information form", () => {
       screen.getByRole("button", { name: /add a contact or social account/i }),
     );
 
-    const typeInputs = screen.getAllByLabelText(/type/i);
-    const labelInputs = screen.getAllByLabelText(/label/i);
-    const contactInputs = screen.getAllByLabelText(/url or value/i);
+    const typeInputs = screen.getAllByRole("combobox", { name: "Platform" });
+    const contactInputs = screen.getAllByLabelText(/url or handle/i);
     await user.type(typeInputs[1], "whatsapp");
-    await user.type(labelInputs[1], "WhatsApp");
     await user.type(contactInputs[1], "+254 700 000000");
 
     await user.click(screen.getByRole("button", { name: /continue to connection/i }));

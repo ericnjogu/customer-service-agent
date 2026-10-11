@@ -5,7 +5,7 @@ collectionInterval: 60s
 exporters:
   otlp:
     enabled: true
-    metricsEndpoint: http://vmsingle-victoria-metrics-victoria-metrics-k8s-stack.monitoring.svc:8428/opentelemetry
+    metricsEndpoint: http://vmsingle-vm-victoria-metrics-k8s-stack.monitoring.svc:8428/opentelemetry
     logsEndpoint: http://loki-gateway.monitoring.svc/otlp
 
 resources:

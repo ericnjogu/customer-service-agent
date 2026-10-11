@@ -43,7 +43,7 @@ test("a business with a website completes verification and reviews analyzed deta
   await expect(page.getByRole("heading", { name: "Business information" })).toBeVisible({
     timeout: 30_000,
   });
-  await expect(page.getByLabel("Business name")).toHaveValue("Hustle Bakery");
+  await expect(page.getByLabel("Organization name")).toHaveValue("Hustle Bakery");
   await expect(page.getByRole("textbox", { name: "editable markdown" })).toContainText(
     "Neighborhood bakery",
   );
@@ -51,9 +51,14 @@ test("a business with a website completes verification and reviews analyzed deta
   // Keep this a real browser journey through the review screen: the generated
   // profile is edited, saved through the web/API boundary, then verified from
   // the persisted onboarding session returned by the API.
-  await page.getByLabel("Business name").fill(identity.businessName);
+  await page.getByLabel("Organization name").fill(identity.businessName);
   await page.getByRole("button", { name: "Review contact information" }).click();
   await expect(page.getByRole("heading", { name: "Contact information" })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  const platformBox = await page.getByRole("combobox", { name: "Platform" }).boundingBox();
+  const contactBox = await page.getByLabel("URL or handle").boundingBox();
+  expect(contactBox.y).toBeGreaterThan(platformBox.y + platformBox.height);
+  expect(contactBox.x + contactBox.width).toBeLessThanOrEqual(390);
   // Reproduce a slow CI submission: success must not appear after the PATCH
   // while the separate request-telegram-setup call is still pending.
   let releaseSubmission;
@@ -159,16 +164,15 @@ test("a business without a website can submit manual details and complete Telegr
   await expect(page.getByRole("heading", { name: "Business information" })).toBeVisible();
   await expect(page.getByText(/offerings, customers, service area, hours/i)).toBeVisible();
 
-  await page.getByLabel("Business name").fill(identity.businessName);
+  await page.getByLabel("Organization name").fill(identity.businessName);
   await page.getByRole("textbox", { name: "editable markdown" }).fill(
     "A neighborhood bakery serving sourdough and pastries. Open daily from 7am to 6pm.",
   );
   await page.getByRole("button", { name: "Review contact information" }).click();
 
   await expect(page.getByRole("heading", { name: "Contact information" })).toBeVisible();
-  await page.getByLabel("Type").fill("instagram");
-  await page.getByLabel("Label").fill("Instagram");
-  await page.getByLabel("URL or value").fill("https://instagram.com/hustle_bakery_e2e");
+  await page.getByRole("combobox", { name: "Platform" }).fill("Instagram");
+  await page.getByLabel("URL or handle").fill("https://instagram.com/hustle_bakery_e2e");
   await page.getByRole("button", { name: "Continue to connection" }).click();
 
   await expect(

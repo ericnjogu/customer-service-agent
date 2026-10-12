@@ -443,6 +443,7 @@ async def create_container(settings: Settings) -> Container:
             generator,
             tenant_configs,
             settings.embedding_model,
+            concurrency=settings.issue_processing_concurrency,
         )
 
     graph = build_service_graph(

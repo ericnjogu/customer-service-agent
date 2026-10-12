@@ -62,8 +62,25 @@ or proactively offering a human-support request. Explicit requests and contextua
 [PgQueuer 1.4.0](https://janbjorge.github.io/pgqueuer/) owns queue tables, notifications,
 database-enforced concurrency, heartbeats, crash recovery, retries and failed jobs.
 The application starts an in-process async worker; no extra pod or Redis queue is used.
-Only one `conversation_issue` job runs globally, including across application replicas.
-This trades background throughput for simpler ordering; reply generation remains independent.
+`AGENT_ISSUE_PROCESSING_CONCURRENCY` (Helm `issueProcessing.concurrency`, default 4,
+range 1–32) limits `conversation_issue` jobs globally across application replicas.
+Each replica picks at most two issue jobs to bound local database/model pressure.
+Independent conversations can run concurrently; a tenant/conversation advisory lock
+serializes processing, including stale-worker recovery, within one conversation.
+The lock is released before returning the pooled connection. Reply generation is independent.
+
+Media transfers use `AGENT_MEDIA_ARCHIVE_CONCURRENCY` (Helm
+`mediaArchive.concurrency`, default 1, range 1–4) **per replica**, with no global
+media entrypoint limit. A local semaphore bounds active transfers; PgQueuer may
+prefetch a second job when the limit is one, but it waits before taking a database
+connection or downloading media. Attachment locks still prevent duplicate transfers.
+Three replicas therefore allow up to three active transfers at the default setting.
+
+Use the same issue limit across replicas. These settings require a worker restart;
+coordinate rollout when lowering limits and allow already-running work to finish.
+Increasing limits increases database connections, model/API usage, and temporary
+media storage (up to the configured per-file limit for each active transfer).
+Monitor queue lag, rate-limit errors and database pool pressure before increasing them.
 
 Reply persistence and enqueueing share one PostgreSQL transaction. Queue payloads contain
 only tenant/conversation/request/reply references. Jobs initially have a 60-second recovery delay;

@@ -80,8 +80,12 @@ outputs to prevent processing loops.
 ## Operations and recovery
 
 The independent `whatsapp_media_archive` PgQueuer entrypoint starts through application
-lifespan, even when issue processing is disabled. The database concurrency limit is
-initially one archive job globally (therefore at most one per replica). Downloads use
+lifespan, even when issue processing is disabled. There is
+one active archive transfer per replica by default, without a global entrypoint cap.
+Configure `AGENT_MEDIA_ARCHIVE_CONCURRENCY` (Helm `mediaArchive.concurrency`, 1–4)
+to change that per-replica limit. PgQueuer may prefetch a second job when the limit
+is one; it waits on a local semaphore before acquiring a database connection.
+Attachment-level database locks still prevent concurrent duplicate transfers. Downloads use
 bounded temporary files, cleaned on exit; resumable upload URLs and pre-generated
 Drive IDs let retries recover without duplicate files. Those URLs are internal
 transfer state and must not be logged or exposed.

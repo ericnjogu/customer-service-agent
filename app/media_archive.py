@@ -137,11 +137,14 @@ class MediaArchive:
     def __init__(self, pool, vault, google, settings, meta_client):
         self.pool, self.vault, self.google = pool, vault, google
         self.settings, self.meta_client = settings, meta_client
+        self.concurrency = settings.media_archive_concurrency
+        self.transfer_slots = asyncio.Semaphore(self.concurrency)
         self.driver = AsyncpgPoolDriver(pool)
         self.manager = QueueManager(Queries(self.driver))
         self.manager.entrypoint(
             ENTRYPOINT,
-            concurrency_limit=1,
+            # No cluster-wide cap: transfer_slots bounds execution per replica.
+            concurrency_limit=0,
             on_failure="hold",
             executor_factory=partial(
                 DatabaseRetryEntrypointExecutor, max_attempts=4, initial_delay=timedelta(seconds=5)
@@ -158,7 +161,8 @@ class MediaArchive:
 
     async def start(self):
         self.task = asyncio.create_task(
-            self.manager.run(batch_size=1, max_concurrent_tasks=2), name="media-archive-pgqueuer"
+            self.manager.run(batch_size=1, max_concurrent_tasks=max(2, self.concurrency)),
+            name="media-archive-pgqueuer",
         )
 
     async def close(self):
@@ -359,6 +363,12 @@ class MediaArchive:
                 )
 
     async def process(self, job):
+        # PgQueuer requires a picked-job budget >= 2. At concurrency=1 the
+        # extra picked job waits here, before taking a database connection.
+        async with self.transfer_slots:
+            await self._process(job)
+
+    async def _process(self, job):
         attachment_id = UUID(json.loads(job.payload)["id"])
         async with self.pool.acquire() as sql:
             await sql.execute("SELECT pg_advisory_lock(hashtextextended($1,0))", str(attachment_id))

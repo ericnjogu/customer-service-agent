@@ -19,6 +19,57 @@ from app.whatsapp_coexistence import handle_coexistence, import_pending
 from app.whatsapp_connections import PostgresWhatsAppConnections
 
 
+@pytest.mark.parametrize("concurrency", [1, 2])
+async def test_media_workers_limit_transfers_per_replica(archive, concurrency):
+    from pgqueuer import Queries
+
+    from app.media_archive import ENTRYPOINT
+
+    original, _ = archive
+    workers = [MediaArchive(
+        original.pool, original.vault, original.google,
+        Settings(media_archive_concurrency=concurrency), original.meta_client,
+    ) for _ in range(2)]
+    active = [0, 0]
+    peak = [0, 0]
+    completed = []
+    release = asyncio.Event()
+    both_full = asyncio.Event()
+
+    def handler(index):
+        async def transfer(job):
+            active[index] += 1
+            peak[index] = max(peak[index], active[index])
+            if active == [concurrency, concurrency]:
+                both_full.set()
+            try:
+                await release.wait()
+                completed.append(job.id)
+            finally:
+                active[index] -= 1
+        return transfer
+
+    try:
+        for index, worker in enumerate(workers):
+            worker._process = handler(index)
+            await worker.start()
+        for _ in range(4 * concurrency):
+            await Queries(original.driver).enqueue(ENTRYPOINT, b"{}")
+        await asyncio.wait_for(both_full.wait(), timeout=10)
+        assert peak == [concurrency, concurrency]
+        release.set()
+        async def drained():
+            while len(completed) < 4 * concurrency:
+                await asyncio.sleep(0.02)
+        await asyncio.wait_for(drained(), timeout=10)
+        assert len(set(completed)) == 4 * concurrency
+        assert peak == [concurrency, concurrency]
+    finally:
+        release.set()
+        for worker in workers:
+            await worker.close()
+
+
 class Vault:
     def __init__(self):
         self.tokens = {}

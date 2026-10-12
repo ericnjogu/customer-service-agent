@@ -82,6 +82,8 @@ spec:
           env:
             - name: AGENT_ISSUE_PROCESSING_ENABLED
               value: {{ .Values.issueProcessing.enabled | quote }}
+            - name: AGENT_ISSUE_PROCESSING_CONCURRENCY
+              value: {{ .Values.issueProcessing.concurrency | default 4 | quote }}
             - name: AGENT_DEFAULT_TENANT_ID
               value: {{ .Values.tenant.defaultId | quote }}
             - name: AGENT_RETRIEVAL_PROVIDER
@@ -190,6 +192,8 @@ spec:
               value: {{ .Values.openbao.metaGraphApiVersion | quote }}
             - name: AGENT_MEDIA_ARCHIVE_MAX_BYTES
               value: {{ .Values.mediaArchive.maxBytes | quote }}
+            - name: AGENT_MEDIA_ARCHIVE_CONCURRENCY
+              value: {{ .Values.mediaArchive.concurrency | default 1 | quote }}
             {{- range $key := list "AGENT_GOOGLE_DRIVE_CLIENT_ID" "AGENT_GOOGLE_DRIVE_CLIENT_SECRET" }}
             - name: {{ $key }}
               valueFrom:

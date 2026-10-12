@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from app.adapters.google_drive import ArchiveError
 from app.api.whatsapp_signup import authorize_browser
+from app.config import get_settings
 from app.whatsapp_signup import capability_hash
 
 router = APIRouter(prefix="/onboarding", tags=["media-archive"])
@@ -41,6 +42,8 @@ async def status(request: Request, session_id: UUID):
 @router.patch("/sessions/{session_id}/archive")
 async def preferences(request: Request, session_id: UUID, payload: Preference):
     await authorize_browser(request, session_id)
+    if payload.import_enabled and get_settings().onboarding_whatsapp_mode == "cloud_api":
+        raise HTTPException(409, "history_requires_coexistence")
     service = archive(request)
     try:
         await service.preferences(session_id, payload.import_enabled)

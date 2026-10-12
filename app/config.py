@@ -1,5 +1,6 @@
 import os
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -63,6 +64,7 @@ class Settings(BaseSettings):
     onboarding_telegram_enabled: bool = False
     # Explicit rollout gate: enable only after Meta readiness and vault restore checks.
     onboarding_whatsapp_enabled: bool = True
+    onboarding_whatsapp_mode: Literal["coexistence", "cloud_api"] = "cloud_api"
     meta_app_id: str | None = None
     meta_signup_configuration_id: str | None = None
     meta_app_secret: SecretStr | None = None

@@ -22,6 +22,7 @@ class VerifiedWhatsAppAsset:
     phone_number_id: str
     display_number: str
     is_on_biz_app: bool = False
+    platform_type: str = "NOT_APPLICABLE"
 
 
 def verify_meta_signature(body: bytes, signature: str | None, app_secret: str) -> bool:
@@ -149,6 +150,7 @@ class MetaSignupClient:
                         display,
                         phone.get("is_on_biz_app") is True
                         and phone.get("platform_type") == "CLOUD_API",
+                        str(phone.get("platform_type", "NOT_APPLICABLE")),
                     )
             paging = phones.get("paging", {})
             if not isinstance(paging, dict) or not isinstance(paging.get("cursors", {}), dict):

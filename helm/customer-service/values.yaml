@@ -108,6 +108,7 @@ issueProcessing:
 onboarding:
   telegramEnabled: false
   whatsappEnabled: true # Requires Meta configuration and OpenBao; explicitly disable before bootstrap.
+  whatsappMode: cloud_api # Default during app review; coexistence remains an explicit option.
   actionTokenTtlMinutes: 60
   emailVerificationTokenTtlMinutes: 60
   emailVerificationCodeTtlMinutes: 10

@@ -287,9 +287,37 @@ async def setup(repo, *, import_history=True):
             drive_id,
         )
     meta = Meta()
-    service = WhatsAppSignupService(repo, Credentials(), meta)
+    service = WhatsAppSignupService(repo, Credentials(), meta, mode="coexistence")
     browser = await service.authorize_verified_browser(session)
     return service, session, browser, meta
+
+
+async def test_cloud_api_connects_without_history_or_registration(connections):
+    from unittest.mock import AsyncMock
+
+    service, session, browser, meta = await setup(connections, import_history=False)
+    service.mode = "cloud_api"
+    meta.verify_asset = AsyncMock(return_value=VerifiedWhatsAppAsset(
+        "456", "789", "+254700000001", False, "CLOUD_API"
+    ))
+    attempt = await service.start(session, browser)
+    result = await service.complete(
+        session, browser, attempt_id=attempt["attempt_id"], state=attempt["state"],
+        code=SecretStr("test-code"), waba_id="456", phone_number_id="789",
+    )
+    assert result.status == "connected"
+    assert result.coexistence is False
+    assert not result.import_history_enabled
+    assert meta.subscriptions == 1
+    assert meta.registrations == 0
+    assert result.registered_at is not None
+
+
+async def test_cloud_api_rejects_history_preference(connections):
+    service, session, browser, _ = await setup(connections)
+    service.mode = "cloud_api"
+    with pytest.raises(WhatsAppSignupError, match="history_requires_coexistence"):
+        await service.start(session, browser)
 
 
 async def test_cancel_unlocks_only_latest_unconnected_attempt(connections):

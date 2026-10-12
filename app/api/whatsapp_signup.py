@@ -48,6 +48,7 @@ async def public_configuration():
     return {
         "telegram_enabled": settings.onboarding_telegram_enabled,
         "whatsapp_enabled": settings.onboarding_whatsapp_enabled,
+        "whatsapp_mode": settings.onboarding_whatsapp_mode,
         "meta_app_id": settings.meta_app_id,
         "meta_signup_configuration_id": settings.meta_signup_configuration_id,
         "meta_graph_api_version": settings.meta_graph_api_version,

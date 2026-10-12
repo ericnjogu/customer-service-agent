@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     question_planner_provider: str = "rules"
     llm_model: str = "gpt-4.1-mini"
     issue_processing_enabled: bool = True
+    issue_processing_concurrency: int = Field(default=4, ge=1, le=32)
     openai_api_key: str | None = Field(default=None, validation_alias="OPENAI_API_KEY")
     openai_base_url: str | None = None
     llm_temperature: float = 0.0
@@ -75,6 +76,7 @@ class Settings(BaseSettings):
     google_drive_client_secret: SecretStr | None = None
     google_drive_test_base_url: str | None = None
     media_archive_max_bytes: int = Field(default=100_000_000, gt=0, le=100_000_000)
+    media_archive_concurrency: int = Field(default=1, ge=1, le=4)
     openbao_url: str | None = None
     openbao_ca_file: str | None = None
     openbao_role: str = "customer-service"

@@ -1,6 +1,7 @@
 """Issue persistence. Queue state/retries belong exclusively to PgQueuer."""
 
 import json
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -73,6 +74,17 @@ CREATE INDEX IF NOT EXISTS messages_issue_history
 class PostgresIssueRepository:
     def __init__(self, database):
         self.database = database
+
+    @asynccontextmanager
+    async def processing_lock(self, ref):
+        # Use a dedicated connection: pooled connections must never retain a lock.
+        key = f"issue-processing:{ref['tenant_id']}:{UUID(ref['conversation_id'])}"
+        async with self.database.pool.acquire() as connection:
+            await connection.execute("SELECT pg_advisory_lock(hashtextextended($1,0))", key)
+            try:
+                yield
+            finally:
+                await connection.execute("SELECT pg_advisory_unlock(hashtextextended($1,0))", key)
 
     async def initialize(self):
         async with self.database.pool.acquire() as c, c.transaction():

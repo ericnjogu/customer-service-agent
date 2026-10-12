@@ -125,7 +125,10 @@ async def _process_issue(generator, tenant, prompt_messages) -> ProcessingResult
 
 
 class IssueService:
-    def __init__(self, repository, embeddings, generator, tenant_configs, model):
+    def __init__(self, repository, embeddings, generator, tenant_configs, model, *, concurrency=4):
+        if not isinstance(concurrency, int) or not 1 <= concurrency <= 32:
+            raise ValueError("Issue concurrency must be between 1 and 32")
+        self.concurrency = concurrency
         self.repository = repository
         self.embeddings = embeddings
         self.generator = generator
@@ -135,7 +138,7 @@ class IssueService:
         self.manager = QueueManager(Queries(self.driver))
         self.manager.entrypoint(
             ENTRYPOINT,
-            concurrency_limit=1,
+            concurrency_limit=concurrency,
             on_failure="hold",
             # PgQueuer counts retries from zero: four retries = five executions.
             executor_factory=partial(
@@ -149,6 +152,7 @@ class IssueService:
         self.task = asyncio.create_task(
             self.manager.run(
                 batch_size=1,
+                # Bound local pool/model pressure independently of the global limit.
                 max_concurrent_tasks=2,
                 dequeue_timeout=recovery_interval,
             ),
@@ -176,6 +180,12 @@ class IssueService:
             logger.warning("Issue delivery update failed; deferred job will recover as unknown")
 
     async def process(self, job):
+        ref = json.loads(job.payload)
+        # Also protect against a stale worker still running after lease recovery.
+        async with self.repository.processing_lock(ref):
+            await self._process(job)
+
+    async def _process(self, job):
         started = time.monotonic()
         ref = json.loads(job.payload)
         with trace.get_tracer(__name__).start_as_current_span("issue.process") as span:

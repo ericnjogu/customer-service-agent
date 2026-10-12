@@ -319,13 +319,14 @@ async def turn(repo, event="one", chat="chat", tenant="tenant", text="My screen 
     return message, reply, conversation, ref
 
 
-def service(repo, model=None, embeddings=None):
+def service(repo, model=None, embeddings=None, concurrency=4):
     return IssueService(
         repo,
         embeddings or LocalHashEmbeddingProvider(64),
         LlmAnswerGenerator(model or Model()),
         MemoryTenantConfigRepository(),
         "local",
+        concurrency=concurrency,
     )
 
 
@@ -688,7 +689,8 @@ async def test_worker_wakes_after_delivery_and_recovers_startup(repository, outc
         await worker.close()
 
 
-async def test_two_workers_global_limit_and_expired_heartbeat(repository):
+@pytest.mark.parametrize("concurrency", [1, 2])
+async def test_two_workers_global_limit_and_expired_heartbeat(repository, concurrency):
     repo = repository
     await turn(repo)
     await turn(repo, event="two", chat="other")
@@ -710,12 +712,12 @@ async def test_two_workers_global_limit_and_expired_heartbeat(repository):
             finally:
                 active -= 1
 
-    workers = [service(repo, SlowModel()) for _ in range(2)]
+    workers = [service(repo, SlowModel(), concurrency=concurrency) for _ in range(2)]
     try:
         for worker in workers:
             await worker.start()
         await wait_until(lambda: _count_is(repo, 2))
-        assert peak == 1
+        assert peak == concurrency
     finally:
         for worker in workers:
             await worker.close()
@@ -723,6 +725,20 @@ async def test_two_workers_global_limit_and_expired_heartbeat(repository):
 
 async def _count_is(repo, count):
     return await repo.database.pool.fetchval("SELECT count(*) FROM conversation_issues") == count
+
+
+async def test_duplicate_execution_is_serialized_per_conversation(repository):
+    await turn(repository)
+    model = Model()
+    workers = [service(repository, model) for _ in range(2)]
+    job = await job_for(repository)
+    try:
+        await asyncio.gather(*(worker.process(job) for worker in workers))
+        assert len(model.calls) == 1
+        assert await _count_is(repository, 1)
+    finally:
+        for worker in workers:
+            await worker.close()
 
 
 async def test_five_attempts_held_failure_and_replay(repository):

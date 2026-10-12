@@ -1074,6 +1074,18 @@ forwarding those messages to the customer still belong to later increments.
 
 ## WhatsApp Embedded Signup and tenant credentials
 
+For signup callback troubleshooting, enable **Preserve log** in the browser console
+and filter for `WhatsApp signup diagnostic`. These browser-only entries report the
+Meta event type, numeric error code (when provided), and whether authorization,
+selected assets, and the server attempt have arrived. They do not record raw
+provider payloads, authorization codes, tokens, or OAuth state. Raw provider error
+text is deliberately excluded because it may contain sensitive values.
+`backend_completion_started` means the browser submitted the completion request;
+`backend_completion_succeeded` means the backend accepted it. A number shown as
+registered by Meta does not establish an active application connection. On mobile,
+keep the original onboarding tab open while completing the Meta window/tab.
+These diagnostics are not sent to pod logs and do not change signup permissions.
+
 The staged WhatsApp onboarding implementation uses server-verified Meta signup
 and OpenBao KV v2 credentials. Signup is enabled by default through
 `AGENT_ONBOARDING_WHATSAPP_ENABLED=true` / Helm `onboarding.whatsappEnabled=true`.

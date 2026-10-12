@@ -552,8 +552,8 @@ function App() {
       ) : (
       <section className="shell">
         <header className="hero">
-          <p className="eyebrow">Risto AI CSS</p>
-          <h1>Customer-service onboarding</h1>
+          <p className="eyebrow">Risto AI Customer Service Solution</p>
+          <h1>Onboarding</h1>
           <p>
             Add your business information, connect WhatsApp, and provision your customer-service assistant.
           </p>

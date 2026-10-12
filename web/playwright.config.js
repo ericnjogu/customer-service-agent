@@ -82,6 +82,8 @@ export default defineConfig({
         AGENT_DEPLOYMENT_ENVIRONMENT: "test",
         AGENT_ONBOARDING_TELEGRAM_ENABLED: whatsapp ? "false" : "true",
         AGENT_ONBOARDING_WHATSAPP_ENABLED: whatsapp ? "true" : "false",
+        // These scenarios exercise the optional coexistence/history journey.
+        AGENT_ONBOARDING_WHATSAPP_MODE: "coexistence",
         AGENT_OPENBAO_URL: whatsapp ? wireMockUrl : "",
         AGENT_OPENBAO_JWT_PATH: fileURLToPath(new URL("../tests/fixtures/openbao-service-account.jwt", import.meta.url)),
         AGENT_META_APP_ID: "123",

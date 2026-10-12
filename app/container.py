@@ -370,6 +370,7 @@ async def create_container(settings: Settings) -> Container:
                 app_secret=settings.meta_app_secret,
                 version=settings.meta_graph_api_version,
             ),
+            mode=settings.onboarding_whatsapp_mode,
         )
         from app.adapters.google_drive import GoogleDrive
         from app.media_archive import MediaArchive

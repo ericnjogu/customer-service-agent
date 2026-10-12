@@ -9,6 +9,7 @@ from pydantic import SecretStr
 
 from app.adapters.credential_store import (
     ConnectionCredentials,
+    CredentialNotFound,
     CredentialStore,
 )
 from app.adapters.meta_signup import MetaSignupClient
@@ -29,10 +30,24 @@ class WhatsAppSignupService:
         repository: PostgresWhatsAppConnections,
         credentials: CredentialStore,
         meta: MetaSignupClient,
+        *,
+        mode: str = "cloud_api",
     ):
         self.repository = repository
         self.credentials = credentials
         self.meta = meta
+        if mode not in {"coexistence", "cloud_api"}:
+            raise ValueError("Invalid WhatsApp onboarding mode")
+        self.mode = mode
+
+    def validate_asset_mode(self, asset):
+        if self.mode == "coexistence" and not asset.is_on_biz_app:
+            raise WhatsAppSignupError("coexistence_business_app_number_required")
+        if self.mode == "cloud_api":
+            if asset.is_on_biz_app:
+                raise WhatsAppSignupError("use_coexistence_for_business_app_number")
+            if asset.platform_type != "CLOUD_API":
+                raise WhatsAppSignupError("cloud_api_registration_required")
 
     async def authorize_verified_browser(self, session_id: UUID) -> str:
         """Call only immediately after successful email code consumption."""
@@ -86,6 +101,8 @@ class WhatsAppSignupService:
                 "SELECT * FROM whatsapp_archive_preferences WHERE session_id=$1 FOR UPDATE",
                 session_id,
             )
+            if self.mode == "cloud_api" and preference["import_enabled"]:
+                raise WhatsAppSignupError("history_requires_coexistence")
             if preference["import_enabled"] and not await connection.fetchval(
                 "SELECT 1 FROM drive_connections WHERE id=$1 AND session_id=$2 AND status='ready'",
                 preference["drive_id"],
@@ -146,8 +163,7 @@ class WhatsAppSignupService:
                     asset = await self.meta.verify_asset(
                         token, waba_id=waba_id, phone_number_id=phone_number_id
                     )
-                    if not asset.is_on_biz_app:
-                        raise WhatsAppSignupError("coexistence_business_app_number_required")
+                    self.validate_asset_mode(asset)
                     return await self._connect(connection, session_id, token, asset)
                 finally:
                     await connection.execute(
@@ -196,6 +212,7 @@ class WhatsAppSignupService:
             return {"locked": False}
 
     async def _connect(self, sql, session_id, token, asset):
+        self.validate_asset_mode(asset)
         row = await sql.fetchrow(
             "SELECT * FROM whatsapp_connections WHERE session_id=$1", session_id
         )
@@ -216,19 +233,22 @@ class WhatsAppSignupService:
             "SELECT * FROM whatsapp_archive_preferences WHERE session_id=$1", session_id
         )
         import_enabled = bool(preference and preference["import_enabled"])
+        if self.mode == "cloud_api" and import_enabled:
+            raise WhatsAppSignupError("history_requires_coexistence")
         reference = f"whatsapp/{connection_id}"
         await sql.execute(
             "INSERT INTO whatsapp_connections(connection_id,session_id,waba_id,phone_number_id, "
-            "display_number,credential_reference,coexistence) VALUES($1,$2,$3,$4,$5,$6,true) "
+            "display_number,credential_reference,coexistence) VALUES($1,$2,$3,$4,$5,$6,$7) "
             "ON CONFLICT(session_id) DO UPDATE SET waba_id=EXCLUDED.waba_id, "
             "phone_number_id=EXCLUDED.phone_number_id,display_number=EXCLUDED.display_number, "
-            "status='connecting',coexistence=true,error_code=NULL,updated_at=now()",
+            "status='connecting',coexistence=EXCLUDED.coexistence,error_code=NULL,updated_at=now()",
             connection_id,
             session_id,
             asset.waba_id,
             asset.phone_number_id,
             asset.display_number,
             reference,
+            self.mode == "coexistence",
         )
         await sql.execute(
             "UPDATE whatsapp_connections SET import_history_enabled=$2,archive_media_enabled=$2, "
@@ -238,10 +258,19 @@ class WhatsAppSignupService:
             preference["drive_id"] if import_enabled else None,
         )
         try:
+            # Keep an operator-provisioned registration PIN when refreshing the token.
+            registration_pin = None
+            if existing:
+                try:
+                    previous = await self.credentials.read(connection_id)
+                    registration_pin = previous.registration_pin
+                except CredentialNotFound:
+                    pass
             await self.credentials.write(
                 connection_id,
                 ConnectionCredentials(
                     access_token=token,
+                    registration_pin=registration_pin,
                 ),
             )
             if not existing or not existing.subscribed_at:
@@ -251,7 +280,7 @@ class WhatsAppSignupService:
                     connection_id,
                 )
             if not existing or not existing.registered_at:
-                # Meta's coexistence flow has already registered the number.
+                # Both modes require an already registered number.
                 # Never reset its PIN or call /register here.
                 await sql.execute(
                     "UPDATE whatsapp_connections SET registered_at=now() WHERE connection_id=$1",

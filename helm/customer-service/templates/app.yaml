@@ -175,6 +175,8 @@ spec:
               value: {{ .Values.onboarding.telegramEnabled | quote }}
             - name: AGENT_ONBOARDING_WHATSAPP_ENABLED
               value: {{ .Values.onboarding.whatsappEnabled | quote }}
+            - name: AGENT_ONBOARDING_WHATSAPP_MODE
+              value: {{ .Values.onboarding.whatsappMode | default "cloud_api" | quote }}
             {{- if .Values.openbao.enabled }}
             - name: AGENT_OPENBAO_URL
               value: {{ .Values.openbao.url | quote }}

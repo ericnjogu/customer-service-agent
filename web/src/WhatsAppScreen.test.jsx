@@ -6,7 +6,7 @@ import WhatsAppScreen, { parseSignupEvent } from "./WhatsAppScreen";
 
 afterEach(() => { cleanup(); delete window.FB; });
 
-function setup() {
+function setup(mode = "coexistence") {
   let callback;
   window.FB = { init: vi.fn(), login: vi.fn((fn) => { callback = fn; }) };
   const api = vi.fn(async (path) => {
@@ -18,10 +18,22 @@ function setup() {
   });
   const submit = vi.fn();
   render(<WhatsAppScreen session={{ session_id: "session" }} config={{ whatsapp_enabled: true,
+    whatsapp_mode: mode,
     meta_app_id: "123", meta_signup_configuration_id: "config", meta_graph_api_version: "v25.0" }}
     api={api} onSubmit={submit} onBack={vi.fn()} busy={false} />);
   return { api, submit, authorize: () => callback({ authResponse: { code: "one-time-code" } }) };
 }
+
+test.each(["cloud_api", null])("Cloud API launch omits coexistence and history (mode=%s)", async (mode) => {
+  const { authorize } = setup(mode);
+  await prepareMeta();
+  expect(screen.queryByText("Import historical chats and media")).not.toBeInTheDocument();
+  expect(screen.getByText(/registered WhatsApp Cloud API number/)).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Connect WhatsApp" }));
+  expect(window.FB.login.mock.calls[0][1].extras).not.toHaveProperty("featureType");
+  await act(async () => { authorize(); event("FINISH"); });
+  expect(await screen.findByText("+254700000001")).toBeInTheDocument();
+});
 
 function event(eventName = "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", origin = "https://www.facebook.com") {
   window.dispatchEvent(new MessageEvent("message", { origin, data: JSON.stringify({

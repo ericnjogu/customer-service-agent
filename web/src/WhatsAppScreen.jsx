@@ -261,7 +261,8 @@ export default function WhatsAppScreen({ session, config, api, onSubmit, onBack,
       attempt.finish();
     }, { config_id: config.meta_signup_configuration_id, response_type: "code",
       override_default_response_type: true,
-      extras: { setup: {}, version: "v4", sessionInfoVersion: "3", featureType: "whatsapp_business_app_onboarding" } });
+      extras: { setup: {}, version: "v4", sessionInfoVersion: "3",
+        ...(config.whatsapp_mode === "coexistence" ? { featureType: "whatsapp_business_app_onboarding" } : {}) } });
   }
 
   const connected = ["connected", "active"].includes(connection?.status);
@@ -294,8 +295,10 @@ export default function WhatsAppScreen({ session, config, api, onSubmit, onBack,
   </section>;
   return <section className="card">
     <h2>Connect WhatsApp</h2>
-    <p>Connect your existing WhatsApp Business app number through Meta. You can keep using
-      the app while Ristoh CSS sends and receives messages on the same number.</p>
+    {config.whatsapp_mode !== "coexistence"
+      ? <p>Connect a registered WhatsApp Cloud API number through Meta. This mode does not connect the WhatsApp Business app or import historical chats. Automated replies begin after provisioning succeeds.</p>
+      : <p>Connect your existing WhatsApp Business app number through Meta. You can keep using
+        the app while Ristoh CSS sends and receives messages on the same number.</p>}
 
     {!config.whatsapp_enabled && <p role="alert">WhatsApp signup is not available yet. Your draft is saved.</p>}
     {config.whatsapp_enabled && (failed && message
@@ -304,7 +307,7 @@ export default function WhatsAppScreen({ session, config, api, onSubmit, onBack,
           <p>{message}</p>
         </div>
       : <p role="status" aria-live="polite">{message}</p>)}
-    {config.whatsapp_enabled && archive && <fieldset disabled={archive.locked || preparing || connecting || driveBusy || busy}>
+    {config.whatsapp_enabled && config.whatsapp_mode === "coexistence" && archive && <fieldset disabled={archive.locked || preparing || connecting || driveBusy || busy}>
       <legend>Optional chat archive</legend>
       <label className="checkbox-row"><input type="checkbox" checked={Boolean(archive.import_enabled)}
         disabled={!archive.available} onChange={chooseImport} /><span>Import historical chats and media</span></label>

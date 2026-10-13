@@ -222,6 +222,43 @@ def test_langsmith_tracing_enabled_honors_disabled_env(monkeypatch) -> None:
     assert langsmith_tracing_enabled() is False
 
 
+@pytest.mark.parametrize("flag", [None, "", "false", "off", "garbage"])
+def test_langsmith_requires_explicit_opt_in(monkeypatch, flag):
+    monkeypatch.setenv("LANGSMITH_API_KEY", "test-key")
+    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "true")
+    monkeypatch.setenv("LANGSMITH_TRACING_V2", "true")
+    if flag is None:
+        monkeypatch.delenv("LANGSMITH_TRACING", raising=False)
+    else:
+        monkeypatch.setenv("LANGSMITH_TRACING", flag)
+    assert langsmith_tracing_enabled() is False
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_automatic_tracer_routes_once_without_explicit_callback(monkeypatch, enabled):
+    from unittest.mock import Mock
+
+    from langchain_core.runnables import RunnableLambda
+    from langchain_core.tracers.langchain import wait_for_all_tracers
+    from langsmith import Client
+
+    from app.adapters.llm import tenant_tracing_context
+
+    client = Mock(spec=Client)
+    monkeypatch.setenv("LANGSMITH_API_KEY", "test-key")
+    monkeypatch.setenv("LANGSMITH_TRACING", str(enabled).lower())
+    monkeypatch.setattr("app.adapters.llm.langsmith_client", lambda: client)
+    tenant = TenantConfig.with_defaults("tenant-a", langsmith_project="tenant-project")
+    with tenant_tracing_context(tenant):
+        assert RunnableLambda(lambda value: value + 1).invoke(
+            1, config=langsmith_runnable_config("test", tenant)
+        ) == 2
+    wait_for_all_tracers()
+    assert client.create_run.call_count == int(enabled)
+    if enabled:
+        assert client.create_run.call_args.kwargs["session_name"] == "tenant-project"
+
+
 def test_langsmith_client_uses_endpoint_and_workspace(monkeypatch) -> None:
     captured = {}
 
@@ -248,18 +285,6 @@ def test_langsmith_client_uses_endpoint_and_workspace(monkeypatch) -> None:
 
 
 def test_langsmith_runnable_config_uses_tenant_project_destination(monkeypatch) -> None:
-    captured_tracer = {}
-
-    class FakeLangSmithClient:
-        def __init__(self, **kwargs) -> None:
-            pass
-
-    class FakeLangChainTracer:
-        def __init__(self, **kwargs) -> None:
-            captured_tracer.update(kwargs)
-
-    monkeypatch.setattr("app.adapters.llm.LangSmithClient", FakeLangSmithClient)
-    monkeypatch.setattr("app.adapters.llm.LangChainTracer", FakeLangChainTracer)
     langsmith_client.cache_clear()
     monkeypatch.setenv("LANGSMITH_API_KEY", "test-key")
     monkeypatch.setenv("LANGSMITH_TRACING", "true")
@@ -273,7 +298,7 @@ def test_langsmith_runnable_config_uses_tenant_project_destination(monkeypatch) 
     config = langsmith_runnable_config("answer_generation", tenant_config)
 
     assert config is not None
-    assert captured_tracer["project_name"] == "customer-service-tenant-a"
+    assert "callbacks" not in config
     assert "tenant:tenant-a" in config["tags"]
     assert config["metadata"]["langsmith_project"] == "customer-service-tenant-a"
 

@@ -20,6 +20,7 @@ from app.adapters.llm import (
     langsmith_runnable_config,
     langsmith_tracing_enabled,
     load_prompt,
+    normalize_contact_points,
     normalize_website_analysis_payload,
     tavily_project_id,
     tenant_trace_metadata,
@@ -37,6 +38,20 @@ from app.models import (
     TenantConfig,
     WebsiteAnalysisResult,
 )
+
+
+def test_contact_pages_are_filtered_independently_of_model_classification():
+    contacts = [
+        {"kind": "other", "url": "https://www.example.com/privacy/"},
+        {"kind": "facebook", "url": "/blog/news"},
+        {"kind": "contact", "value": "https://example.com/blog/post"},
+        {"kind": "website", "url": "https://example.com/"},
+        {"kind": "instagram", "url": "https://instagram.com/example"},
+    ]
+    result = normalize_contact_points(contacts, base_url="https://example.com")
+    assert [point["url"] for point in result] == [
+        "https://example.com/", "https://instagram.com/example"
+    ]
 
 
 def test_load_prompt_uses_configured_file(monkeypatch, tmp_path) -> None:

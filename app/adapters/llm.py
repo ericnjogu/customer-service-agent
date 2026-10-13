@@ -1256,12 +1256,15 @@ def normalize_contact_points(
         url = str(contact.get("url") or "").strip() or None
         url = unwrap_markdown_link(url) if url else None
 
+        candidate = url or value
+        if candidate and base_url and candidate.startswith("/"):
+            candidate = urljoin(base_url, candidate)
+
         if (
-            kind == "website"
-            and url
+            candidate
             and base_url
-            and same_site_url(url, base_url)
-            and not homepage_url(url)
+            and same_site_url(candidate, base_url)
+            and not homepage_url(candidate)
         ):
             continue
 

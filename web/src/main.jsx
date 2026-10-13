@@ -69,6 +69,8 @@ function App() {
   const [config, setConfig] = useState({ telegram_enabled: false, whatsapp_enabled: false });
   const [session, setSession] = useState(null);
   const [step, setStep] = useState("account");
+  const [businessDraft, setBusinessDraft] = useState(null);
+  const [contactDraft, setContactDraft] = useState(null);
   const [alert, setAlert] = useState(null);
   const [busyAction, setBusyAction] = useState(null);
   const [startForm, setStartForm] = useState({
@@ -199,6 +201,9 @@ function App() {
   async function loadSession(sessionId) {
     const loaded = await api(`/onboarding/sessions/${sessionId}`);
     setSession(loaded);
+    setBusinessDraft(null);
+    setContactDraft(null);
+    setStartForm({ ...loaded.admin, admin_phone_number: loaded.admin.phone_number || "" });
     setWebsiteForm({
       website_url: loaded.website_url || "",
       website_verification_email: loaded.website_verification_email || "",
@@ -217,6 +222,17 @@ function App() {
   }
 
   async function submitStart() {
+    if (session && startForm.username_email === session.admin.username_email &&
+        startForm.given_name === session.admin.given_name &&
+        startForm.family_name === session.admin.family_name &&
+        startForm.admin_phone_number === (session.admin.phone_number || "") &&
+        startForm.has_website === session.admin.has_website &&
+        startForm.has_social_media === session.admin.has_social_media) {
+      if (!session.username_email_verified) setStep("username-email-verification");
+      else if (session.admin.has_website === false) setStep("analysis");
+      else setStep("website");
+      return;
+    }
     setBusyAction("create-session");
     setAlert(null);
     console.info("Submitting onboarding account setup", {
@@ -442,18 +458,6 @@ function App() {
     }
   }
 
-  async function reanalyzeWebsite() {
-    setBusyAction("analyze-website");
-    setAlert(null);
-    try {
-      await analyzeWebsiteForSession(session.session_id, { force: true });
-    } catch (error) {
-      showError(error.message);
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
   async function analyzeWebsiteForSession(sessionId, { force = false } = {}) {
     setStep("analyzing");
     const query = force ? "?force=true" : "";
@@ -462,6 +466,8 @@ function App() {
       { method: "POST" },
     );
     setSession(analyzed);
+    setBusinessDraft(null);
+    setContactDraft(null);
     setStep("analysis");
     return analyzed;
   }
@@ -614,7 +620,7 @@ function App() {
               verifyWebsiteEmail(session.session_id, { code })
             }
             onResend={resendWebsiteEmailVerification}
-            onContinue={reanalyzeWebsite}
+            onContinue={analyzeWebsite}
             busy={busy}
             busyAction={busyAction}
           />
@@ -627,6 +633,7 @@ function App() {
         {session && step === "analysis" && (
           <AnalysisScreen
             session={session}
+            draftValue={businessDraft} onDraftChange={setBusinessDraft}
             onBack={() => setStep(session.admin?.has_website === false ? "username-email-verification" : "website")}
             onNext={async (draft) => {
               if (session.admin?.has_social_media !== false) return patchSession(draft, "contact");
@@ -640,6 +647,7 @@ function App() {
         {session && step === "contact" && (
           <ContactInfoScreen
             session={session}
+            linksValue={contactDraft} onLinksChange={setContactDraft}
             onBack={() => setStep("analysis")}
             onNext={(contact_info) =>
               config.telegram_enabled
@@ -1145,13 +1153,19 @@ function AnalyzingScreen({ session }) {
   );
 }
 
-function AnalysisScreen({ session, onBack, onNext, busy }) {
-  const [draft, setDraft] = useState(() => ({
+function AnalysisScreen({ session, onBack, onNext, busy, draftValue, onDraftChange }) {
+  const [localDraft, setLocalDraft] = useState(() => ({
     business_profile: {
       ...(session.business_profile || {}),
     },
     business_summary: session.business_summary || "",
   }));
+  const draft = draftValue ?? localDraft;
+  const setDraft = (update) => {
+    const next = typeof update === "function" ? update(draft) : update;
+    setLocalDraft(next);
+    onDraftChange?.(next);
+  };
   const validation = useFormValidation(draft, validateAnalysisDraft);
 
   function updateProfile(field, value) {
@@ -1270,10 +1284,16 @@ function MarkdownRichEditor({
   );
 }
 
-function ContactInfoScreen({ session, onBack, onNext, busy }) {
-  const [links, setLinks] = useState(() =>
+function ContactInfoScreen({ session, onBack, onNext, busy, linksValue, onLinksChange }) {
+  const [localLinks, setLocalLinks] = useState(() =>
     normalizeContactInfo(session.contact_info || [], session.website_url),
   );
+  const links = linksValue ?? localLinks;
+  const setLinks = (update) => {
+    const next = typeof update === "function" ? update(links) : update;
+    setLocalLinks(next);
+    onLinksChange?.(next);
+  };
   const validation = useFormValidation({ contact_info: links }, validateContactInfo);
 
   function updateLink(index, field, value) {
@@ -1903,7 +1923,10 @@ function normalizeContactInfo(links, baseUrl = "") {
   const normalized = links
     .filter((link) => link.url || link.value)
     .map((link, index) => {
-      const contactValue = unwrapMarkdownLink(link.url || link.value || "");
+      let contactValue = unwrapMarkdownLink(link.url || link.value || "");
+      if (baseUrl && contactValue.startsWith("/")) {
+        try { contactValue = new URL(contactValue, normalizeWebsiteUrl(baseUrl)).href; } catch { /* Keep invalid input visible for correction. */ }
+      }
       return {
         id: `link-${index}-${link.kind || "contact"}`,
         kind: Object.hasOwn(CONTACT_PLATFORMS, link.kind) ? link.kind : "other",
@@ -1913,7 +1936,6 @@ function normalizeContactInfo(links, baseUrl = "") {
     })
     .filter(
       (link) =>
-        link.kind !== "website" ||
         !sameSiteUrl(link.url, baseUrl) ||
         isHomepageUrl(link.url),
     )

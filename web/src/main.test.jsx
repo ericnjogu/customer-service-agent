@@ -678,7 +678,7 @@ describe("email verification flow", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  test("continue from verified website email screen re-runs analysis", async () => {
+  test("continue from verified website email screen reuses completed analysis", async () => {
     const user = userEvent.setup();
     const sessionId = "00000000-0000-0000-0000-000000000001";
     window.history.pushState({}, "", `/?session_id=${sessionId}`);
@@ -732,16 +732,60 @@ describe("email verification flow", () => {
     await user.click(screen.getByRole("button", { name: /continue/i }));
 
     expect(await screen.findByLabelText(/business summary \/ faq/i)).toHaveValue(
-      "## Summary\n\nFresh analysis.",
+      "## Summary\n\nUse approved business details.",
     );
-    expect(fetchMock).toHaveBeenLastCalledWith(
-      `/api/onboarding/sessions/${sessionId}/analyze-website?force=true`,
-      expect.objectContaining({ method: "POST" }),
-    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 
 describe("contact information form", () => {
+  test("unsaved business and contact drafts survive backward navigation", async () => {
+    const user = userEvent.setup();
+    window.history.pushState({}, "", "/?session_id=draft-test");
+    let saved = { session_id: "draft-test", status: "ready_for_review", current_step: "contact",
+      admin: validAdmin({ has_website: true, has_social_media: true }),
+      website_url: "https://example.co.ke", website_verification_email: "admin@example.co.ke",
+      username_email_verified: true, website_email_verified: true, analysis: {},
+      business_profile: { business_name: "Original" }, business_summary: "Original summary",
+      contact_info: [{ kind: "instagram", url: "https://instagram.com/original" }],
+    };
+    const fetchMock = vi.fn(async (_url, options) => {
+      if (options?.method === "PATCH") saved = { ...saved, ...JSON.parse(options.body) };
+      return { ok: true, json: async () => saved };
+    });
+    stubOnboardingFetch(fetchMock);
+    render(<App />);
+    const contact = await screen.findByDisplayValue("https://instagram.com/original");
+    await user.clear(contact); await user.type(contact, "https://instagram.com/edited");
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    const name = await screen.findByLabelText(/Organization name/i);
+    await user.clear(name); await user.type(name, "Unsaved organization");
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    await user.click(screen.getByRole("button", { name: /Send website verification code/i }));
+    expect(await screen.findByLabelText(/Organization name/i)).toHaveValue("Unsaved organization");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.queryByLabelText(/six-digit code/i)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByDisplayValue("admin@example.co.ke")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Send account verification code to email" }));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: /Send website verification code/i }));
+    await user.click(screen.getByRole("button", { name: "Review contact information" }));
+    expect(await screen.findByDisplayValue("https://instagram.com/edited")).toBeInTheDocument();
+  });
+  test("excludes same-site pages regardless of inferred contact type", () => {
+    render(<ContactInfoScreen session={{ website_url: "https://example.co.ke", contact_info: [
+      { kind: "other", url: "https://www.example.co.ke/privacy/" },
+      { kind: "facebook", url: "/blog/news" },
+      { kind: "website", url: "https://example.co.ke/" },
+      { kind: "instagram", url: "https://instagram.com/example" },
+    ] }} onBack={vi.fn()} onNext={vi.fn()} />);
+    expect(screen.queryByDisplayValue(/privacy|blog/)).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue("https://example.co.ke/")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("https://instagram.com/example")).toBeInTheDocument();
+  });
   test("Other requires a URL and known social platforms accept handles", async () => {
     const user = userEvent.setup();
     const onNext = vi.fn();

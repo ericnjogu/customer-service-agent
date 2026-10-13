@@ -1,13 +1,16 @@
-from urllib.parse import urlsplit
+import json
+import secrets
+from urllib.parse import urlencode, urlsplit
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from app.adapters.meta_signup import MetaSignupError
 from app.config import get_settings
 from app.models import OnboardingJobCreate
-from app.whatsapp_signup import WhatsAppSignupError
+from app.whatsapp_signup import WhatsAppSignupError, capability_hash
 
 router = APIRouter(prefix="/onboarding", tags=["whatsapp-signup"])
 
@@ -49,6 +52,7 @@ async def public_configuration():
         "telegram_enabled": settings.onboarding_telegram_enabled,
         "whatsapp_enabled": settings.onboarding_whatsapp_enabled,
         "whatsapp_mode": settings.onboarding_whatsapp_mode,
+        "whatsapp_transport": "redirect",
         "meta_app_id": settings.meta_app_id,
         "meta_signup_configuration_id": settings.meta_signup_configuration_id,
         "meta_graph_api_version": settings.meta_graph_api_version,
@@ -67,6 +71,146 @@ class SignupCompletion(BaseModel):
 class SignupCancellation(BaseModel):
     attempt_id: UUID
     state: str = Field(min_length=32, max_length=200)
+
+
+class RedirectCompletion(SignupCancellation):
+    model_config = ConfigDict(extra="forbid")
+    code: SecretStr | None = None
+    declined: bool = False
+
+
+def meta_redirect_uri():
+    return get_settings().web_public_base_url.rstrip("/") + "/api/onboarding/whatsapp/callback"
+
+
+@router.post("/sessions/{session_id}/whatsapp/redirect/start")
+async def redirect_start(request: Request, session_id: UUID):
+    service_for(request)
+    service, browser = await authorize_browser(request, session_id)
+    settings = get_settings()
+    try:
+        attempt = await service.start(session_id, browser, redirect_uri=meta_redirect_uri())
+    except WhatsAppSignupError as error:
+        raise HTTPException(409, str(error)) from None
+    extras = {"setup": {}, "version": "v4", "sessionInfoVersion": "3"}
+    if settings.onboarding_whatsapp_mode == "coexistence":
+        extras["featureType"] = "whatsapp_business_app_onboarding"
+    query = urlencode(
+        {
+            "client_id": settings.meta_app_id,
+            "config_id": settings.meta_signup_configuration_id,
+            "redirect_uri": meta_redirect_uri(),
+            "state": attempt["state"],
+            "response_type": "code",
+            "override_default_response_type": "true",
+            "display": "page",
+            "extras": json.dumps(extras),
+        }
+    )
+    return {
+        "authorization_url": f"https://www.facebook.com/{settings.meta_graph_api_version}/dialog/oauth?{query}"
+    }
+
+
+@router.get("/whatsapp/callback", response_class=HTMLResponse)
+async def redirect_callback(request: Request):
+    params = request.query_params
+    request.scope["query_string"] = b""  # Never write OAuth codes to access logs.
+    state, code = params.get("state", ""), params.get("code", "")
+    if not 32 <= len(state) <= 200 or len(code) > 8192:
+        raise HTTPException(400, "Invalid WhatsApp return; retry from onboarding")
+    service = service_for(request)
+    attempt = await service.repository.pool.fetchrow(
+        "SELECT attempt_id,session_id FROM whatsapp_signup_attempts WHERE state_hash=$1 "
+        "AND redirect_uri=$2 AND consumed_at IS NULL AND expires_at>now()",
+        capability_hash(state),
+        meta_redirect_uri(),
+    )
+    if not attempt:
+        raise HTTPException(400, "WhatsApp authorization expired; retry from onboarding")
+    session_id = str(attempt["session_id"])
+    payload = (
+        json.dumps(
+            {
+                "attempt_id": str(attempt["attempt_id"]),
+                "state": state,
+                "code": code or None,
+                "declined": bool(params.get("error")) or not code,
+            }
+        )
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+    )
+    nonce = secrets.token_urlsafe(24)
+    completion_path = f"/api/onboarding/sessions/{session_id}/whatsapp/redirect/complete"
+    # Load a document on our origin before POSTing, so SameSite=Strict remains intact.
+    # No external scripts, persistent browser storage, provider errors or token exchange on GET.
+    html = f'''<!doctype html><html><head><meta charset="utf-8">
+<meta name="referrer" content="no-referrer"><title>Connecting WhatsApp</title></head>
+<body><p role="status">Completing your WhatsApp connection…</p>
+<noscript>JavaScript is required. Return to onboarding and retry.</noscript>
+<script nonce="{nonce}">
+history.replaceState(null, "", location.pathname);
+(async () => {{
+  let result = "failed";
+  try {{
+    const response = await fetch("{completion_path}", {{
+      method: "POST", credentials: "same-origin", headers: {{"Content-Type": "application/json"}},
+      body: JSON.stringify({payload})
+    }});
+    if (response.ok) result = (await response.json()).declined ? "cancelled" : "connected";
+    else if (response.status === 403) result = "browser_required";
+    else if ((await response.json()).detail === "meta_asset_selection_ambiguous") {{
+      result = "ambiguous";
+    }}
+  }} catch {{}}
+  location.replace("/?session_id={session_id}&meta_result=" + result);
+}})();
+</script></body></html>'''
+    return HTMLResponse(
+        html,
+        headers={
+            "Cache-Control": "no-store",
+            "Referrer-Policy": "no-referrer",
+            "Content-Security-Policy": (
+                f"default-src 'none'; script-src 'nonce-{nonce}'; connect-src 'self'; "
+                "frame-ancestors 'none'; base-uri 'none'"
+            ),
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.post("/sessions/{session_id}/whatsapp/redirect/complete")
+async def redirect_complete(request: Request, session_id: UUID, payload: RedirectCompletion):
+    service_for(request)
+    service, browser = await authorize_browser(request, session_id)
+    try:
+        if payload.declined:
+            await service.cancel(
+                session_id, browser, attempt_id=payload.attempt_id, state=payload.state
+            )
+            return {"declined": True}
+        if not payload.code or not payload.code.get_secret_value():
+            raise WhatsAppSignupError("meta_authorization_missing")
+        result = await service.complete(
+            session_id,
+            browser,
+            attempt_id=payload.attempt_id,
+            state=payload.state,
+            code=payload.code,
+            redirect_uri=meta_redirect_uri(),
+        )
+    except (WhatsAppSignupError, MetaSignupError) as error:
+        try:
+            await service.cancel(
+                session_id, browser, attempt_id=payload.attempt_id, state=payload.state
+            )
+        except WhatsAppSignupError:
+            pass  # Invalid/foreign attempts cannot unlock another browser's settings.
+        raise HTTPException(409, str(error)) from None
+    return connection_status(result)
 
 
 @router.post("/sessions/{session_id}/whatsapp/cancel")

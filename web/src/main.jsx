@@ -91,6 +91,7 @@ function App() {
     const params = new URLSearchParams(window.location.search);
     return {
       sessionId: params.get("session_id"),
+      isWhatsAppReturn: params.has("meta_result"),
       token: params.get("token"),
       isTerms: window.location.pathname === TERMS_PATH,
       isTelegramSetup: window.location.pathname.includes("telegram-setup"),
@@ -209,7 +210,7 @@ function App() {
       website_verification_email: loaded.website_verification_email || "",
     });
     window.localStorage.setItem("onboarding_session_id", loaded.session_id);
-    setStep(actionParams.isTelegramSetup ? "telegram" : stepFromSession(loaded));
+    setStep(actionParams.isWhatsAppReturn ? "whatsapp" : actionParams.isTelegramSetup ? "telegram" : stepFromSession(loaded));
     return loaded;
   }
 

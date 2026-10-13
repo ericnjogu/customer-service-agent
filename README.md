@@ -1074,17 +1074,45 @@ forwarding those messages to the customer still belong to later increments.
 
 ## WhatsApp Embedded Signup and tenant credentials
 
-For signup callback troubleshooting, enable **Preserve log** in the browser console
-and filter for `WhatsApp signup diagnostic`. These browser-only entries report the
-Meta event type, numeric error code (when provided), and whether authorization,
-selected assets, and the server attempt have arrived. They do not record raw
-provider payloads, authorization codes, tokens, or OAuth state. Raw provider error
-text is deliberately excluded because it may contain sensitive values.
-`backend_completion_started` means the browser submitted the completion request;
-`backend_completion_succeeded` means the backend accepted it. A number shown as
-registered by Meta does not establish an active application connection. On mobile,
-keep the original onboarding tab open while completing the Meta window/tab.
-These diagnostics are not sent to pod logs and do not change signup permissions.
+New signup uses same-tab OAuth navigation, not a popup or `window.opener` callback.
+`Connect WhatsApp` creates a browser-bound, ten-minute attempt and navigates to Meta.
+The return page immediately removes the authorization query from browser history and
+finishes through a same-origin POST with the existing `SameSite=Strict` onboarding
+cookie. The callback GET cannot exchange a code or authorize another browser. Codes
+and tokens are not persisted in browser storage or application database fields.
+The original SDK completion endpoint remains available for already-open older clients.
+
+Before deploying, add the **exact** callback URL to Meta → Facebook Login for
+Business → Settings → **Valid OAuth Redirect URIs**, keeping strict matching enabled:
+
+```text
+https://css.ristoh.co.ke/api/onboarding/whatsapp/callback
+```
+
+For local HTTPS tunnels, also allowlist
+`<WEB_PUBLIC_BASE_URL>/api/onboarding/whatsapp/callback`. The URL is derived from
+`WEB_PUBLIC_BASE_URL`, never an incoming Host header, and is bound to the attempt
+and supplied unchanged during token exchange. Allowed JavaScript SDK domains alone
+do not allowlist OAuth redirects. No Meta dashboard settings are changed by deployment.
+
+The redirect supplies a code rather than SDK asset events. The backend verifies the
+token and discovers the granted account and number through Graph API. Currently the
+grant must identify **one account containing one number**; missing or ambiguous assets
+fail closed without automatically selecting a number. Multi-number selection needs a
+separate authenticated selection step. Registered in Meta is not the same as connected
+or active here; automatic replies still wait for successful provisioning.
+
+The callback is excluded from application tracing and nginx access logs. Keep callback
+query strings out of any additional ingress/CDN/access logging as well. Do not collect
+raw OAuth URLs, request bodies, or provider payloads when troubleshooting. Inspect
+status codes and sanitized errors instead. If browser verification has expired, verify
+the browser again and start a fresh Meta attempt; expired codes are not recovered.
+
+References: [Facebook Login for Business manual login flow](https://developers.facebook.com/documentation/facebook-login/facebook-login-for-business)
+and [WhatsApp Embedded Signup](https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/implementation).
+Mocked browser QA verifies our redirect/strict-cookie handoff, not Meta's live mobile
+eligibility or consent behavior. Validate an actual Android Chrome signup after
+allowlisting the callback and deploying; do not treat mocked success as Meta acceptance.
 
 The staged WhatsApp onboarding implementation uses server-verified Meta signup
 and OpenBao KV v2 credentials. Signup is enabled by default through

@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS whatsapp_signup_attempts (
     consumed_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE whatsapp_signup_attempts ADD COLUMN IF NOT EXISTS redirect_uri text;
 ALTER TABLE whatsapp_connections
     ADD COLUMN IF NOT EXISTS coexistence boolean NOT NULL DEFAULT false;
 ALTER TABLE whatsapp_connections

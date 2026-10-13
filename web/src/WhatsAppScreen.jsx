@@ -2,6 +2,22 @@ import React, { useEffect, useRef, useState } from "react";
 
 const META_ORIGINS = new Set(["https://www.facebook.com", "https://web.facebook.com"]);
 
+// Never log provider payloads: they can contain authorization codes or tokens.
+function numericErrorCode(value) {
+  return /^(0|[1-9][0-9]{0,11})$/.test(String(value ?? "")) ? String(value) : null;
+}
+
+function signupDiagnostic(stage, attempt, errorCode = null) {
+  console.info("WhatsApp signup diagnostic", {
+    stage,
+    authorizationReceived: Boolean(attempt.code),
+    assetsReceived: Boolean(attempt.assets),
+    serverAttemptReady: Boolean(attempt.parameters),
+    completionStarted: Boolean(attempt.sent),
+    errorCode: numericErrorCode(errorCode),
+  });
+}
+
 export function parseSignupEvent(event) {
   if (!META_ORIGINS.has(event.origin)) return null;
   try {
@@ -119,13 +135,15 @@ export default function WhatsAppScreen({ session, config, api, onSubmit, onBack,
     async function finish() {
       if (!attempt.active || attempt.sent || !attempt.code || !attempt.assets || !attempt.parameters) return;
       attempt.sent = true;
+      signupDiagnostic("backend_completion_started", attempt);
       try {
         const status = await apiRef.current(`${base}/complete`, { method: "POST", body: JSON.stringify({
           attempt_id: attempt.parameters.attempt_id, state: attempt.parameters.state,
           code: attempt.code, ...attempt.assets,
         }) });
+        signupDiagnostic("backend_completion_succeeded", attempt);
         if (!disposed) { setConnection(status); setMessage("WhatsApp connected and verified."); }
-      } catch (error) { if (!disposed) { setMessage(error.message); setFailed(true); await releaseAttempt(attempt); } }
+      } catch (error) { signupDiagnostic("backend_completion_failed", attempt); if (!disposed) { setMessage(error.message); setFailed(true); await releaseAttempt(attempt); } }
       finally { attempt.code = null; attempt.active = false; if (!disposed) setConnecting(false); }
     }
     attempt.finish = finish;
@@ -133,6 +151,8 @@ export default function WhatsAppScreen({ session, config, api, onSubmit, onBack,
       if (!attempt.active || disposed) return;
       const data = parseSignupEvent(event);
       if (!data) return;
+      const errorCode = numericErrorCode(data.data?.error_code);
+      signupDiagnostic(data.event, attempt, errorCode);
       if (!["FINISH", "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING"].includes(data.event)) {
         attempt.active = false;
         attempt.code = null;
@@ -140,13 +160,14 @@ export default function WhatsAppScreen({ session, config, api, onSubmit, onBack,
         setReady(false);
         setFailed(true);
         setMessage(data.event === "CANCEL" ? "Connection cancelled. You can retry."
-          : "Meta could not complete signup. Please retry.");
+          : `Meta could not complete signup. Please retry.${errorCode ? ` Meta error code: ${errorCode}.` : " Meta did not provide a numeric error code."} Number registration alone does not complete this connection. Keep this onboarding tab open while completing Meta signup.`);
         releaseAttempt(attempt);
         return;
       }
       const { waba_id, phone_number_id } = data.data || {};
       if (!/^\d{1,32}$/.test(waba_id || "") || !/^\d{1,32}$/.test(phone_number_id || "")) return;
       attempt.assets = { waba_id, phone_number_id };
+      signupDiagnostic("assets_received", attempt);
       finish();
     }
     window.addEventListener("message", receive);
@@ -238,6 +259,7 @@ export default function WhatsAppScreen({ session, config, api, onSubmit, onBack,
     attempt.startPromise = apiRef.current(`${base}/start`, { method: "POST" }).then((parameters) => {
       attempt.parameters = parameters;
       if (current.current !== attempt || !attempt.active) return;
+      signupDiagnostic("server_attempt_ready", attempt);
       setArchive((value) => ({ ...value, locked: true }));
       attempt.finish();
     }).catch((error) => {
@@ -249,15 +271,18 @@ export default function WhatsAppScreen({ session, config, api, onSubmit, onBack,
     });
     window.FB.login((response) => {
       if (current.current !== attempt || !attempt.active) return;
-      const code = response.authResponse?.code;
+      const code = response?.authResponse?.code;
       if (!code) {
+        const errorCode = numericErrorCode(response?.error?.code);
+        signupDiagnostic("authorization_missing", attempt, errorCode);
         attempt.active = false; setConnecting(false);
         setFailed(true);
-        setMessage("Authorization was cancelled or declined. You can retry.");
+        setMessage(`Meta did not return authorization to this tab. Keep this tab open and complete signup in the Meta window, then retry if needed.${errorCode ? ` Meta error code: ${errorCode}.` : ""}`);
         releaseAttempt(attempt);
         return;
       }
       attempt.code = code;
+      signupDiagnostic("authorization_received", attempt);
       attempt.finish();
     }, { config_id: config.meta_signup_configuration_id, response_type: "code",
       override_default_response_type: true,

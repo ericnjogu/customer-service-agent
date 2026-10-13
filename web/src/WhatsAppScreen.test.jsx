@@ -4,7 +4,7 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import WhatsAppScreen, { parseSignupEvent } from "./WhatsAppScreen";
 
-afterEach(() => { cleanup(); delete window.FB; });
+afterEach(() => { cleanup(); delete window.FB; vi.restoreAllMocks(); });
 
 function setup(mode = "coexistence") {
   let callback;
@@ -145,6 +145,59 @@ test("Meta failures are highlighted alerts and retry restores neutral progress",
   await userEvent.click(screen.getByRole("button", { name: "Retry connection" }));
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(screen.getByRole("status")).not.toHaveClass("form-error-summary");
+});
+
+test("callback diagnostics expose only allowlisted fields, never provider payloads", async () => {
+  const log = vi.spyOn(console, "info").mockImplementation(() => {});
+  const { authorize } = setup();
+  await prepareMeta();
+  await userEvent.click(screen.getByRole("button", { name: "Connect WhatsApp" }));
+  await act(async () => {
+    authorize();
+    window.dispatchEvent(new MessageEvent("message", {
+      origin: "https://www.facebook.com",
+      data: { type: "WA_EMBEDDED_SIGNUP", event: "ERROR", data: {
+        error_code: 12345, error_message: "private provider text",
+        access_token: "secret-token", code: "secret-code",
+      } },
+    }));
+  });
+  expect(screen.getByRole("alert")).toHaveTextContent("Meta error code: 12345");
+  expect(log).toHaveBeenCalledWith("WhatsApp signup diagnostic", expect.objectContaining({
+    stage: "ERROR", errorCode: "12345", authorizationReceived: true,
+  }));
+  const output = JSON.stringify(log.mock.calls);
+  for (const secret of ["private provider text", "secret-token", "secret-code", "one-time-code", "browser-state"]) {
+    expect(output).not.toContain(secret);
+    expect(screen.getByRole("alert")).not.toHaveTextContent(secret);
+  }
+});
+
+test("non-numeric provider error codes are not displayed or logged", async () => {
+  const log = vi.spyOn(console, "info").mockImplementation(() => {});
+  setup();
+  await prepareMeta();
+  await userEvent.click(screen.getByRole("button", { name: "Connect WhatsApp" }));
+  await act(async () => window.dispatchEvent(new MessageEvent("message", {
+    origin: "https://www.facebook.com", data: { type: "WA_EMBEDDED_SIGNUP", event: "ERROR",
+      data: { error_code: "secret-provider-value" } },
+  })));
+  expect(screen.getByRole("alert")).toHaveTextContent("did not provide a numeric error code");
+  expect(JSON.stringify(log.mock.calls)).not.toContain("secret-provider-value");
+});
+
+test("missing authorization explains the tab handoff and does not complete signup", async () => {
+  const log = vi.spyOn(console, "info").mockImplementation(() => {});
+  const { api } = setup();
+  await prepareMeta();
+  await userEvent.click(screen.getByRole("button", { name: "Connect WhatsApp" }));
+  await act(async () => window.FB.login.mock.calls[0][0]({
+    error: { code: 190, message: "private-provider-message" },
+  }));
+  expect(screen.getByRole("alert")).toHaveTextContent("did not return authorization to this tab");
+  expect(screen.getByRole("alert")).toHaveTextContent("Meta error code: 190");
+  expect(api.mock.calls.some(([path]) => path.endsWith("/complete"))).toBe(false);
+  expect(JSON.stringify(log.mock.calls)).not.toContain("private-provider-message");
 });
 
 test.each([false, true])("cached-page return refreshes Drive state and preserves server lock=%s", async (locked) => {

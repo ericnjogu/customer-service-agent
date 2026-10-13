@@ -30,6 +30,13 @@ data:
         }
 
         # OAuth codes must not enter access logs.
+        location = /api/onboarding/whatsapp/callback {
+            access_log off;
+            proxy_pass http://{{ include "customer-service.fullname" . }}-app:{{ .Values.service.port }}/onboarding/whatsapp/callback;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
         location = /api/onboarding/drive/callback {
             access_log off;
             proxy_pass http://{{ include "customer-service.fullname" . }}-app:{{ .Values.service.port }}/onboarding/drive/callback;

@@ -57,7 +57,7 @@ class MetaSignupClient:
         except (httpx.HTTPError, ValueError):
             raise MetaSignupError("meta_request_failed") from None
 
-    async def exchange(self, code: SecretStr) -> SecretStr:
+    async def exchange(self, code: SecretStr, *, redirect_uri: str | None = None) -> SecretStr:
         result = await self._request(
             "POST",
             "oauth/access_token",
@@ -65,12 +65,65 @@ class MetaSignupClient:
                 "client_id": self.app_id,
                 "client_secret": self.app_secret.get_secret_value(),
                 "code": code.get_secret_value(),
+                **({"redirect_uri": redirect_uri} if redirect_uri else {}),
             },
         )
         token = result.get("access_token")
         if not isinstance(token, str) or not token:
             raise MetaSignupError("meta_token_missing")
         return SecretStr(token)
+
+    async def discover_asset(self, token: SecretStr) -> VerifiedWhatsAppAsset:
+        """Redirects return a code, not SDK asset events. Never guess between assets."""
+        debug = await self._request(
+            "GET",
+            "debug_token",
+            headers={"Authorization": f"Bearer {self.app_id}|{self.app_secret.get_secret_value()}"},
+            params={"input_token": token.get_secret_value()},
+        )
+        data = debug.get("data", {})
+        if (
+            not isinstance(data, dict)
+            or data.get("is_valid") is not True
+            or str(data.get("app_id")) != self.app_id
+        ):
+            raise MetaSignupError("meta_token_invalid")
+        grants = data.get("granular_scopes", [])
+        if not isinstance(grants, list):
+            raise MetaSignupError("meta_waba_not_granted")
+        targets = {
+            str(target)
+            for scope in grants
+            if isinstance(scope, dict)
+            and scope.get("scope") == "whatsapp_business_management"
+            and isinstance(scope.get("target_ids"), list)
+            for target in scope["target_ids"]
+        }
+        if len(targets) != 1:
+            raise MetaSignupError("meta_asset_selection_ambiguous")
+        waba_id = targets.pop()
+        if not re.fullmatch(r"[0-9]{1,32}", waba_id):
+            raise MetaSignupError("meta_asset_invalid")
+        phones = await self._request(
+            "GET",
+            f"{waba_id}/phone_numbers",
+            headers={"Authorization": f"Bearer {token.get_secret_value()}"},
+            params={"fields": "id", "limit": "2"},
+        )
+        rows = phones.get("data")
+        paging = phones.get("paging", {})
+        if (
+            not isinstance(rows, list)
+            or len(rows) != 1
+            or not isinstance(rows[0], dict)
+            or not isinstance(paging, dict)
+            or paging.get("next")
+        ):
+            raise MetaSignupError("meta_asset_selection_ambiguous")
+        # Reuse all ownership, permissions, expiry, membership and verification checks.
+        return await self.verify_asset(
+            token, waba_id=waba_id, phone_number_id=str(rows[0].get("id", ""))
+        )
 
     async def verify_asset(
         self, token: SecretStr, *, waba_id: str, phone_number_id: str

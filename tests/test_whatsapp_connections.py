@@ -292,18 +292,99 @@ async def setup(repo, *, import_history=True):
     return service, session, browser, meta
 
 
+async def test_redirect_browser_binding_replay_and_callback(connections, monkeypatch):
+    from unittest.mock import AsyncMock
+    from urllib.parse import parse_qs, urlsplit
+
+    import httpx
+    from fastapi import FastAPI
+
+    from app.api import whatsapp_signup as api
+
+    service, session, browser, meta = await setup(connections, import_history=False)
+    meta.exchange = AsyncMock(return_value=SecretStr("token"))
+    meta.discover_asset = AsyncMock(
+        return_value=VerifiedWhatsAppAsset("456", "789", "+254700000001", True, "CLOUD_API")
+    )
+    settings = SimpleNamespace(
+        web_public_base_url="https://test.example",
+        onboarding_whatsapp_enabled=True,
+        onboarding_whatsapp_mode="coexistence",
+        meta_app_id="123",
+        meta_signup_configuration_id="configuration",
+        meta_graph_api_version="v25.0",
+    )
+    monkeypatch.setattr(api, "get_settings", lambda: settings)
+    app = FastAPI()
+    app.include_router(api.router)
+    app.state.container = SimpleNamespace(whatsapp_signup=service)
+    base = f"/onboarding/sessions/{session}/whatsapp/redirect"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="https://test.example",
+        headers={"Origin": "https://test.example"},
+    ) as client:
+        client.cookies.set(f"onboarding-{session}", browser)
+        assert (
+            await client.post(base + "/start", headers={"Origin": "https://evil.example"})
+        ).status_code == 403
+        launch = await client.post(base + "/start")
+        assert launch.status_code == 200
+        query = parse_qs(urlsplit(launch.json()["authorization_url"]).query)
+        state = query["state"][0]
+        uri = query["redirect_uri"][0]
+        assert uri == "https://test.example/api/onboarding/whatsapp/callback"
+        attempt_id = await connections.pool.fetchval(
+            "SELECT attempt_id FROM whatsapp_signup_attempts WHERE session_id=$1", session
+        )
+        client.cookies.clear()
+        callback = await client.get(
+            "/onboarding/whatsapp/callback",
+            params={
+                "state": state,
+                "code": "</script><script>alert(1)</script>",
+            },
+        )
+        assert callback.status_code == 200
+        assert "</script><script>" not in callback.text
+        assert "history.replaceState" in callback.text
+        assert callback.headers["cache-control"] == "no-store"
+        assert "frame-ancestors 'none'" in callback.headers["content-security-policy"]
+        meta.exchange.assert_not_awaited()
+        payload = {"attempt_id": str(attempt_id), "state": state, "code": "test-code"}
+        assert (await client.post(base + "/complete", json=payload)).status_code == 403
+        client.cookies.set(f"onboarding-{session}", browser)
+        assert (
+            await client.post(base + "/complete", json={**payload, "state": "x" * 43})
+        ).status_code == 409
+        meta.exchange.assert_not_awaited()
+        result = await client.post(base + "/complete", json=payload)
+        assert result.status_code == 200
+        assert result.json()["status"] == "connected"
+        meta.exchange.assert_awaited_once_with(SecretStr("test-code"), redirect_uri=uri)
+        assert (await client.post(base + "/complete", json=payload)).status_code == 409
+        assert (
+            await client.get("/onboarding/whatsapp/callback", params={"state": state})
+        ).status_code == 400
+
+
 async def test_cloud_api_connects_without_history_or_registration(connections):
     from unittest.mock import AsyncMock
 
     service, session, browser, meta = await setup(connections, import_history=False)
     service.mode = "cloud_api"
-    meta.verify_asset = AsyncMock(return_value=VerifiedWhatsAppAsset(
-        "456", "789", "+254700000001", False, "CLOUD_API"
-    ))
+    meta.verify_asset = AsyncMock(
+        return_value=VerifiedWhatsAppAsset("456", "789", "+254700000001", False, "CLOUD_API")
+    )
     attempt = await service.start(session, browser)
     result = await service.complete(
-        session, browser, attempt_id=attempt["attempt_id"], state=attempt["state"],
-        code=SecretStr("test-code"), waba_id="456", phone_number_id="789",
+        session,
+        browser,
+        attempt_id=attempt["attempt_id"],
+        state=attempt["state"],
+        code=SecretStr("test-code"),
+        waba_id="456",
+        phone_number_id="789",
     )
     assert result.status == "connected"
     assert result.coexistence is False

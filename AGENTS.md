@@ -22,6 +22,8 @@ prefer explicit fields over fields stored in jsonb fields
 
 ## Pull request branch policy
 
+- If the current branch's pull request has been merged, always create a new feature
+  branch and a new pull request for subsequent changes.
 - Before committing or opening a pull request while a feature branch is checked out,
   ask whether to continue using the current branch or create a new branch.
 - If a pull request already exists for the current branch, create a separate branch for

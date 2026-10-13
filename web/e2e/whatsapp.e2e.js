@@ -65,16 +65,16 @@ async function prepare(page, mode = "finish", importMode = null) {
     callback.searchParams.set(importMode === "cancel" ? "error" : "code", importMode === "cancel" ? "access_denied" : "test-google-code");
     await route.fulfill({ status: 302, headers: { location: callback.href }, body: "" });
   });
-  await page.addInitScript(({ phone, mode }) => {
-    window.FB = { init() {}, login(callback) {
-      callback({ authResponse: { code: "test-single-use-code" } });
-      window.dispatchEvent(new MessageEvent("message", {
-        origin: mode === "untrusted" ? "https://www.facebook.com.attacker.test" : "https://www.facebook.com",
-        data: JSON.stringify({ type: "WA_EMBEDDED_SIGNUP", event: mode === "cancel" ? "CANCEL" : "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING",
-          data: { waba_id: "456", phone_number_id: phone } }),
-      }));
-    } };
-  }, { phone, mode });
+  await page.route("https://www.facebook.com/**/dialog/oauth?**", async (route) => {
+    const authorization = new URL(route.request().url());
+    expect(authorization.searchParams.get("response_type")).toBe("code");
+    expect(authorization.searchParams.get("display")).toBe("page");
+    const callback = new URL(authorization.searchParams.get("redirect_uri"));
+    callback.searchParams.set("state", mode === "untrusted" ? "x".repeat(43) : authorization.searchParams.get("state"));
+    callback.searchParams.set(mode === "cancel" ? "error" : "code", mode === "cancel" ? "access_denied" : "test-single-use-code");
+    // A real cross-site document navigation exercises Strict cookies on the return POST.
+    await route.fulfill({ contentType: "text/html", body: `<a href="${callback.href.replaceAll("&", "&amp;")}">Finish Meta signup</a>` });
+  });
   await page.goto("/");
   const email = `whatsapp-${phone}@example.com`;
   await page.getByLabel(/^Email/).fill(email);
@@ -131,6 +131,7 @@ async function prepare(page, mode = "finish", importMode = null) {
 test("browser signup reaches Graph and vault mocks, then automatically provisions", async ({ page }) => {
   const phone = await prepare(page);
   await page.getByRole("button", { name: "Connect WhatsApp" }).click();
+  await page.getByRole("link", { name: "Finish Meta signup" }).click();
   await expect(page.getByText("+254700000001")).toBeVisible();
   const records = await journal();
   expect(records.some(({ request }) => request.url === `/v25.0/${phone}/smb_app_data`)).toBe(false);
@@ -147,9 +148,36 @@ test("browser signup reaches Graph and vault mocks, then automatically provision
   expect(await publicSession.text()).not.toContain("test-customer-token");
 });
 
+test("mobile-sized redirect returns to onboarding without an opener or SDK", async ({ page }) => {
+  await page.setViewportSize({ width: 393, height: 851 });
+  await prepare(page);
+  expect(await page.evaluate(() => Boolean(window.FB))).toBe(false);
+  await page.getByRole("button", { name: "Connect WhatsApp" }).click();
+  await expect(page).toHaveURL(/www.facebook.com/);
+  await page.getByRole("link", { name: "Finish Meta signup" }).click();
+  await expect(page.getByText("+254700000001")).toBeVisible();
+  await expect(page).not.toHaveURL(/code=|state=|meta_result=/);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Submit and provision" })).toBeEnabled();
+  const exchanges = (await journal()).filter(({ request }) => request.url === "/v25.0/oauth/access_token");
+  expect(exchanges).toHaveLength(1);
+  expect(new URLSearchParams(exchanges[0].request.body).get("redirect_uri")).toMatch(/\/api\/onboarding\/whatsapp\/callback$/);
+});
+
+test("redirect return without the verified browser cookie cannot exchange a code", async ({ page }) => {
+  await prepare(page);
+  await page.getByRole("button", { name: "Connect WhatsApp" }).click();
+  await expect(page.getByRole("link", { name: "Finish Meta signup" })).toBeVisible();
+  await page.context().clearCookies();
+  await page.getByRole("link", { name: "Finish Meta signup" }).click();
+  await expect(page.getByRole("heading", { name: "Verify this browser" })).toBeVisible();
+  expect((await journal()).some(({ request }) => request.url === "/v25.0/oauth/access_token")).toBe(false);
+});
+
 test("Drive consent creates private folders and enables history without blocking submission", async ({ page }) => {
   const phone = await prepare(page, "finish", "finish");
   await page.getByRole("button", { name: "Connect WhatsApp" }).click();
+  await page.getByRole("link", { name: "Finish Meta signup" }).click();
   await expect(page.getByText("+254700000001")).toBeVisible();
   const records = await journal();
   expect(records.some(({ request }) => request.url === `/v25.0/${phone}/smb_app_data`)).toBe(true);
@@ -214,6 +242,7 @@ for (const mode of ["cancel", "untrusted"]) {
   test(`browser ${mode} callback cannot complete a connection`, async ({ page }) => {
     await prepare(page, mode);
     await page.getByRole("button", { name: "Connect WhatsApp" }).click();
+    await page.getByRole("link", { name: "Finish Meta signup" }).click();
     if (mode === "cancel") {
       await expect(page.getByText("Connection cancelled. You can retry.")).toBeVisible();
       await expect(page.getByRole("checkbox", { name: "Import historical chats and media" })).toBeEnabled();

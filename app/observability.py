@@ -37,7 +37,7 @@ def configure_tracing(app: FastAPI, settings: Settings) -> TracerProvider | None
     FastAPIInstrumentor.instrument_app(
         app,
         tracer_provider=provider,
-        excluded_urls=".*/healthz,.*/onboarding/drive/callback",
+        excluded_urls=".*/healthz,.*/onboarding/drive/callback,.*/onboarding/whatsapp/callback",
     )
     HTTPXClientInstrumentor().instrument(tracer_provider=provider)
     AsyncPGInstrumentor().instrument(tracer_provider=provider)

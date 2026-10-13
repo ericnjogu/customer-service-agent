@@ -85,7 +85,9 @@ class WhatsAppSignupService:
         if not valid:
             raise WhatsAppSignupError("verified_browser_required")
 
-    async def start(self, session_id: UUID, browser: str) -> dict:
+    async def start(
+        self, session_id: UUID, browser: str, *, redirect_uri: str | None = None
+    ) -> dict:
         await self.require_browser(session_id, browser)
         state = secrets.token_urlsafe(32)
         async with self.repository.pool.acquire() as connection, connection.transaction():
@@ -120,11 +122,12 @@ class WhatsAppSignupService:
             )
             row = await connection.fetchrow(
                 "INSERT INTO whatsapp_signup_attempts "
-                "(session_id,browser_hash,state_hash,expires_at) "
-                "VALUES($1,$2,$3,now()+interval '10 minutes') RETURNING attempt_id,expires_at",
+                "(session_id,browser_hash,state_hash,expires_at,redirect_uri) "
+                "VALUES($1,$2,$3,now()+interval '10 minutes',$4) RETURNING attempt_id,expires_at",
                 session_id,
                 capability_hash(browser),
                 capability_hash(state),
+                redirect_uri,
             )
         return {"attempt_id": row["attempt_id"], "state": state, "expires_at": row["expires_at"]}
 
@@ -136,8 +139,9 @@ class WhatsAppSignupService:
         attempt_id: UUID,
         state: str,
         code: SecretStr,
-        waba_id: str,
-        phone_number_id: str,
+        waba_id: str | None = None,
+        phone_number_id: str | None = None,
+        redirect_uri: str | None = None,
     ):
         await self.require_browser(session_id, browser)
         try:
@@ -152,17 +156,23 @@ class WhatsAppSignupService:
                         "UPDATE whatsapp_signup_attempts SET consumed_at=now() "
                         "WHERE attempt_id=$1 AND session_id=$2 AND browser_hash=$3 "
                         "AND state_hash=$4 AND consumed_at IS NULL AND expires_at>now() "
+                        "AND redirect_uri IS NOT DISTINCT FROM $5 "
                         "RETURNING attempt_id",
                         attempt_id,
                         session_id,
                         capability_hash(browser),
                         capability_hash(state),
+                        redirect_uri,
                     ):
                         raise WhatsAppSignupError("signup_attempt_invalid_or_used")
-                    token = await self.meta.exchange(code)
-                    asset = await self.meta.verify_asset(
-                        token, waba_id=waba_id, phone_number_id=phone_number_id
-                    )
+                    if redirect_uri:
+                        token = await self.meta.exchange(code, redirect_uri=redirect_uri)
+                        asset = await self.meta.discover_asset(token)
+                    else:
+                        token = await self.meta.exchange(code)
+                        asset = await self.meta.verify_asset(
+                            token, waba_id=waba_id, phone_number_id=phone_number_id
+                        )
                     self.validate_asset_mode(asset)
                     return await self._connect(connection, session_id, token, asset)
                 finally:

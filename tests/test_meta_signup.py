@@ -62,6 +62,46 @@ async def test_exchange_verify_subscribe_and_register(meta, caplog):
         assert secret not in caplog.text
 
 
+async def test_redirect_exchange_and_discovery(meta):
+    from urllib.parse import parse_qs
+
+    client, _, _, requests = meta
+    uri = "https://css.ristoh.co.ke/api/onboarding/whatsapp/callback"
+    token = await client.exchange(SecretStr("code"), redirect_uri=uri)
+    assert parse_qs(requests[0].content.decode())["redirect_uri"] == [uri]
+    assert (await client.discover_asset(token)).phone_number_id == "789"
+
+
+async def test_redirect_never_guesses_between_accounts(meta):
+    client, state, _, requests = meta
+    state["granular_scopes"][0]["target_ids"].append("999")
+    with pytest.raises(MetaSignupError, match="meta_asset_selection_ambiguous"):
+        await client.discover_asset(SecretStr("token"))
+    assert len(requests) == 1
+
+
+@pytest.mark.parametrize("extra", ["second_phone", "next_page"])
+async def test_redirect_never_guesses_between_numbers(meta, extra):
+    client, state, phone, _ = meta
+
+    def handle(request):
+        if request.url.path.endswith("debug_token"):
+            return httpx.Response(200, json={"data": state})
+        return httpx.Response(
+            200,
+            json={
+                "data": [phone, {"id": "999"}] if extra == "second_phone" else [phone],
+                "paging": {"next": "https://example.invalid"} if extra == "next_page" else {},
+            },
+        )
+
+    client.client = httpx.AsyncClient(
+        base_url="https://graph.facebook.com", transport=httpx.MockTransport(handle)
+    )
+    with pytest.raises(MetaSignupError, match="meta_asset_selection_ambiguous"):
+        await client.discover_asset(SecretStr("token"))
+
+
 @pytest.mark.parametrize(
     "change,code",
     [

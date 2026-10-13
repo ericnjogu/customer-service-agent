@@ -79,6 +79,7 @@ export default function WhatsAppScreen({ session, config, api, onSubmit, onBack,
   apiRef.current = api;
   const base = `/onboarding/sessions/${session.session_id}/whatsapp`;
   const sessionBase = `/onboarding/sessions/${session.session_id}`;
+  const redirect = config.whatsapp_transport === "redirect";
 
   useEffect(() => {
     function restorePage(event) {
@@ -108,7 +109,20 @@ export default function WhatsAppScreen({ session, config, api, onSubmit, onBack,
         if (disposed) return;
         setConnection(status);
         const archiveStatus = await apiRef.current(`${sessionBase}/archive`);
-        if (!disposed) { setArchive(archiveStatus); setMessage(""); }
+        if (!disposed) {
+          setArchive(archiveStatus); setMessage("");
+          const returned = new URLSearchParams(window.location.search).get("meta_result");
+          if (redirect && returned && !["connected", "active"].includes(status.status)) {
+            setFailed(true); setReady(true);
+            setMessage(returned === "cancelled" ? "Connection cancelled. You can retry."
+              : returned === "ambiguous" ? "Meta returned multiple accounts or numbers, or no number. Please retry with one WhatsApp account containing one number. No number was selected automatically."
+              : "Meta could not complete the connection. Please retry.");
+          }
+          if (returned) {
+            const url = new URL(window.location.href); url.searchParams.delete("meta_result");
+            window.history.replaceState(null, "", url.pathname + url.search);
+          }
+        }
         const fragment = new URLSearchParams(window.location.hash.slice(1));
         if (fragment.has("drive_state") && !callbackHandled.current) {
           callbackHandled.current = true;
@@ -199,7 +213,7 @@ export default function WhatsAppScreen({ session, config, api, onSubmit, onBack,
     Object.assign(current.current, { active: false, code: null, assets: null, sent: false, parameters: null });
     setPreparing(true); setFailed(false); setMessage("Preparing WhatsApp connection…");
     try {
-      await loadMeta(config);
+      if (!redirect) await loadMeta(config);
       setReady(true); setMessage("");
     } catch (error) { setMessage(error.message); setFailed(true); }
     finally { setPreparing(false); }
@@ -252,6 +266,16 @@ export default function WhatsAppScreen({ session, config, api, onSubmit, onBack,
   function connect() {
     const attempt = current.current;
     if (!ready || !attempt || driveBusy || (archive?.import_enabled && archive.drive_status !== "ready")) return;
+    if (redirect) {
+      setFailed(false); setConnecting(true); setMessage("Opening Meta signup…");
+      apiRef.current(`${base}/redirect/start`, { method: "POST" }).then((result) => {
+        window.location.assign(result.authorization_url);
+      }).catch((error) => {
+        setConnecting(false); setFailed(true); setMessage(error.message);
+        if (error.code === "browser_verification_required") setNeedsBrowser(true);
+      });
+      return;
+    }
     Object.assign(attempt, { code: null, assets: null, sent: false, parameters: null });
     attempt.active = true;
     setFailed(false); setConnecting(true); setReady(false); setMessage("Complete the Meta signup window.");

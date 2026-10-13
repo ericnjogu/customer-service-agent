@@ -6,6 +6,27 @@ import WhatsAppScreen, { parseSignupEvent } from "./WhatsAppScreen";
 
 afterEach(() => { cleanup(); delete window.FB; vi.restoreAllMocks(); });
 
+test("redirect preparation does not load the SDK or start authorization", async () => {
+  window.FB = { init: vi.fn(), login: vi.fn() };
+  const api = vi.fn(async (path) => path.endsWith("/status")
+    ? { status: "not_connected" } : { import_enabled: false, locked: false });
+  render(<WhatsAppScreen session={{ session_id: "session" }}
+    config={{ whatsapp_enabled: true, whatsapp_transport: "redirect", whatsapp_mode: "cloud_api" }}
+    api={api} onSubmit={vi.fn()} onBack={vi.fn()} busy={false} />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Connect WhatsApp" })).toBeEnabled());
+  expect(window.FB.init).not.toHaveBeenCalled();
+  expect(window.FB.login).not.toHaveBeenCalled();
+  expect(api.mock.calls.map(([path]) => path)).toEqual([
+    "/onboarding/sessions/session/whatsapp/status", "/onboarding/sessions/session/archive",
+  ]);
+  api.mockRejectedValue(new Error("Connection temporarily unavailable"));
+  await userEvent.click(screen.getByRole("button", { name: "Connect WhatsApp" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Connection temporarily unavailable");
+  expect(api).toHaveBeenLastCalledWith("/onboarding/sessions/session/whatsapp/redirect/start", { method: "POST" });
+  await userEvent.click(screen.getByRole("button", { name: "Retry connection" }));
+  expect(api.mock.calls.filter(([path]) => path.endsWith("/redirect/start"))).toHaveLength(2);
+});
+
 function setup(mode = "coexistence") {
   let callback;
   window.FB = { init: vi.fn(), login: vi.fn((fn) => { callback = fn; }) };

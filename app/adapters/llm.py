@@ -15,7 +15,7 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 from langchain_core.documents import Document
-from langchain_core.tracers.langchain import LangChainTracer, wait_for_all_tracers
+from langchain_core.tracers.langchain import wait_for_all_tracers
 from langsmith import Client as LangSmithClient
 from langsmith.run_helpers import traceable, tracing_context
 
@@ -735,9 +735,9 @@ class LiteLLMChatModel:
 
 
 def langsmith_tracing_enabled() -> bool:
-    tracing_value = os.getenv("LANGSMITH_TRACING", os.getenv("LANGCHAIN_TRACING_V2", ""))
-    tracing_disabled = tracing_value.strip().lower() in {"0", "false", "no", "off"}
-    return bool(os.getenv("LANGSMITH_API_KEY")) and not tracing_disabled
+    return bool(os.getenv("LANGSMITH_API_KEY")) and (
+        os.getenv("LANGSMITH_TRACING", "").strip().lower() == "true"
+    )
 
 
 @lru_cache
@@ -759,24 +759,24 @@ def langsmith_runnable_config(
     if not langsmith_tracing_enabled():
         return None
 
-    client = langsmith_client()
-    if client is None:
-        return None
-
     tags = [*tenant_trace_tags(tenant_config), f"operation:{operation}"]
     metadata = tenant_trace_metadata(tenant_config)
-    project_name = tenant_langsmith_project_name(tenant_config)
     return {
-        "callbacks": [
-            LangChainTracer(
-                client=client,
-                project_name=project_name,
-                tags=tags,
-            )
-        ],
         "tags": tags,
         "metadata": metadata,
     }
+
+
+def tenant_tracing_context(tenant_config: TenantConfig | None):
+    """Let LangChain install its tracer; only supply application-specific routing."""
+    enabled = langsmith_tracing_enabled()
+    return tracing_context(
+        client=langsmith_client() if enabled else None,
+        project_name=tenant_langsmith_project_name(tenant_config),
+        tags=tenant_trace_tags(tenant_config),
+        metadata=tenant_trace_metadata(tenant_config),
+        enabled=enabled,
+    )
 
 
 async def flush_langsmith_traces() -> None:
@@ -840,13 +840,7 @@ class LlmAnswerGenerator:
             ),
         ]
         config = langsmith_runnable_config("answer_generation", tenant_config)
-        with tracing_context(
-            client=langsmith_client(),
-            project_name=tenant_langsmith_project_name(tenant_config),
-            tags=tenant_trace_tags(tenant_config),
-            metadata=tenant_trace_metadata(tenant_config),
-            enabled=langsmith_tracing_enabled(),
-        ):
+        with tenant_tracing_context(tenant_config):
             response = await self.chat_model_for(tenant_config).ainvoke(
                 messages,
                 config=config,
@@ -929,13 +923,7 @@ class LlmQuestionPlanner:
             ),
         ]
         config = langsmith_runnable_config("question_planning", tenant_config)
-        with tracing_context(
-            client=langsmith_client(),
-            project_name=tenant_langsmith_project_name(tenant_config),
-            tags=tenant_trace_tags(tenant_config),
-            metadata=tenant_trace_metadata(tenant_config),
-            enabled=langsmith_tracing_enabled(),
-        ):
+        with tenant_tracing_context(tenant_config):
             response = await self.chat_model_for(tenant_config).ainvoke(
                 messages,
                 config=config,

@@ -1010,8 +1010,7 @@ Application configuration uses the `AGENT_` prefix. LangSmith uses its native
 | `AGENT_QUESTION_PLANNING_PROMPT_PATH` | packaged `question-planning.md` | Optional path overriding the question-planning prompt |
 | `AGENT_WEBSITE_ANALYSIS_PROMPT_PATH` | packaged `website-analysis.md` | Optional path overriding the website-analysis prompt |
 | `AGENT_WEBSITE_RESEARCH_PROMPT_PATH` | packaged `website-research.md` | Optional path overriding the website-research query prompt |
-| `LANGSMITH_TRACING` | `true` | Enable LangSmith tracing |
-| `LANGSMITH_TRACING_V2` | `true` | Enable LangSmith tracing v2 |
+| `LANGSMITH_TRACING` | unset (off) | Set explicitly to `true` with `LANGSMITH_API_KEY` to enable tracing; a key alone does not enable application tracing |
 | `LANGCHAIN_TRACING_V2` | `true` | Legacy LangChain tracing v2 env var kept for SDK compatibility |
 | `LANGSMITH_ENDPOINT` | `https://eu.api.smith.langchain.com` | LangSmith endpoint |
 | `LANGSMITH_PROJECT` | `customer-service-local` | Fallback LangSmith trace project used when tenant config does not provide `langsmith_project` |

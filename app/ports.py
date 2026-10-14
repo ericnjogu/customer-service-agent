@@ -216,6 +216,8 @@ class OnboardingRepository(Protocol):
         admin: OnboardingAdmin,
         terms_version: str,
         terms_accepted_at: datetime,
+        marketing_consent_version: str | None,
+        marketing_consent_at: datetime | None,
     ) -> OnboardingSessionRecord: ...
 
     async def save_session_website(

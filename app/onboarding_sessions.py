@@ -11,6 +11,7 @@ from uuid import UUID
 
 from app.config import Settings
 from app.models import (
+    ONBOARDING_MARKETING_CONSENT_VERSION,
     ONBOARDING_TERMS_VERSION,
     OnboardingEmailVerificationDiagnostic,
     OnboardingEmailVerificationRequest,
@@ -84,6 +85,7 @@ class OnboardingSessionService:
     ) -> OnboardingSessionRecord:
         started_at = time.perf_counter()
         terms_accepted_at = datetime.now(timezone.utc)
+        marketing_consent_at = terms_accepted_at if request.admin.marketing_consent else None
         logger.info(
             "Creating onboarding session after account validation username_email=%s",
             request.admin.username_email,
@@ -92,6 +94,12 @@ class OnboardingSessionService:
             admin=request.admin,
             terms_version=ONBOARDING_TERMS_VERSION,
             terms_accepted_at=terms_accepted_at,
+            marketing_consent_version=(
+                ONBOARDING_MARKETING_CONSENT_VERSION
+                if request.admin.marketing_consent
+                else None
+            ),
+            marketing_consent_at=marketing_consent_at,
         )
         logger.info(
             "Onboarding session persisted before username verification email "

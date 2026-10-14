@@ -316,6 +316,19 @@ textarea {
   text-transform: none;
 }
 
+.marketing-consent-panel {
+  background: #f7fbff;
+  border: 2px solid #246bfd;
+  border-radius: 14px;
+  padding: 16px;
+}
+
+.marketing-consent-panel legend {
+  color: #0d326f;
+  font-weight: 800;
+  padding: 0 8px;
+}
+
 .wait-card {
   align-items: center;
   display: grid;

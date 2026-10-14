@@ -146,6 +146,8 @@ def session_payload(session: OnboardingSessionRecord) -> dict:
         "admin": session.admin.model_dump(mode="json"),
         "terms_version": session.terms_version,
         "terms_accepted_at": model_to_json(session.terms_accepted_at),
+        "marketing_consent_version": session.marketing_consent_version,
+        "marketing_consent_at": model_to_json(session.marketing_consent_at),
         "analysis": model_to_json(session.analysis),
         "business_profile": model_to_json(session.business_profile),
         "business_summary": session.business_summary,
@@ -1070,17 +1072,24 @@ class PostgresOnboardingRepository:
         admin: OnboardingAdmin,
         terms_version: str,
         terms_accepted_at: datetime,
+        marketing_consent_version: str | None,
+        marketing_consent_at: datetime | None,
     ) -> OnboardingSessionRecord:
         assert self.database.pool
         payload = {
             "admin": admin.model_dump(mode="json"),
             "terms_version": terms_version,
             "terms_accepted_at": terms_accepted_at.isoformat(),
+            "marketing_consent_version": marketing_consent_version,
+            "marketing_consent_at": model_to_json(marketing_consent_at),
         }
         row = await self.database.pool.fetchrow(
             """
-            INSERT INTO onboarding_sessions(admin_email, session_payload)
-            VALUES ($1, $2::jsonb)
+            INSERT INTO onboarding_sessions(
+                admin_email, session_payload, marketing_consent,
+                marketing_consent_version, marketing_consent_at
+            )
+            VALUES ($1, $2::jsonb, $3, $4, $5)
             RETURNING session_id, status, current_step, website_url, admin_email,
                       website_verification_email, session_payload,
                       username_email_verified, username_email_verification_expires_at,
@@ -1093,6 +1102,9 @@ class PostgresOnboardingRepository:
             """,
             admin.username_email.lower(),
             json.dumps(payload),
+            admin.marketing_consent,
+            marketing_consent_version,
+            marketing_consent_at,
         )
         return row_to_onboarding_session(row)
 
@@ -1932,6 +1944,9 @@ CREATE TABLE IF NOT EXISTS onboarding_sessions (
     website_url text,
     admin_email text NOT NULL,
     session_payload jsonb NOT NULL DEFAULT '{{}}',
+    marketing_consent boolean NOT NULL DEFAULT false,
+    marketing_consent_version text,
+    marketing_consent_at timestamptz,
     website_verification_email text,
     username_email_verified boolean NOT NULL DEFAULT false,
     username_email_verification_token_hash text,
@@ -2121,6 +2136,15 @@ ALTER COLUMN website_url DROP NOT NULL;
 
 ALTER TABLE onboarding_sessions
 ADD COLUMN IF NOT EXISTS website_verification_email text;
+
+ALTER TABLE onboarding_sessions
+ADD COLUMN IF NOT EXISTS marketing_consent boolean NOT NULL DEFAULT false;
+
+ALTER TABLE onboarding_sessions
+ADD COLUMN IF NOT EXISTS marketing_consent_version text;
+
+ALTER TABLE onboarding_sessions
+ADD COLUMN IF NOT EXISTS marketing_consent_at timestamptz;
 
 ALTER TABLE onboarding_sessions
 ADD COLUMN IF NOT EXISTS username_email_verified boolean NOT NULL DEFAULT false;

@@ -80,6 +80,7 @@ function App() {
     family_name: "",
     admin_phone_number: "",
     terms_accepted: false,
+    marketing_consent: false,
     has_website: false,
     has_social_media: false,
   });
@@ -228,6 +229,7 @@ function App() {
         startForm.given_name === session.admin.given_name &&
         startForm.family_name === session.admin.family_name &&
         startForm.admin_phone_number === (session.admin.phone_number || "") &&
+        startForm.marketing_consent === Boolean(session.admin.marketing_consent) &&
         startForm.has_website === session.admin.has_website &&
         startForm.has_social_media === session.admin.has_social_media) {
       if (!session.username_email_verified) setStep("username-email-verification");
@@ -250,6 +252,7 @@ function App() {
             family_name: startForm.family_name,
             phone_number: startForm.admin_phone_number,
             terms_accepted: startForm.terms_accepted,
+            marketing_consent: startForm.marketing_consent,
             has_website: startForm.has_website,
             has_social_media: startForm.has_social_media,
           },
@@ -865,6 +868,23 @@ function StartScreen({ form, setForm, onSubmit, busy }) {
           </span>
         </div>
       </Field>
+      <fieldset className="marketing-consent-panel">
+        <legend>Product updates (optional)</legend>
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={Boolean(form.marketing_consent)}
+            onChange={(event) =>
+              setForm({ ...form, marketing_consent: event.target.checked })
+            }
+          />
+          <span>
+            I agree to receive product updates, new feature announcements, and
+            occasional marketing messages from Ristoh AI by email and WhatsApp.
+            I can opt out at any time.
+          </span>
+        </label>
+      </fieldset>
       <button disabled={busy}>
         {busy ? "Sending..." : "Send account verification code to email"}
       </button>

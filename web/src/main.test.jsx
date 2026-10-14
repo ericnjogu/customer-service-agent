@@ -159,6 +159,7 @@ function validStartForm(overrides = {}) {
     family_name: "Doe",
     admin_phone_number: "+254110101010",
     terms_accepted: true,
+    marketing_consent: false,
     ...overrides,
   };
 }
@@ -178,6 +179,7 @@ function validAdmin(overrides = {}) {
     family_name: "Doe",
     phone_number: "+254110101010",
     terms_accepted: true,
+    marketing_consent: false,
     ...overrides,
   };
 }
@@ -213,6 +215,21 @@ describe("website URL validation", () => {
     expect(termsLink).toHaveAttribute("target", "_blank");
     expect(screen.getByLabelText(/accept the terms of service/i))
       .toBeInTheDocument();
+  });
+
+  test("shows optional marketing consent in a conspicuous box", () => {
+    render(
+      <StartScreen
+        form={validStartForm({ marketing_consent: false })}
+        setForm={vi.fn()}
+        onSubmit={vi.fn()}
+        busy={false}
+      />,
+    );
+
+    const checkbox = screen.getByLabelText(/receive product updates/i);
+    expect(checkbox).not.toBeChecked();
+    expect(checkbox.closest("fieldset")).toHaveClass("marketing-consent-panel");
   });
 
   test("normalizes bare domains to HTTPS URLs", () => {
@@ -327,6 +344,7 @@ describe("website URL validation", () => {
     await user.type(screen.getByLabelText(/phone number/i), "+254110101010");
     expect(screen.queryByLabelText(/admin role\/title/i)).not.toBeInTheDocument();
     await user.click(screen.getByLabelText(/accept the terms of service/i));
+    await user.click(screen.getByLabelText(/receive product updates/i));
     await user.click(
       screen.getByRole("button", { name: /Send account verification code to email/i }),
     );
@@ -340,6 +358,7 @@ describe("website URL validation", () => {
         family_name: "Doe",
         phone_number: "+254110101010",
         terms_accepted: true,
+        marketing_consent: true,
       },
     });
     expect(JSON.parse(options.body).admin).not.toHaveProperty("role_title");

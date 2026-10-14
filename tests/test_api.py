@@ -597,10 +597,26 @@ def test_onboarding_session_accepts_valid_start_fields() -> None:
     assert response.json()["admin"]["username_email"] == "admin@hustlehq.example"
     assert response.json()["admin"]["given_name"] == "John"
     assert response.json()["admin"]["family_name"] == "Doe"
-    assert response.json()["terms_version"] == "beta-2026-08-28"
+    assert response.json()["terms_version"] == "free-trial-2026-10-14"
     assert response.json()["terms_accepted_at"]
+    assert response.json()["admin"]["marketing_consent"] is False
+    assert response.json()["marketing_consent_version"] is None
+    assert response.json()["marketing_consent_at"] is None
     assert sent_email.to == ["admin@hustlehq.example"]
     assert f"http://localhost:8080?session_id={response.json()['session_id']}" in sent_email.text
+
+
+def test_onboarding_session_records_optional_marketing_consent() -> None:
+    payload = onboarding_session_payload()
+    payload["admin"]["marketing_consent"] = True
+
+    with TestClient(app) as client:
+        response = client.post("/onboarding/sessions", json=payload)
+
+    assert response.status_code == 201
+    assert response.json()["admin"]["marketing_consent"] is True
+    assert response.json()["marketing_consent_version"] == "product-updates-2026-10-14"
+    assert response.json()["marketing_consent_at"]
 
 
 def test_onboarding_verification_code_is_six_digits_and_only_hmac_is_stored() -> None:

@@ -549,6 +549,8 @@ class MemoryOnboardingRepository:
         admin: OnboardingAdmin,
         terms_version: str,
         terms_accepted_at: datetime,
+        marketing_consent_version: str | None,
+        marketing_consent_at: datetime | None,
     ) -> OnboardingSessionRecord:
         now = datetime.now(timezone.utc)
         session = OnboardingSessionRecord(
@@ -556,6 +558,8 @@ class MemoryOnboardingRepository:
             admin=admin,
             terms_version=terms_version,
             terms_accepted_at=terms_accepted_at,
+            marketing_consent_version=marketing_consent_version,
+            marketing_consent_at=marketing_consent_at,
             status="username_email_verification_pending",
             current_step="username-email-verification",
             created_at=now,

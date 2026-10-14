@@ -26,7 +26,8 @@ const REQUIRE_ADMIN_EMAIL_DOMAIN_MATCH = parseBooleanEnv(
   true,
 );
 const TERMS_PATH = "/terms";
-const TERMS_VERSION = "beta-2026-08-28";
+const TERMS_URL = "https://www.ristoh.co.ke/terms";
+const TERMS_VERSION = "free-trial-2026-10-14";
 const CONTACT_PLATFORMS = {
   instagram: "Instagram", facebook: "Facebook", tiktok: "TikTok",
   linkedin: "LinkedIn", x: "X", youtube: "YouTube", whatsapp: "WhatsApp",
@@ -699,115 +700,27 @@ function App() {
 }
 
 function TermsScreen() {
+  useEffect(() => {
+    redirectToTerms();
+  }, []);
+
   return (
     <section className="shell">
       <header className="hero">
         <p className="eyebrow">Risto AI CSS</p>
-        <h1>Beta Terms of Service</h1>
-        <p>
-          Effective date: August 28, 2026 · Version: {TERMS_VERSION}
-        </p>
+        <h1>Terms of Service</h1>
+        <p>Redirecting to the current Terms of Service · Version: {TERMS_VERSION}</p>
       </header>
       <article className="card terms">
-        <p>
-          These Beta Terms of Service govern access to and use of Risto AI's
-          Customer Service Solution, also called CSS, during its beta testing
-          period.
-        </p>
-        <p>
-          By continuing with onboarding, you confirm that you are authorized to
-          configure customer-service automation for the business you are
-          onboarding and that you accept these Beta Terms.
-        </p>
-
-        <h2>1. Beta service</h2>
-        <p>
-          CSS is currently provided as a beta product. The service may be
-          incomplete, unstable, unavailable, or changed without notice. Features
-          may be added, changed, limited, or removed during the beta period.
-        </p>
-
-        <h2>2. No production guarantee</h2>
-        <p>
-          CSS is provided for testing and evaluation. You should not rely on it
-          as the sole channel for urgent, sensitive, regulated, medical, legal,
-          financial, or safety-critical customer support.
-        </p>
-
-        <h2>3. No service-level commitment</h2>
-        <p>
-          During the beta period, Risto AI does not provide uptime, response-time,
-          support-time, or availability guarantees. The service may be
-          interrupted, delayed, or unavailable.
-        </p>
-
-        <h2>4. AI-generated responses</h2>
-        <p>
-          CSS may use AI models to generate responses. AI-generated responses may
-          be incomplete, inaccurate, outdated, or inappropriate. You remain
-          responsible for reviewing important customer conversations and the
-          business information used to configure the assistant.
-        </p>
-
-        <h2>5. Business and customer data</h2>
-        <p>
-          You may provide business information, website links, contact details,
-          chat messages, documents, and configuration data during onboarding and
-          testing. You confirm that you have the right to provide this information
-          to Risto AI and to use it for customer-service automation.
-        </p>
-
-        <h2>6. Third-party services</h2>
-        <p>
-          CSS may rely on third-party services, including messaging platforms,
-          AI model providers, tracing or observability providers, email providers,
-          hosting providers, and web-search providers. Use of CSS may therefore
-          depend on the availability and rules of those third-party services.
-        </p>
-
-        <h2>7. Acceptable use</h2>
-        <p>
-          You must not use CSS to break the law, send spam or abusive messages,
-          impersonate others, process data you are not allowed to use, provide
-          harmful customer support, or disrupt the service.
-        </p>
-
-        <h2>8. Confidentiality and feedback</h2>
-        <p>
-          During beta testing, you may receive access to non-public features,
-          workflows, designs, documentation, or technical information. Unless
-          Risto AI gives written permission, you should not publicly disclose
-          non-public beta information. If you provide feedback, Risto AI may use
-          it to improve, modify, or commercialize CSS without owing compensation.
-        </p>
-
-        <h2>9. Suspension, data loss, and changes</h2>
-        <p>
-          Risto AI may suspend or stop access to the beta service at any time.
-          Because CSS is in beta, data may be lost, changed, delayed, duplicated,
-          or unavailable. Risto AI may update these Beta Terms during the beta
-          period and may require renewed acceptance for material changes.
-        </p>
-
-        <h2>10. No warranty and limitation of liability</h2>
-        <p>
-          The beta service is provided “as is” and “as available,” without
-          warranties of any kind. To the maximum extent permitted by law, Risto AI
-          will not be liable for indirect, incidental, special, consequential,
-          exemplary, or punitive damages, or for loss of profits, revenue,
-          goodwill, data, or business opportunity arising from use of the beta
-          service.
-        </p>
-
-        <h2>11. Contact</h2>
-        <p>
-          For questions about these Beta Terms or CSS onboarding, contact the
-          Risto AI onboarding team using the email or communication channel
-          provided during onboarding.
-        </p>
+        <p>The current Terms now live on the Ristoh AI website.</p>
+        <a href={TERMS_URL}>Continue to the Terms of Service</a>
       </article>
     </section>
   );
+}
+
+function redirectToTerms(location = window.location) {
+  location.replace(TERMS_URL);
 }
 
 function Progress({ step, session, telegramEnabled = false }) {
@@ -945,8 +858,8 @@ function StartScreen({ form, setForm, onSubmit, busy }) {
           />
           <span>
             I accept the{" "}
-            <a href={TERMS_PATH} target="_blank" rel="noreferrer">
-              Beta Terms of Service
+            <a href={TERMS_URL} target="_blank" rel="noreferrer">
+              Terms of Service
             </a>
             .
           </span>
@@ -2075,6 +1988,7 @@ export {
   TelegramScreen,
   TermsScreen,
   WebsiteVerificationScreen,
+  redirectToTerms,
   isValidAdminPhoneNumber,
   isValidHttpUrl,
   normalizeWebsiteUrl,

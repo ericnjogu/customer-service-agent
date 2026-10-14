@@ -79,6 +79,7 @@ import {
   TelegramScreen,
   TermsScreen,
   WebsiteVerificationScreen,
+  redirectToTerms,
   isValidAdminPhoneNumber,
   normalizeWebsiteUrl,
   validateAccountForm,
@@ -189,16 +190,13 @@ afterEach(() => {
 });
 
 describe("website URL validation", () => {
-  test("renders the beta terms page", () => {
-    render(<TermsScreen />);
-
-    expect(screen.getByRole("heading", { name: /beta terms of service/i }))
-      .toBeInTheDocument();
-    expect(screen.getByText(/version: beta-2026-08-28/i)).toBeInTheDocument();
-    expect(screen.getByText(/provided as a beta product/i)).toBeInTheDocument();
+  test("redirects the retired local terms page to the canonical terms", () => {
+    const replace = vi.fn();
+    redirectToTerms({ replace });
+    expect(replace).toHaveBeenCalledWith("https://www.ristoh.co.ke/terms");
   });
 
-  test("links the required terms checkbox to the beta terms page", () => {
+  test("links the required terms checkbox to the canonical terms page", () => {
     render(
       <StartScreen
         form={validStartForm({ terms_accepted: false })}
@@ -209,11 +207,11 @@ describe("website URL validation", () => {
     );
 
     const termsLink = screen.getByRole("link", {
-      name: /beta terms of service/i,
+      name: /^terms of service$/i,
     });
-    expect(termsLink).toHaveAttribute("href", "/terms");
+    expect(termsLink).toHaveAttribute("href", "https://www.ristoh.co.ke/terms");
     expect(termsLink).toHaveAttribute("target", "_blank");
-    expect(screen.getByLabelText(/accept the beta terms of service/i))
+    expect(screen.getByLabelText(/accept the terms of service/i))
       .toBeInTheDocument();
   });
 
@@ -328,7 +326,7 @@ describe("website URL validation", () => {
     await user.type(screen.getByLabelText(/family name/i), "Doe");
     await user.type(screen.getByLabelText(/phone number/i), "+254110101010");
     expect(screen.queryByLabelText(/admin role\/title/i)).not.toBeInTheDocument();
-    await user.click(screen.getByLabelText(/accept the beta terms of service/i));
+    await user.click(screen.getByLabelText(/accept the terms of service/i));
     await user.click(
       screen.getByRole("button", { name: /Send account verification code to email/i }),
     );

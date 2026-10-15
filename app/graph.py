@@ -4,15 +4,10 @@ from typing import TypedDict
 
 from langchain_core.documents import Document
 from langgraph.graph import END, START, StateGraph
-from langsmith.run_helpers import tracing_context
 
 from app.adapters.llm import (
-    langsmith_client,
     langsmith_runnable_config,
-    langsmith_tracing_enabled,
-    tenant_langsmith_project_name,
-    tenant_trace_metadata,
-    tenant_trace_tags,
+    tenant_tracing_context,
 )
 from app.knowledge import chunk_text_with_metadata, stable_source_hash, tenant_knowledge_namespace
 from app.models import (
@@ -615,13 +610,7 @@ async def invoke_service_graph(
         initial_state["tenant_config"] = tenant_config
 
     config = langsmith_runnable_config("service_graph", tenant_config)
-    with tracing_context(
-        client=langsmith_client(),
-        project_name=tenant_langsmith_project_name(tenant_config),
-        tags=tenant_trace_tags(tenant_config),
-        metadata=tenant_trace_metadata(tenant_config),
-        enabled=langsmith_tracing_enabled(),
-    ):
+    with tenant_tracing_context(tenant_config):
         state = await graph.ainvoke(initial_state, config=config)
     return ServiceReply(
         tenant_id=state["conversation"].tenant_id,

@@ -131,16 +131,11 @@ class FakeTenantConfigRepository:
 async def test_invoke_service_graph_starts_langsmith_trace_in_tenant_project(
     monkeypatch,
 ) -> None:
-    captured_tracer = {}
     captured_context = {}
 
     class FakeLangSmithClient:
         def __init__(self, **kwargs) -> None:
             pass
-
-    class FakeLangChainTracer:
-        def __init__(self, **kwargs) -> None:
-            captured_tracer.update(kwargs)
 
     class FakeTracingContext:
         def __init__(self, **kwargs) -> None:
@@ -175,8 +170,7 @@ async def test_invoke_service_graph_starts_langsmith_trace_in_tenant_project(
             }
 
     monkeypatch.setattr("app.adapters.llm.LangSmithClient", FakeLangSmithClient)
-    monkeypatch.setattr("app.adapters.llm.LangChainTracer", FakeLangChainTracer)
-    monkeypatch.setattr("app.graph.tracing_context", FakeTracingContext)
+    monkeypatch.setattr("app.adapters.llm.tracing_context", FakeTracingContext)
     langsmith_client.cache_clear()
     monkeypatch.setenv("LANGSMITH_API_KEY", "test-key")
     monkeypatch.setenv("LANGSMITH_TRACING", "true")
@@ -204,7 +198,7 @@ async def test_invoke_service_graph_starts_langsmith_trace_in_tenant_project(
     assert tenant_configs.calls == ["tenant-a"]
     assert graph.last_state["tenant_config"] == tenant_config
     assert graph.last_config["metadata"]["tenant_id"] == "tenant-a"
-    assert captured_tracer["project_name"] == "customer-service-tenant-a"
+    assert "callbacks" not in graph.last_config
     assert captured_context["project_name"] == "customer-service-tenant-a"
 
     langsmith_client.cache_clear()

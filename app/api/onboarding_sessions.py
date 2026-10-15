@@ -88,6 +88,8 @@ async def update_onboarding_session(
     service = request.app.state.container.onboarding_sessions
     try:
         return await service.update_session(session_id, payload)
+    except OnboardingValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from None
     except KeyError:
         raise HTTPException(status_code=404, detail="Onboarding session not found") from None
 

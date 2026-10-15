@@ -18,6 +18,7 @@ import {
 import "@mdxeditor/editor/style.css";
 import "./styles.css";
 import WhatsAppScreen from "./WhatsAppScreen";
+import { BUSINESS_CATEGORIES, BUSINESS_TEMPLATE, cleanBusinessSummary, hasBusinessContent } from "./business-information";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
 const API_REQUEST_TIMEOUT_MS = 60000;
@@ -26,7 +27,8 @@ const REQUIRE_ADMIN_EMAIL_DOMAIN_MATCH = parseBooleanEnv(
   true,
 );
 const TERMS_PATH = "/terms";
-const TERMS_VERSION = "beta-2026-08-28";
+const TERMS_URL = "https://www.ristoh.co.ke/terms";
+const TERMS_VERSION = "free-trial-2026-10-14";
 const CONTACT_PLATFORMS = {
   instagram: "Instagram", facebook: "Facebook", tiktok: "TikTok",
   linkedin: "LinkedIn", x: "X", youtube: "YouTube", whatsapp: "WhatsApp",
@@ -79,6 +81,7 @@ function App() {
     family_name: "",
     admin_phone_number: "",
     terms_accepted: false,
+    marketing_consent: false,
     has_website: false,
     has_social_media: false,
   });
@@ -227,6 +230,7 @@ function App() {
         startForm.given_name === session.admin.given_name &&
         startForm.family_name === session.admin.family_name &&
         startForm.admin_phone_number === (session.admin.phone_number || "") &&
+        startForm.marketing_consent === Boolean(session.admin.marketing_consent) &&
         startForm.has_website === session.admin.has_website &&
         startForm.has_social_media === session.admin.has_social_media) {
       if (!session.username_email_verified) setStep("username-email-verification");
@@ -249,6 +253,7 @@ function App() {
             family_name: startForm.family_name,
             phone_number: startForm.admin_phone_number,
             terms_accepted: startForm.terms_accepted,
+            marketing_consent: startForm.marketing_consent,
             has_website: startForm.has_website,
             has_social_media: startForm.has_social_media,
           },
@@ -699,115 +704,27 @@ function App() {
 }
 
 function TermsScreen() {
+  useEffect(() => {
+    redirectToTerms();
+  }, []);
+
   return (
     <section className="shell">
       <header className="hero">
         <p className="eyebrow">Risto AI CSS</p>
-        <h1>Beta Terms of Service</h1>
-        <p>
-          Effective date: August 28, 2026 · Version: {TERMS_VERSION}
-        </p>
+        <h1>Terms of Service</h1>
+        <p>Redirecting to the current Terms of Service · Version: {TERMS_VERSION}</p>
       </header>
       <article className="card terms">
-        <p>
-          These Beta Terms of Service govern access to and use of Risto AI's
-          Customer Service Solution, also called CSS, during its beta testing
-          period.
-        </p>
-        <p>
-          By continuing with onboarding, you confirm that you are authorized to
-          configure customer-service automation for the business you are
-          onboarding and that you accept these Beta Terms.
-        </p>
-
-        <h2>1. Beta service</h2>
-        <p>
-          CSS is currently provided as a beta product. The service may be
-          incomplete, unstable, unavailable, or changed without notice. Features
-          may be added, changed, limited, or removed during the beta period.
-        </p>
-
-        <h2>2. No production guarantee</h2>
-        <p>
-          CSS is provided for testing and evaluation. You should not rely on it
-          as the sole channel for urgent, sensitive, regulated, medical, legal,
-          financial, or safety-critical customer support.
-        </p>
-
-        <h2>3. No service-level commitment</h2>
-        <p>
-          During the beta period, Risto AI does not provide uptime, response-time,
-          support-time, or availability guarantees. The service may be
-          interrupted, delayed, or unavailable.
-        </p>
-
-        <h2>4. AI-generated responses</h2>
-        <p>
-          CSS may use AI models to generate responses. AI-generated responses may
-          be incomplete, inaccurate, outdated, or inappropriate. You remain
-          responsible for reviewing important customer conversations and the
-          business information used to configure the assistant.
-        </p>
-
-        <h2>5. Business and customer data</h2>
-        <p>
-          You may provide business information, website links, contact details,
-          chat messages, documents, and configuration data during onboarding and
-          testing. You confirm that you have the right to provide this information
-          to Risto AI and to use it for customer-service automation.
-        </p>
-
-        <h2>6. Third-party services</h2>
-        <p>
-          CSS may rely on third-party services, including messaging platforms,
-          AI model providers, tracing or observability providers, email providers,
-          hosting providers, and web-search providers. Use of CSS may therefore
-          depend on the availability and rules of those third-party services.
-        </p>
-
-        <h2>7. Acceptable use</h2>
-        <p>
-          You must not use CSS to break the law, send spam or abusive messages,
-          impersonate others, process data you are not allowed to use, provide
-          harmful customer support, or disrupt the service.
-        </p>
-
-        <h2>8. Confidentiality and feedback</h2>
-        <p>
-          During beta testing, you may receive access to non-public features,
-          workflows, designs, documentation, or technical information. Unless
-          Risto AI gives written permission, you should not publicly disclose
-          non-public beta information. If you provide feedback, Risto AI may use
-          it to improve, modify, or commercialize CSS without owing compensation.
-        </p>
-
-        <h2>9. Suspension, data loss, and changes</h2>
-        <p>
-          Risto AI may suspend or stop access to the beta service at any time.
-          Because CSS is in beta, data may be lost, changed, delayed, duplicated,
-          or unavailable. Risto AI may update these Beta Terms during the beta
-          period and may require renewed acceptance for material changes.
-        </p>
-
-        <h2>10. No warranty and limitation of liability</h2>
-        <p>
-          The beta service is provided “as is” and “as available,” without
-          warranties of any kind. To the maximum extent permitted by law, Risto AI
-          will not be liable for indirect, incidental, special, consequential,
-          exemplary, or punitive damages, or for loss of profits, revenue,
-          goodwill, data, or business opportunity arising from use of the beta
-          service.
-        </p>
-
-        <h2>11. Contact</h2>
-        <p>
-          For questions about these Beta Terms or CSS onboarding, contact the
-          Risto AI onboarding team using the email or communication channel
-          provided during onboarding.
-        </p>
+        <p>The current Terms now live on the Ristoh AI website.</p>
+        <a href={TERMS_URL}>Continue to the Terms of Service</a>
       </article>
     </section>
   );
+}
+
+function redirectToTerms(location = window.location) {
+  location.replace(TERMS_URL);
 }
 
 function Progress({ step, session, telegramEnabled = false }) {
@@ -945,13 +862,30 @@ function StartScreen({ form, setForm, onSubmit, busy }) {
           />
           <span>
             I accept the{" "}
-            <a href={TERMS_PATH} target="_blank" rel="noreferrer">
-              Beta Terms of Service
+            <a href={TERMS_URL} target="_blank" rel="noreferrer">
+              Terms of Service
             </a>
             .
           </span>
         </div>
       </Field>
+      <fieldset className="marketing-consent-panel">
+        <legend>Product updates (optional)</legend>
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={Boolean(form.marketing_consent)}
+            onChange={(event) =>
+              setForm({ ...form, marketing_consent: event.target.checked })
+            }
+          />
+          <span>
+            I agree to receive product updates, new feature announcements, and
+            occasional marketing messages from Ristoh AI by email and WhatsApp.
+            I can opt out at any time.
+          </span>
+        </label>
+      </fieldset>
       <button disabled={busy}>
         {busy ? "Sending..." : "Send account verification code to email"}
       </button>
@@ -1159,7 +1093,7 @@ function AnalysisScreen({ session, onBack, onNext, busy, draftValue, onDraftChan
     business_profile: {
       ...(session.business_profile || {}),
     },
-    business_summary: session.business_summary || "",
+    business_summary: session.business_summary || (session.website_url ? "" : BUSINESS_TEMPLATE),
   }));
   const draft = draftValue ?? localDraft;
   const setDraft = (update) => {
@@ -1187,8 +1121,10 @@ function AnalysisScreen({ session, onBack, onNext, busy, draftValue, onDraftChan
     event.preventDefault();
     if (!validation.validateForSubmit()) return;
     onNext({
-      business_profile: draft.business_profile,
-      business_summary: draft.business_summary,
+      business_profile: { ...draft.business_profile,
+        activity_custom: draft.business_profile.activity_category === "Other"
+          ? draft.business_profile.activity_custom?.trim() : null },
+      business_summary: cleanBusinessSummary(draft.business_summary),
     });
   }
 
@@ -1213,6 +1149,25 @@ function AnalysisScreen({ session, onBack, onNext, busy, draftValue, onDraftChan
           onBlur={() => validation.validateField("business_profile.business_name")}
         />
       </Field>
+      <Field label="Nature of business/activity" name="business_profile.activity_category"
+        error={validation.errorFor("business_profile.activity_category")}>
+        <select aria-label="Nature of business/activity" value={draft.business_profile.activity_category || ""}
+          onChange={(event) => updateProfile("activity_category", event.target.value)}
+          aria-invalid={Boolean(validation.errorFor("business_profile.activity_category"))}>
+          <option value="">Choose a category</option>
+          {BUSINESS_CATEGORIES.map(category => <option key={category}>{category}</option>)}
+        </select>
+      </Field>
+      {draft.business_profile.activity_category === "Other" && (
+        <Field label="Describe your activity" name="business_profile.activity_custom"
+          error={validation.errorFor("business_profile.activity_custom")}>
+          <input aria-label="Describe your activity" maxLength={200}
+            aria-invalid={Boolean(validation.errorFor("business_profile.activity_custom"))}
+            aria-describedby={fieldErrorId("business_profile.activity_custom")}
+            value={draft.business_profile.activity_custom || ""}
+            onChange={(event) => updateProfile("activity_custom", event.target.value)} />
+        </Field>
+      )}
       <MarkdownField
         label="Business summary / FAQ"
         name="business_summary"
@@ -1305,15 +1260,34 @@ function ContactInfoScreen({ session, onBack, onNext, busy, linksValue, onLinksC
     );
   }
 
-  function addLink() {
+  function addLink(event) {
+    const form = event.currentTarget.form;
     setLinks((current) => [...current, blankSocialLink()]);
+    requestAnimationFrame(() => form?.querySelector(".repeater-row:last-child input")?.focus());
   }
 
   function removeLink(index) {
+    const removedId = links[index]?.id;
     setLinks((current) => {
-      const next = current.filter((_link, linkIndex) => linkIndex !== index);
+      const next = current.filter((link) => link.id !== removedId);
       return next.length ? next : [blankSocialLink()];
     });
+  }
+
+  function animateRemoval(event, index) {
+    const row = event.currentTarget.closest("fieldset");
+    const focusTarget = row.nextElementSibling?.querySelector("input") ||
+      row.previousElementSibling?.querySelector("input") ||
+      row.parentElement.nextElementSibling;
+    focusTarget?.focus();
+    if (!row.animate || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      removeLink(index);
+      return;
+    }
+    event.currentTarget.disabled = true;
+    row.animate([{ opacity: 1 }, { opacity: 0, transform: "translateY(-8px)" }],
+      { duration: 160, easing: "ease-in", fill: "forwards" }).finished
+      .then(() => removeLink(index)).catch(() => removeLink(index));
   }
 
   function linksForSubmit() {
@@ -1351,7 +1325,7 @@ function ContactInfoScreen({ session, onBack, onNext, busy, linksValue, onLinksC
                   className="icon-button danger"
                   aria-label={`Delete contact point ${index + 1}`}
                   title="Delete contact point"
-                  onClick={() => removeLink(index)}
+                  onClick={(event) => animateRemoval(event, index)}
                   disabled={busy}
                 >
                   ×
@@ -1493,6 +1467,8 @@ function OnboardingSummary({ session }) {
     ["Tenant admin", `${adminDisplayName(session.admin)} <${session.admin?.username_email || ""}>`],
     ["Phone number", session.admin?.phone_number],
     ["Organization name", profile.business_name],
+    ["Nature of business/activity", profile.activity_category === "Other"
+      ? profile.activity_custom : profile.activity_category],
     ["Location name", profile.location_name],
     ["Physical location", profile.physical_location],
     ["Business phone", profile.business_phone],
@@ -1797,8 +1773,17 @@ function validateAnalysisDraft(draft) {
   if (!String(draft.business_profile?.business_name || "").trim()) {
     errors["business_profile.business_name"] = "Organization name is required.";
   }
-  if (!draft.business_summary.trim()) {
+  if (!BUSINESS_CATEGORIES.includes(draft.business_profile?.activity_category)) {
+    errors["business_profile.activity_category"] = "Choose a nature of business/activity.";
+  }
+  if (draft.business_profile?.activity_category === "Other" && !draft.business_profile?.activity_custom?.trim()) {
+    errors["business_profile.activity_custom"] = "Describe your activity.";
+  }
+  if (!hasBusinessContent(draft.business_summary)) {
     errors.business_summary = "Business summary / FAQ is required.";
+  }
+  if (cleanBusinessSummary(draft.business_summary).length > 10000) {
+    errors.business_summary = "Business summary must contain no more than 10,000 characters.";
   }
   return errors;
 }
@@ -2075,6 +2060,7 @@ export {
   TelegramScreen,
   TermsScreen,
   WebsiteVerificationScreen,
+  redirectToTerms,
   isValidAdminPhoneNumber,
   isValidHttpUrl,
   normalizeWebsiteUrl,

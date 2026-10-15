@@ -94,6 +94,7 @@ async function prepare(page, mode = "finish", importMode = null) {
   await page.getByRole("button", { name: "Verify code" }).click();
   await expect(page.getByRole("heading", { name: "Business information" })).toBeVisible();
   await page.getByLabel("Organization name").fill(`WhatsApp Bakery ${phone}`);
+  await page.getByLabel("Nature of business/activity").selectOption("Food & hospitality");
   await page.getByRole("textbox", { name: "editable markdown" }).fill("A bakery selling bread daily from 7am to 6pm.");
   await page.getByRole("button", { name: "Continue to connection" }).click();
   await expect(page.getByRole("heading", { name: "Connect WhatsApp" })).toBeVisible();

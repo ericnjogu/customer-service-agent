@@ -170,6 +170,7 @@ class FakeWebsiteAnalyzer:
         return WebsiteAnalysisResult(
             business_profile=OnboardingBusinessProfile(
                 business_name="Hustle HQ",
+                activity_category="Retail & e-commerce",
                 website_url=session.website_url,
                 location_name="Hustle HQ",
                 physical_location="Enterprise Road",
@@ -495,6 +496,7 @@ def create_reviewed_onboarding_session_with_options(
         "business_profile": {
             **reviewed["business_profile"],
             "business_name": "Hustle HQ Session",
+            "activity_category": "Retail & e-commerce",
             "location_name": "Hustle HQ",
             "physical_location": "Enterprise Road",
             "business_phone": "+254110101010",
@@ -597,10 +599,26 @@ def test_onboarding_session_accepts_valid_start_fields() -> None:
     assert response.json()["admin"]["username_email"] == "admin@hustlehq.example"
     assert response.json()["admin"]["given_name"] == "John"
     assert response.json()["admin"]["family_name"] == "Doe"
-    assert response.json()["terms_version"] == "beta-2026-08-28"
+    assert response.json()["terms_version"] == "free-trial-2026-10-14"
     assert response.json()["terms_accepted_at"]
+    assert response.json()["admin"]["marketing_consent"] is False
+    assert response.json()["marketing_consent_version"] is None
+    assert response.json()["marketing_consent_at"] is None
     assert sent_email.to == ["admin@hustlehq.example"]
     assert f"http://localhost:8080?session_id={response.json()['session_id']}" in sent_email.text
+
+
+def test_onboarding_session_records_optional_marketing_consent() -> None:
+    payload = onboarding_session_payload()
+    payload["admin"]["marketing_consent"] = True
+
+    with TestClient(app) as client:
+        response = client.post("/onboarding/sessions", json=payload)
+
+    assert response.status_code == 201
+    assert response.json()["admin"]["marketing_consent"] is True
+    assert response.json()["marketing_consent_version"] == "product-updates-2026-10-14"
+    assert response.json()["marketing_consent_at"]
 
 
 def test_onboarding_verification_code_is_six_digits_and_only_hmac_is_stored() -> None:
@@ -1205,6 +1223,33 @@ def test_onboarding_session_can_save_and_reload_wizard_data() -> None:
         "Represent Hustle HQ and answer from approved facts."
     )
     assert response.json()["contact_info"][0]["kind"] == "instagram"
+    assert response.json()["business_profile"]["activity_category"] == "Retail & e-commerce"
+
+
+def test_onboarding_activity_validation_and_template_cleanup() -> None:
+    from app.business_information import DEFINITION
+    with TestClient(app) as client:
+        session = create_reviewed_onboarding_session(client)
+        url = f"/onboarding/sessions/{session['session_id']}"
+        profile = session["business_profile"]
+        for category, custom in [(None, None), ("Invalid", None), ("Other", " ")]:
+            response = client.patch(url, json={"business_profile": {
+                **profile, "activity_category": category, "activity_custom": custom,
+            }})
+            assert response.status_code == 422
+        template = "\n\n".join(f"## {heading}\n\n[Guidance: {guidance}]"
+                                 for heading, guidance in DEFINITION["sections"])
+        assert client.patch(url, json={"business_summary": template}).status_code == 422
+        response = client.patch(url, json={
+            "business_profile": {**profile, "activity_category": "Other",
+                                 "activity_custom": "Community research"},
+            "business_summary": template + "\nWe conduct community research.",
+        })
+        assert response.status_code == 200
+        saved = client.get(url).json()
+        assert saved["business_profile"]["activity_custom"] == "Community research"
+        assert "Guidance:" not in saved["business_summary"]
+        assert "We conduct community research." in saved["business_summary"]
 
 
 def test_onboarding_session_rejects_missing_or_invalid_telegram_token() -> None:
@@ -1382,6 +1427,7 @@ def test_no_website_onboarding_provisions_without_website_contact_or_metadata() 
             json={
                 "business_profile": {
                     "business_name": "Manual Bakery",
+                    "activity_category": "Food & hospitality",
                     "website_url": None,
                 },
                 "business_summary": "A neighborhood bakery open daily from 7am to 6pm.",

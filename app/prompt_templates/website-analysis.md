@@ -10,7 +10,7 @@ Return JSON only with:
   - business_phone: string
   - business_email: string
   - google_place_url: string or null
-- business_summary: markdown string containing a comprehensive account from the website information. it should be in first person narrative and given from the stand point of sales person who wants to present the most useful and outstanding information about the business that will draw a customer to initiate a purchase. It should focus on the products, selling points, people and blogs that carry product information.
+- business_summary: factual Markdown, no more than 10,000 characters, organized under these level-two headings in order: About the organization; Products & services; Location; Hours & service area; Team; Contact; Policies & ordering/booking; Frequently asked questions. Omit sections with no supported information. Use only facts in the supplied research notes. Never invent people, locations, hours, prices, policies, claims or FAQ answers to complete a section. FAQ questions may be composed from supported facts, but their answers must be grounded in those facts. Do not include editing guidance or placeholders. The administrator chooses the activity category separately; do not infer it.
 - contact_info: array of contact-point objects with:
   - kind: string
   - label: string

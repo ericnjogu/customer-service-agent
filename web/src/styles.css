@@ -316,6 +316,19 @@ textarea {
   text-transform: none;
 }
 
+.marketing-consent-panel {
+  background: #f7fbff;
+  border: 2px solid #246bfd;
+  border-radius: 14px;
+  padding: 16px;
+}
+
+.marketing-consent-panel legend {
+  color: #0d326f;
+  font-weight: 800;
+  padding: 0 8px;
+}
+
 .wait-card {
   align-items: center;
   display: grid;
@@ -367,6 +380,17 @@ textarea {
   font-weight: 800;
   grid-column: 1 / -1;
   justify-content: space-between;
+}
+
+.repeater-row:nth-child(odd) { background: #f0f4ff; }
+.repeater-row:nth-child(even) { background: #ecfaf5; }
+.repeater-row { animation: contact-enter 180ms ease-out; }
+@keyframes contact-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .repeater-row { animation: none; }
 }
 
 @media (max-width: 640px) {

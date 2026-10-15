@@ -11,6 +11,26 @@ function stubOnboardingFetch(fetchMock) {
     : fetchMock(url, options));
 }
 
+test("manual business template requires real content and an Other description", async () => {
+  const user = userEvent.setup();
+  const onNext = vi.fn();
+  render(<AnalysisScreen session={{ business_profile: { business_name: "Community" },
+    admin: { has_social_media: false } }} onNext={onNext} onBack={() => {}} />);
+  const summary = screen.getByLabelText("Business summary / FAQ");
+  expect(summary.value).toContain("## Team");
+  await user.selectOptions(screen.getByLabelText("Nature of business/activity"), "Other");
+  await user.click(screen.getByRole("button", { name: "Continue to connection" }));
+  expect(onNext).not.toHaveBeenCalled();
+  await waitFor(() => expect(screen.getByRole("alert")).toHaveFocus());
+  await user.type(screen.getByLabelText("Describe your activity"), "Community research");
+  await user.type(screen.getByLabelText("Business summary / FAQ"), "\nWe conduct community research.");
+  await user.click(screen.getByRole("button", { name: "Continue to connection" }));
+  expect(onNext).toHaveBeenCalledWith(expect.objectContaining({
+    business_profile: expect.objectContaining({ activity_category: "Other", activity_custom: "Community research" }),
+    business_summary: expect.not.stringContaining("Guidance:"),
+  }));
+});
+
 test.each([undefined, true, false])("skipped website is excluded from resumed progress (preference=%s)", (hasWebsite) => {
   render(<Progress step="whatsapp" session={{ website_url: null,
     admin: { has_website: hasWebsite, has_social_media: false } }} />);
@@ -79,6 +99,7 @@ import {
   TelegramScreen,
   TermsScreen,
   WebsiteVerificationScreen,
+  redirectToTerms,
   isValidAdminPhoneNumber,
   normalizeWebsiteUrl,
   validateAccountForm,
@@ -158,6 +179,7 @@ function validStartForm(overrides = {}) {
     family_name: "Doe",
     admin_phone_number: "+254110101010",
     terms_accepted: true,
+    marketing_consent: false,
     ...overrides,
   };
 }
@@ -177,6 +199,7 @@ function validAdmin(overrides = {}) {
     family_name: "Doe",
     phone_number: "+254110101010",
     terms_accepted: true,
+    marketing_consent: false,
     ...overrides,
   };
 }
@@ -189,16 +212,13 @@ afterEach(() => {
 });
 
 describe("website URL validation", () => {
-  test("renders the beta terms page", () => {
-    render(<TermsScreen />);
-
-    expect(screen.getByRole("heading", { name: /beta terms of service/i }))
-      .toBeInTheDocument();
-    expect(screen.getByText(/version: beta-2026-08-28/i)).toBeInTheDocument();
-    expect(screen.getByText(/provided as a beta product/i)).toBeInTheDocument();
+  test("redirects the retired local terms page to the canonical terms", () => {
+    const replace = vi.fn();
+    redirectToTerms({ replace });
+    expect(replace).toHaveBeenCalledWith("https://www.ristoh.co.ke/terms");
   });
 
-  test("links the required terms checkbox to the beta terms page", () => {
+  test("links the required terms checkbox to the canonical terms page", () => {
     render(
       <StartScreen
         form={validStartForm({ terms_accepted: false })}
@@ -209,12 +229,27 @@ describe("website URL validation", () => {
     );
 
     const termsLink = screen.getByRole("link", {
-      name: /beta terms of service/i,
+      name: /^terms of service$/i,
     });
-    expect(termsLink).toHaveAttribute("href", "/terms");
+    expect(termsLink).toHaveAttribute("href", "https://www.ristoh.co.ke/terms");
     expect(termsLink).toHaveAttribute("target", "_blank");
-    expect(screen.getByLabelText(/accept the beta terms of service/i))
+    expect(screen.getByLabelText(/accept the terms of service/i))
       .toBeInTheDocument();
+  });
+
+  test("shows optional marketing consent in a conspicuous box", () => {
+    render(
+      <StartScreen
+        form={validStartForm({ marketing_consent: false })}
+        setForm={vi.fn()}
+        onSubmit={vi.fn()}
+        busy={false}
+      />,
+    );
+
+    const checkbox = screen.getByLabelText(/receive product updates/i);
+    expect(checkbox).not.toBeChecked();
+    expect(checkbox.closest("fieldset")).toHaveClass("marketing-consent-panel");
   });
 
   test("normalizes bare domains to HTTPS URLs", () => {
@@ -328,7 +363,8 @@ describe("website URL validation", () => {
     await user.type(screen.getByLabelText(/family name/i), "Doe");
     await user.type(screen.getByLabelText(/phone number/i), "+254110101010");
     expect(screen.queryByLabelText(/admin role\/title/i)).not.toBeInTheDocument();
-    await user.click(screen.getByLabelText(/accept the beta terms of service/i));
+    await user.click(screen.getByLabelText(/accept the terms of service/i));
+    await user.click(screen.getByLabelText(/receive product updates/i));
     await user.click(
       screen.getByRole("button", { name: /Send account verification code to email/i }),
     );
@@ -342,6 +378,7 @@ describe("website URL validation", () => {
         family_name: "Doe",
         phone_number: "+254110101010",
         terms_accepted: true,
+        marketing_consent: true,
       },
     });
     expect(JSON.parse(options.body).admin).not.toHaveProperty("role_title");
@@ -565,6 +602,7 @@ describe("email verification flow", () => {
         updated_at: "2026-08-20T00:00:00Z",
       }),
     });
+    await userEvent.selectOptions(screen.getByLabelText("Nature of business/activity"), "Food & hospitality");
     await userEvent.click(screen.getByRole("button", { name: /review contact information/i }));
     expect(fetchMock).toHaveBeenLastCalledWith(
       "/api/onboarding/sessions/00000000-0000-0000-0000-000000000001",
@@ -746,7 +784,7 @@ describe("contact information form", () => {
       admin: validAdmin({ has_website: true, has_social_media: true }),
       website_url: "https://example.co.ke", website_verification_email: "admin@example.co.ke",
       username_email_verified: true, website_email_verified: true, analysis: {},
-      business_profile: { business_name: "Original" }, business_summary: "Original summary",
+      business_profile: { business_name: "Original", activity_category: "Food & hospitality" }, business_summary: "Original summary",
       contact_info: [{ kind: "instagram", url: "https://instagram.com/original" }],
     };
     const fetchMock = vi.fn(async (_url, options) => {

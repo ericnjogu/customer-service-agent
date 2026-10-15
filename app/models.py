@@ -45,7 +45,8 @@ OnboardingSessionStatus = Literal[
     "submitted",
     "failed",
 ]
-ONBOARDING_TERMS_VERSION = "beta-2026-08-28"
+ONBOARDING_TERMS_VERSION = "free-trial-2026-10-14"
+ONBOARDING_MARKETING_CONSENT_VERSION = "product-updates-2026-10-14"
 
 
 class IncomingMessage(BaseModel):
@@ -287,6 +288,7 @@ class OnboardingAdmin(BaseModel):
     family_name: str = Field(min_length=1, max_length=200)
     phone_number: str = Field(min_length=1, max_length=100)
     terms_accepted: bool
+    marketing_consent: bool = False
 
     @field_validator("given_name", "family_name", mode="before")
     @classmethod
@@ -338,6 +340,8 @@ class OnboardingAdmin(BaseModel):
 
 
 class OnboardingBusinessProfile(BaseModel):
+    activity_category: str | None = None
+    activity_custom: str | None = Field(default=None, max_length=200)
     business_name: str = Field(default="", max_length=500)
     website_url: HttpUrl | None = None
     location_name: str = Field(default="", max_length=500)
@@ -437,6 +441,12 @@ class OnboardingSessionUpdate(BaseModel):
     provider_projects: OnboardingProviderProjects | None = None
     knowledge_sources: list[WebsiteResearchSource] | None = None
 
+    @field_validator("business_summary", mode="before")
+    @classmethod
+    def remove_template_guidance(cls, value: str | None) -> str | None:
+        from app.business_information import clean_business_summary
+        return clean_business_summary(value) if isinstance(value, str) else value
+
 
 class OnboardingTelegramSetupRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -492,6 +502,8 @@ class OnboardingSessionRecord(BaseModel):
     admin: OnboardingAdmin
     terms_version: str | None = Field(default=None, max_length=100)
     terms_accepted_at: datetime | None = None
+    marketing_consent_version: str | None = Field(default=None, max_length=100)
+    marketing_consent_at: datetime | None = None
     username_email_verified: bool = False
     username_email_verification_expires_at: datetime | None = None
     username_email_verification_resend_available_at: datetime | None = None
@@ -566,6 +578,8 @@ class OnboardingJobAccepted(BaseModel):
 
 
 class BusinessProfileRecord(BaseModel):
+    activity_category: str | None = None
+    activity_custom: str | None = None
     tenant_id: str
     business_name: str
     website_url: str | None

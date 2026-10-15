@@ -92,6 +92,11 @@ def row_to_onboarding_session(row: asyncpg.Record) -> OnboardingSessionRecord:
     data = dict(row)
     payload = decode_metadata(data.pop("session_payload"))
     payload = normalize_onboarding_session_payload(payload)
+    if payload.get("business_profile") and "activity_category" in data:
+        payload["business_profile"].update(
+            activity_category=data["activity_category"],
+            activity_custom=data.get("activity_custom"),
+        )
     return OnboardingSessionRecord(
         session_id=data["session_id"],
         status=data["status"],
@@ -146,6 +151,8 @@ def session_payload(session: OnboardingSessionRecord) -> dict:
         "admin": session.admin.model_dump(mode="json"),
         "terms_version": session.terms_version,
         "terms_accepted_at": model_to_json(session.terms_accepted_at),
+        "marketing_consent_version": session.marketing_consent_version,
+        "marketing_consent_at": model_to_json(session.marketing_consent_at),
         "analysis": model_to_json(session.analysis),
         "business_profile": model_to_json(session.business_profile),
         "business_summary": session.business_summary,
@@ -968,9 +975,9 @@ class PostgresOnboardingRepository:
                 physical_location,
                 business_phone,
                 business_email,
-                google_place_url
+                google_place_url, activity_category, activity_custom
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             ON CONFLICT (tenant_id) DO UPDATE
             SET business_name = EXCLUDED.business_name,
                 website_url = EXCLUDED.website_url,
@@ -979,10 +986,12 @@ class PostgresOnboardingRepository:
                 business_phone = EXCLUDED.business_phone,
                 business_email = EXCLUDED.business_email,
                 google_place_url = EXCLUDED.google_place_url,
+                activity_category = EXCLUDED.activity_category,
+                activity_custom = EXCLUDED.activity_custom,
                 updated_at = now()
             RETURNING tenant_id, business_name, website_url, location_name,
                       physical_location, business_phone, business_email,
-                      google_place_url, created_at, updated_at
+                      google_place_url, activity_category, activity_custom, created_at, updated_at
             """,
             tenant_id,
             profile.business_name,
@@ -992,6 +1001,8 @@ class PostgresOnboardingRepository:
             profile.business_phone,
             profile.business_email,
             str(profile.google_place_url) if profile.google_place_url else None,
+            profile.activity_category,
+            profile.activity_custom,
         )
         return BusinessProfileRecord(**dict(row))
 
@@ -1070,19 +1081,27 @@ class PostgresOnboardingRepository:
         admin: OnboardingAdmin,
         terms_version: str,
         terms_accepted_at: datetime,
+        marketing_consent_version: str | None,
+        marketing_consent_at: datetime | None,
     ) -> OnboardingSessionRecord:
         assert self.database.pool
         payload = {
             "admin": admin.model_dump(mode="json"),
             "terms_version": terms_version,
             "terms_accepted_at": terms_accepted_at.isoformat(),
+            "marketing_consent_version": marketing_consent_version,
+            "marketing_consent_at": model_to_json(marketing_consent_at),
         }
         row = await self.database.pool.fetchrow(
             """
-            INSERT INTO onboarding_sessions(admin_email, session_payload)
-            VALUES ($1, $2::jsonb)
+            INSERT INTO onboarding_sessions(
+                admin_email, session_payload, marketing_consent,
+                marketing_consent_version, marketing_consent_at
+            )
+            VALUES ($1, $2::jsonb, $3, $4, $5)
             RETURNING session_id, status, current_step, website_url, admin_email,
                       website_verification_email, session_payload,
+                      activity_category, activity_custom,
                       username_email_verified, username_email_verification_expires_at,
                       username_email_verification_resend_available_at,
                       website_email_verified, website_email_verification_expires_at,
@@ -1093,6 +1112,9 @@ class PostgresOnboardingRepository:
             """,
             admin.username_email.lower(),
             json.dumps(payload),
+            admin.marketing_consent,
+            marketing_consent_version,
+            marketing_consent_at,
         )
         return row_to_onboarding_session(row)
 
@@ -1134,6 +1156,7 @@ class PostgresOnboardingRepository:
             WHERE session_id = $1
             RETURNING session_id, status, current_step, website_url, admin_email,
                       website_verification_email, session_payload,
+                      activity_category, activity_custom,
                       username_email_verified, username_email_verification_expires_at,
                       username_email_verification_resend_available_at,
                       website_email_verified, website_email_verification_expires_at,
@@ -1180,6 +1203,7 @@ class PostgresOnboardingRepository:
             WHERE session_id = $1
             RETURNING session_id, status, current_step, website_url, admin_email,
                       website_verification_email, session_payload,
+                      activity_category, activity_custom,
                       username_email_verified, username_email_verification_expires_at,
                       username_email_verification_resend_available_at,
                       website_email_verified, website_email_verification_expires_at,
@@ -1200,7 +1224,7 @@ class PostgresOnboardingRepository:
         row = await self.database.pool.fetchrow(
             f"""
             SELECT session_id, status, current_step, website_url, admin_email,
-                   website_verification_email, session_payload,
+                   website_verification_email, session_payload, activity_category, activity_custom,
                    username_email_verified, username_email_verification_expires_at,
                    username_email_verification_resend_available_at,
                    website_email_verified, website_email_verification_expires_at,
@@ -1227,7 +1251,7 @@ class PostgresOnboardingRepository:
             f"""
             SELECT tenant_id, business_name, website_url, location_name,
                    physical_location, business_phone, business_email,
-                   google_place_url, created_at, updated_at
+                   google_place_url, activity_category, activity_custom, created_at, updated_at
             FROM business_profiles
             WHERE {website_domain_sql('website_url')} = $1
             ORDER BY updated_at DESC
@@ -1242,7 +1266,7 @@ class PostgresOnboardingRepository:
         row = await self.database.pool.fetchrow(
             """
             SELECT session_id, status, current_step, website_url, admin_email,
-                   website_verification_email, session_payload,
+                   website_verification_email, session_payload, activity_category, activity_custom,
                    username_email_verified, username_email_verification_expires_at,
                    username_email_verification_resend_available_at,
                    website_email_verified, website_email_verification_expires_at,
@@ -1284,6 +1308,9 @@ class PostgresOnboardingRepository:
         analysis: WebsiteAnalysisResult,
     ) -> OnboardingSessionRecord:
         session = await self._require_session(session_id)
+        if session.business_profile:
+            analysis.business_profile.activity_category = session.business_profile.activity_category
+            analysis.business_profile.activity_custom = session.business_profile.activity_custom
         payload = session_payload(session)
         payload.update(
             {
@@ -1332,6 +1359,7 @@ class PostgresOnboardingRepository:
             WHERE session_id = $1
             RETURNING session_id, status, current_step, website_url, admin_email,
                       website_verification_email, session_payload,
+                      activity_category, activity_custom,
                       username_email_verified, username_email_verification_expires_at,
                       username_email_verification_resend_available_at,
                       website_email_verified, website_email_verification_expires_at,
@@ -1467,6 +1495,7 @@ class PostgresOnboardingRepository:
             WHERE session_id = $1
             RETURNING session_id, status, current_step, website_url, admin_email,
                       website_verification_email, session_payload,
+                      activity_category, activity_custom,
                       username_email_verified, username_email_verification_expires_at,
                       username_email_verification_resend_available_at,
                       website_email_verified, website_email_verification_expires_at,
@@ -1743,7 +1772,10 @@ class PostgresOnboardingRepository:
             UPDATE onboarding_sessions
             SET status = $2,
                 current_step = $3,
-                session_payload = $4::jsonb,
+                session_payload = $4::jsonb #- '{business_profile,activity_category}'
+                                          #- '{business_profile,activity_custom}',
+                activity_category = $4::jsonb #>> '{business_profile,activity_category}',
+                activity_custom = $4::jsonb #>> '{business_profile,activity_custom}',
                 website_url = COALESCE($5, website_url),
                 website_verification_email = COALESCE($6, website_verification_email),
                 username_email_verified = COALESCE($7, username_email_verified),
@@ -1785,6 +1817,7 @@ class PostgresOnboardingRepository:
             WHERE session_id = $1
             RETURNING session_id, status, current_step, website_url, admin_email,
                       website_verification_email, session_payload,
+                      activity_category, activity_custom,
                       username_email_verified, username_email_verification_expires_at,
                       username_email_verification_resend_available_at,
                       website_email_verified, website_email_verification_expires_at,
@@ -1932,6 +1965,9 @@ CREATE TABLE IF NOT EXISTS onboarding_sessions (
     website_url text,
     admin_email text NOT NULL,
     session_payload jsonb NOT NULL DEFAULT '{{}}',
+    marketing_consent boolean NOT NULL DEFAULT false,
+    marketing_consent_version text,
+    marketing_consent_at timestamptz,
     website_verification_email text,
     username_email_verified boolean NOT NULL DEFAULT false,
     username_email_verification_token_hash text,
@@ -2123,6 +2159,15 @@ ALTER TABLE onboarding_sessions
 ADD COLUMN IF NOT EXISTS website_verification_email text;
 
 ALTER TABLE onboarding_sessions
+ADD COLUMN IF NOT EXISTS marketing_consent boolean NOT NULL DEFAULT false;
+
+ALTER TABLE onboarding_sessions
+ADD COLUMN IF NOT EXISTS marketing_consent_version text;
+
+ALTER TABLE onboarding_sessions
+ADD COLUMN IF NOT EXISTS marketing_consent_at timestamptz;
+
+ALTER TABLE onboarding_sessions
 ADD COLUMN IF NOT EXISTS username_email_verified boolean NOT NULL DEFAULT false;
 
 ALTER TABLE onboarding_sessions
@@ -2162,6 +2207,11 @@ ADD COLUMN IF NOT EXISTS website_email_verification_resend_available_at timestam
 
 ALTER TABLE business_profiles
 ALTER COLUMN website_url DROP NOT NULL;
+
+ALTER TABLE business_profiles ADD COLUMN IF NOT EXISTS activity_category text;
+ALTER TABLE business_profiles ADD COLUMN IF NOT EXISTS activity_custom text;
+ALTER TABLE onboarding_sessions ADD COLUMN IF NOT EXISTS activity_category text;
+ALTER TABLE onboarding_sessions ADD COLUMN IF NOT EXISTS activity_custom text;
 
 ALTER TABLE onboarding_sessions
 ADD COLUMN IF NOT EXISTS admin_email_verified boolean NOT NULL DEFAULT false;

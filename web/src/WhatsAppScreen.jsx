@@ -344,9 +344,10 @@ export default function WhatsAppScreen({ session, config, api, onSubmit, onBack,
   </section>;
   return <section className="card">
     <h2>Connect WhatsApp</h2>
+    <p>This will launch the Facebook business login, after which the WhatsApp business account will be created or connected.</p>
     {config.whatsapp_mode !== "coexistence"
-      ? <p>Connect a registered WhatsApp Cloud API number through Meta. This mode does not connect the WhatsApp Business app or import historical chats. Automated replies begin after provisioning succeeds.</p>
-      : <p>Connect your existing WhatsApp Business app number through Meta. You can keep using
+      ? <p>Connect a phone number that is not registered on WhatsApp business.</p>
+      : <p>Connect your new or existing WhatsApp Business app number through Meta. You can keep using
         the app while Ristoh CSS sends and receives messages on the same number.</p>}
 
     {!config.whatsapp_enabled && <p role="alert">WhatsApp signup is not available yet. Your draft is saved.</p>}

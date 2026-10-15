@@ -1,0 +1,13 @@
+{
+  "categories": ["Retail & e-commerce", "Food & hospitality", "Agriculture", "Manufacturing", "Construction & real estate", "Transport & logistics", "Healthcare", "Education", "Finance & insurance", "Technology & telecoms", "Professional services", "Beauty & wellness", "Tourism", "Media, arts & entertainment", "Energy & utilities", "Government & public services", "Religious organizations", "NGOs & community organizations", "Other"],
+  "sections": [
+    ["About the organization", "Describe what your organization does and whom it serves."],
+    ["Products & services", "Describe your offerings, including prices only where confirmed."],
+    ["Location", "Add your physical locations or explain that you operate online."],
+    ["Hours & service area", "Describe opening hours and the areas you serve."],
+    ["Team", "Introduce relevant team members and their roles, if appropriate."],
+    ["Contact", "Provide approved ways customers can contact you."],
+    ["Policies & ordering/booking", "Explain how to order or book and any applicable policies."],
+    ["Frequently asked questions", "Add common customer questions and factual answers."]
+  ]
+}

@@ -9,6 +9,11 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 from uuid import UUID
 
+from app.business_information import (
+    BUSINESS_CATEGORIES,
+    clean_business_summary,
+    has_business_content,
+)
 from app.config import Settings
 from app.models import (
     ONBOARDING_MARKETING_CONSENT_VERSION,
@@ -163,6 +168,20 @@ class OnboardingSessionService:
         update: OnboardingSessionUpdate,
     ) -> OnboardingSessionRecord:
         await self._require_session(session_id)
+        if update.business_profile is not None:
+            profile = update.business_profile
+            if profile.activity_category not in BUSINESS_CATEGORIES:
+                raise OnboardingValidationError("Choose a nature of business/activity.")
+            if profile.activity_category == "Other":
+                if not (profile.activity_custom or "").strip():
+                    raise OnboardingValidationError("Describe your activity.")
+                profile.activity_custom = profile.activity_custom.strip()
+            else:
+                profile.activity_custom = None
+        if update.business_summary is not None:
+            update.business_summary = clean_business_summary(update.business_summary)
+            if not has_business_content(update.business_summary):
+                raise OnboardingValidationError("Business summary / FAQ is required.")
         return await self.onboarding.update_session(session_id, update)
 
     async def analyze_website(
@@ -604,6 +623,11 @@ class OnboardingSessionService:
                     job=existing_job,
                     request=request,
                 )
+        profile = session.business_profile
+        if not profile or profile.activity_category not in BUSINESS_CATEGORIES:
+            raise OnboardingValidationError("Choose a nature of business/activity.")
+        if profile.activity_category == "Other" and not (profile.activity_custom or "").strip():
+            raise OnboardingValidationError("Describe your activity.")
         job = await self.onboarding_jobs.start_job(request)
         logger.info(
             "Created onboarding job for session_id=%s job_id=%s idempotency_key=%s",

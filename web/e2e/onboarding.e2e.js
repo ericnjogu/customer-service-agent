@@ -52,6 +52,7 @@ test("a business with a website completes verification and reviews analyzed deta
   // profile is edited, saved through the web/API boundary, then verified from
   // the persisted onboarding session returned by the API.
   await page.getByLabel("Organization name").fill(identity.businessName);
+  await page.getByLabel("Nature of business/activity").selectOption("Food & hospitality");
   await page.getByRole("button", { name: "Review contact information" }).click();
   await expect(page.getByRole("heading", { name: "Contact information" })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
@@ -165,9 +166,13 @@ test("a business without a website can submit manual details and complete Telegr
   await expect(page.getByText(/offerings, customers, service area, hours/i)).toBeVisible();
 
   await page.getByLabel("Organization name").fill(identity.businessName);
-  await page.getByRole("textbox", { name: "editable markdown" }).fill(
-    "A neighborhood bakery serving sourdough and pastries. Open daily from 7am to 6pm.",
-  );
+  await page.getByLabel("Nature of business/activity").selectOption("Food & hospitality");
+  const manualSummary = page.getByRole("textbox", { name: "editable markdown" });
+  await expect(manualSummary).toContainText("Guidance:");
+  await manualSummary.click();
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.insertText("A neighborhood bakery serving sourdough and pastries. Open daily from 7am to 6pm.");
   await page.getByRole("button", { name: "Review contact information" }).click();
 
   await expect(page.getByRole("heading", { name: "Contact information" })).toBeVisible();
@@ -199,6 +204,8 @@ test("a business without a website can submit manual details and complete Telegr
   expect(persisted.website_email_verified).toBe(false);
   expect(persisted.business_profile.business_name).toBe(identity.businessName);
   expect(persisted.business_summary).toContain("serving sourdough and pastries");
+  expect(persisted.business_summary).not.toContain("Guidance:");
+  expect(persisted.business_profile.activity_category).toBe("Food & hospitality");
   expect(persisted.contact_info).toEqual(
     expect.arrayContaining([
       expect.objectContaining({

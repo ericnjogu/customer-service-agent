@@ -340,6 +340,8 @@ class OnboardingAdmin(BaseModel):
 
 
 class OnboardingBusinessProfile(BaseModel):
+    activity_category: str | None = None
+    activity_custom: str | None = Field(default=None, max_length=200)
     business_name: str = Field(default="", max_length=500)
     website_url: HttpUrl | None = None
     location_name: str = Field(default="", max_length=500)
@@ -438,6 +440,12 @@ class OnboardingSessionUpdate(BaseModel):
     contact_info: list[OnboardingContactPoint] | None = None
     provider_projects: OnboardingProviderProjects | None = None
     knowledge_sources: list[WebsiteResearchSource] | None = None
+
+    @field_validator("business_summary", mode="before")
+    @classmethod
+    def remove_template_guidance(cls, value: str | None) -> str | None:
+        from app.business_information import clean_business_summary
+        return clean_business_summary(value) if isinstance(value, str) else value
 
 
 class OnboardingTelegramSetupRequest(BaseModel):
@@ -570,6 +578,8 @@ class OnboardingJobAccepted(BaseModel):
 
 
 class BusinessProfileRecord(BaseModel):
+    activity_category: str | None = None
+    activity_custom: str | None = None
     tenant_id: str
     business_name: str
     website_url: str | None

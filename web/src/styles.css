@@ -382,6 +382,17 @@ textarea {
   justify-content: space-between;
 }
 
+.repeater-row:nth-child(odd) { background: #f0f4ff; }
+.repeater-row:nth-child(even) { background: #ecfaf5; }
+.repeater-row { animation: contact-enter 180ms ease-out; }
+@keyframes contact-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .repeater-row { animation: none; }
+}
+
 @media (max-width: 640px) {
   .repeater-row { grid-template-columns: minmax(0, 1fr); }
 }

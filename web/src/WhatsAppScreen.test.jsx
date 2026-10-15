@@ -49,7 +49,7 @@ test.each(["cloud_api", null])("Cloud API launch omits coexistence and history (
   const { authorize } = setup(mode);
   await prepareMeta();
   expect(screen.queryByText("Import historical chats and media")).not.toBeInTheDocument();
-  expect(screen.getByText(/registered WhatsApp Cloud API number/)).toBeInTheDocument();
+  expect(screen.getByText(/phone number that is not registered on WhatsApp business/)).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Connect WhatsApp" }));
   expect(window.FB.login.mock.calls[0][1].extras).not.toHaveProperty("featureType");
   await act(async () => { authorize(); event("FINISH"); });

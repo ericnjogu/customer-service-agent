@@ -18,6 +18,7 @@ import {
 import "@mdxeditor/editor/style.css";
 import "./styles.css";
 import WhatsAppScreen from "./WhatsAppScreen";
+import { BUSINESS_CATEGORIES, BUSINESS_TEMPLATE, cleanBusinessSummary, hasBusinessContent } from "./business-information";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
 const API_REQUEST_TIMEOUT_MS = 60000;
@@ -1092,7 +1093,7 @@ function AnalysisScreen({ session, onBack, onNext, busy, draftValue, onDraftChan
     business_profile: {
       ...(session.business_profile || {}),
     },
-    business_summary: session.business_summary || "",
+    business_summary: session.business_summary || (session.website_url ? "" : BUSINESS_TEMPLATE),
   }));
   const draft = draftValue ?? localDraft;
   const setDraft = (update) => {
@@ -1120,8 +1121,10 @@ function AnalysisScreen({ session, onBack, onNext, busy, draftValue, onDraftChan
     event.preventDefault();
     if (!validation.validateForSubmit()) return;
     onNext({
-      business_profile: draft.business_profile,
-      business_summary: draft.business_summary,
+      business_profile: { ...draft.business_profile,
+        activity_custom: draft.business_profile.activity_category === "Other"
+          ? draft.business_profile.activity_custom?.trim() : null },
+      business_summary: cleanBusinessSummary(draft.business_summary),
     });
   }
 
@@ -1146,6 +1149,25 @@ function AnalysisScreen({ session, onBack, onNext, busy, draftValue, onDraftChan
           onBlur={() => validation.validateField("business_profile.business_name")}
         />
       </Field>
+      <Field label="Nature of business/activity" name="business_profile.activity_category"
+        error={validation.errorFor("business_profile.activity_category")}>
+        <select aria-label="Nature of business/activity" value={draft.business_profile.activity_category || ""}
+          onChange={(event) => updateProfile("activity_category", event.target.value)}
+          aria-invalid={Boolean(validation.errorFor("business_profile.activity_category"))}>
+          <option value="">Choose a category</option>
+          {BUSINESS_CATEGORIES.map(category => <option key={category}>{category}</option>)}
+        </select>
+      </Field>
+      {draft.business_profile.activity_category === "Other" && (
+        <Field label="Describe your activity" name="business_profile.activity_custom"
+          error={validation.errorFor("business_profile.activity_custom")}>
+          <input aria-label="Describe your activity" maxLength={200}
+            aria-invalid={Boolean(validation.errorFor("business_profile.activity_custom"))}
+            aria-describedby={fieldErrorId("business_profile.activity_custom")}
+            value={draft.business_profile.activity_custom || ""}
+            onChange={(event) => updateProfile("activity_custom", event.target.value)} />
+        </Field>
+      )}
       <MarkdownField
         label="Business summary / FAQ"
         name="business_summary"
@@ -1238,15 +1260,34 @@ function ContactInfoScreen({ session, onBack, onNext, busy, linksValue, onLinksC
     );
   }
 
-  function addLink() {
+  function addLink(event) {
+    const form = event.currentTarget.form;
     setLinks((current) => [...current, blankSocialLink()]);
+    requestAnimationFrame(() => form?.querySelector(".repeater-row:last-child input")?.focus());
   }
 
   function removeLink(index) {
+    const removedId = links[index]?.id;
     setLinks((current) => {
-      const next = current.filter((_link, linkIndex) => linkIndex !== index);
+      const next = current.filter((link) => link.id !== removedId);
       return next.length ? next : [blankSocialLink()];
     });
+  }
+
+  function animateRemoval(event, index) {
+    const row = event.currentTarget.closest("fieldset");
+    const focusTarget = row.nextElementSibling?.querySelector("input") ||
+      row.previousElementSibling?.querySelector("input") ||
+      row.parentElement.nextElementSibling;
+    focusTarget?.focus();
+    if (!row.animate || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      removeLink(index);
+      return;
+    }
+    event.currentTarget.disabled = true;
+    row.animate([{ opacity: 1 }, { opacity: 0, transform: "translateY(-8px)" }],
+      { duration: 160, easing: "ease-in", fill: "forwards" }).finished
+      .then(() => removeLink(index)).catch(() => removeLink(index));
   }
 
   function linksForSubmit() {
@@ -1284,7 +1325,7 @@ function ContactInfoScreen({ session, onBack, onNext, busy, linksValue, onLinksC
                   className="icon-button danger"
                   aria-label={`Delete contact point ${index + 1}`}
                   title="Delete contact point"
-                  onClick={() => removeLink(index)}
+                  onClick={(event) => animateRemoval(event, index)}
                   disabled={busy}
                 >
                   ×
@@ -1426,6 +1467,8 @@ function OnboardingSummary({ session }) {
     ["Tenant admin", `${adminDisplayName(session.admin)} <${session.admin?.username_email || ""}>`],
     ["Phone number", session.admin?.phone_number],
     ["Organization name", profile.business_name],
+    ["Nature of business/activity", profile.activity_category === "Other"
+      ? profile.activity_custom : profile.activity_category],
     ["Location name", profile.location_name],
     ["Physical location", profile.physical_location],
     ["Business phone", profile.business_phone],
@@ -1730,8 +1773,17 @@ function validateAnalysisDraft(draft) {
   if (!String(draft.business_profile?.business_name || "").trim()) {
     errors["business_profile.business_name"] = "Organization name is required.";
   }
-  if (!draft.business_summary.trim()) {
+  if (!BUSINESS_CATEGORIES.includes(draft.business_profile?.activity_category)) {
+    errors["business_profile.activity_category"] = "Choose a nature of business/activity.";
+  }
+  if (draft.business_profile?.activity_category === "Other" && !draft.business_profile?.activity_custom?.trim()) {
+    errors["business_profile.activity_custom"] = "Describe your activity.";
+  }
+  if (!hasBusinessContent(draft.business_summary)) {
     errors.business_summary = "Business summary / FAQ is required.";
+  }
+  if (cleanBusinessSummary(draft.business_summary).length > 10000) {
+    errors.business_summary = "Business summary must contain no more than 10,000 characters.";
   }
   return errors;
 }

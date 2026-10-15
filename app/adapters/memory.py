@@ -480,6 +480,8 @@ class MemoryOnboardingRepository:
         now = datetime.now(timezone.utc)
         record = BusinessProfileRecord(
             tenant_id=tenant_id,
+            activity_category=profile.activity_category,
+            activity_custom=profile.activity_custom,
             business_name=profile.business_name,
             website_url=str(profile.website_url) if profile.website_url else None,
             location_name=profile.location_name,
@@ -683,6 +685,9 @@ class MemoryOnboardingRepository:
         analysis: WebsiteAnalysisResult,
     ) -> OnboardingSessionRecord:
         session = self._require_session(session_id)
+        if session.business_profile:
+            analysis.business_profile.activity_category = session.business_profile.activity_category
+            analysis.business_profile.activity_custom = session.business_profile.activity_custom
         updated = session.model_copy(
             update={
                 "status": "ready_for_review",

@@ -362,6 +362,13 @@ textarea {
   gap: 16px;
 }
 
+.whatsapp-learn-more { margin-block: 1rem; }
+.whatsapp-learn-more > p { margin: 0.75rem 0 0; line-height: 1.6; }
+.facebook-connect-button { display: inline-flex; align-items: center; justify-content: center; gap: 0.6rem; }
+.facebook-connect-icon { width: 1.25em; height: 1.25em; flex-shrink: 0; }
+.whatsapp-learn-more summary { cursor: pointer; color: #294fff; font-weight: 600; }
+.whatsapp-learn-more summary:focus-visible { outline: 2px solid #294fff; outline-offset: 4px; }
+
 .repeater-row {
   align-items: end;
   border: 1px solid #dce3ef;

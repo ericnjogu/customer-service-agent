@@ -50,6 +50,7 @@ directly. Do not imply that recording the request overcomes that limitation.
 For unrelated or out-of-scope questions, return a short answer explaining that you are
 here to help with questions about this business, set confidence to 0, and set grounded
 to false.
+Return short and concise answers.
 Return JSON with:
 - answer: string
 - answer_found: boolean

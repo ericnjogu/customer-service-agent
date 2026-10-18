@@ -345,8 +345,15 @@ export default function WhatsAppScreen({ session, config, api, onSubmit, onBack,
   return <section className="card">
     <h2>Connect WhatsApp</h2>
     <p>This will launch the Facebook business login, after which the WhatsApp business account will be created or connected.</p>
+    <details className="whatsapp-learn-more">
+      <summary>Learn more</summary>
+      <p>WhatsApp and Facebook are owned by Meta Platforms, Inc.</p>
+      <p>Meta uses Facebook business login for this signup process.</p>
+      <p>By clicking the connect button, you will be redirected to Facebook business login.
+        Your Facebook username and password are provided directly to Facebook and are neither stored nor accessed by our system.</p>
+    </details>
     {config.whatsapp_mode !== "coexistence"
-      ? <p>Connect a phone number that is not registered on WhatsApp business.</p>
+      ? <p>Connect a phone number that is not registered on WhatsApp.</p>
       : <p>Connect your new or existing WhatsApp Business app number through Meta. You can keep using
         the app while Ristoh CSS sends and receives messages on the same number.</p>}
 
@@ -387,10 +394,18 @@ export default function WhatsAppScreen({ session, config, api, onSubmit, onBack,
         : connecting
           ? <button type="button" disabled>Connecting…</button>
           : ready
-            ? <button type="button" onClick={connect} disabled={busy || preparing || driveBusy || (archive?.import_enabled && archive.drive_status !== "ready")}>{failed ? "Retry connection" : "Connect WhatsApp"}</button>
-            : <button type="button" onClick={prepareConnection}
+            ? <button className="facebook-connect-button" type="button" onClick={connect} disabled={busy || preparing || driveBusy || (archive?.import_enabled && archive.drive_status !== "ready")}><FacebookIcon />{failed ? "Retry connection" : "Connect WhatsApp"}</button>
+            : <button className="facebook-connect-button" type="button" onClick={prepareConnection}
                 disabled={busy || preparing || driveBusy || !failed || (archive?.import_enabled && archive.drive_status !== "ready")}>
+                <FacebookIcon />
                 {preparing ? "Preparing…" : failed ? "Retry connection" : "Connect WhatsApp"}</button>)}
     </div>
   </section>;
+}
+
+function FacebookIcon() {
+  return <svg className="facebook-connect-icon" viewBox="0 0 24 24"
+    aria-hidden="true" focusable="false" fill="currentColor">
+    <path d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073C0 18.1 4.388 23.094 10.125 24v-8.437H7.078v-3.49h3.047V9.413c0-3.025 1.792-4.697 4.533-4.697 1.312 0 2.686.236 2.686.236v2.971h-1.513c-1.49 0-1.956.931-1.956 1.887v2.263h3.328l-.532 3.49h-2.796V24C19.612 23.094 24 18.1 24 12.073Z" />
+  </svg>;
 }

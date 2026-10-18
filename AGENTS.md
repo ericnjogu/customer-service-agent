@@ -22,12 +22,14 @@ prefer explicit fields over fields stored in jsonb fields
 
 ## Pull request branch policy
 
-- If the current branch's pull request has been merged, always create a new feature
-  branch and a new pull request for subsequent changes.
-- Before committing or opening a pull request while a feature branch is checked out,
-  ask whether to continue using the current branch or create a new branch.
-- If a pull request already exists for the current branch, create a separate branch for
-  any new work unless the user explicitly asks to update the existing pull request.
+- Check the current branch's pull request status before committing or opening a PR.
+- Reuse the current feature branch when it has no PR or its PR is still open;
+  update the existing open PR rather than creating a duplicate. Do not ask for
+  branch confirmation in these cases.
+- If the current branch's PR has been merged, fetch the latest remote main and
+  create a new feature branch from that updated main, then create a new PR.
+  Preserve pending local changes when switching branches.
+- If the PR was closed without merging, ask whether to reopen it or create a new PR.
 - If the user explicitly instructs which branch strategy to use, follow that instruction.
 - Keep unrelated or untracked local files out of commits unless the user explicitly asks
   to include them.

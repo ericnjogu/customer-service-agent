@@ -15,6 +15,9 @@ test("redirect preparation does not load the SDK or start authorization", async 
     api={api} onSubmit={vi.fn()} onBack={vi.fn()} busy={false} />);
   await waitFor(() => expect(screen.getByRole("button", { name: "Connect WhatsApp" })).toBeEnabled());
   expect(window.FB.init).not.toHaveBeenCalled();
+  const icon = screen.getByRole("button", { name: "Connect WhatsApp" }).querySelector("svg");
+  expect(icon).toHaveAttribute("aria-hidden", "true");
+  expect(icon).toHaveAttribute("focusable", "false");
   expect(window.FB.login).not.toHaveBeenCalled();
   expect(api.mock.calls.map(([path]) => path)).toEqual([
     "/onboarding/sessions/session/whatsapp/status", "/onboarding/sessions/session/archive",
@@ -45,11 +48,27 @@ function setup(mode = "coexistence") {
   return { api, submit, authorize: () => callback({ authResponse: { code: "one-time-code" } }) };
 }
 
+test("Learn more starts collapsed and toggles without starting signup", async () => {
+  const { api } = setup("cloud_api");
+  await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
+  const summary = screen.getByText("Learn more");
+  const details = summary.closest("details");
+  expect(details.querySelectorAll(":scope > p")).toHaveLength(3);
+  expect(details.querySelector("p div")).toBeNull();
+  expect(details).not.toHaveAttribute("open");
+  await userEvent.click(summary);
+  expect(details).toHaveAttribute("open");
+  await userEvent.click(summary);
+  expect(details).not.toHaveAttribute("open");
+  expect(api).toHaveBeenCalledTimes(2);
+  expect(window.FB.login).not.toHaveBeenCalled();
+});
+
 test.each(["cloud_api", null])("Cloud API launch omits coexistence and history (mode=%s)", async (mode) => {
   const { authorize } = setup(mode);
   await prepareMeta();
   expect(screen.queryByText("Import historical chats and media")).not.toBeInTheDocument();
-  expect(screen.getByText(/phone number that is not registered on WhatsApp business/)).toBeInTheDocument();
+  expect(screen.getByText(/phone number that is not registered on WhatsApp/)).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Connect WhatsApp" }));
   expect(window.FB.login.mock.calls[0][1].extras).not.toHaveProperty("featureType");
   await act(async () => { authorize(); event("FINISH"); });

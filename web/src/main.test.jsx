@@ -1,6 +1,6 @@
 import React from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 function stubOnboardingFetch(fetchMock) {
@@ -203,6 +203,28 @@ function validAdmin(overrides = {}) {
     ...overrides,
   };
 }
+
+test("account signup requires a challenge and refreshes it after submission", async () => {
+  const api = { render: vi.fn(() => "signup-widget"), remove: vi.fn() };
+  window.turnstile = api;
+  const submit = vi.fn().mockResolvedValue(undefined);
+  try {
+    render(<StartScreen form={validStartForm()} setForm={vi.fn()} onSubmit={submit}
+      busy={false} turnstileEnabled turnstileSiteKey="public-key" />);
+    const button = screen.getByRole("button", { name: "Send account verification code to email" });
+    expect(button).toBeDisabled();
+    await waitFor(() => expect(api.render).toHaveBeenCalledOnce());
+    act(() => api.render.mock.calls[0][1].callback("signup-token"));
+    expect(button).toBeEnabled();
+    await userEvent.click(button);
+    expect(submit).toHaveBeenCalledWith("signup-token");
+    await waitFor(() => expect(api.render).toHaveBeenCalledTimes(2));
+    expect(button).toBeDisabled();
+  } finally {
+    cleanup();
+    delete window.turnstile;
+  }
+});
 
 afterEach(() => {
   cleanup();

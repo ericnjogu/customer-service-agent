@@ -53,6 +53,7 @@ whatsapp:
   secretNamespace: customer-service-production
 
 onboarding:
+  turnstileEnabled: true
   verificationCodeSecretName: app-configs
   # Enable only after a real Meta acceptance session and operational gates pass.
   whatsappEnabled: true

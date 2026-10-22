@@ -16,6 +16,7 @@ from app.models import (
     OnboardingTelegramSetupRequest,
 )
 from app.onboarding_sessions import OnboardingRateLimitError, OnboardingValidationError
+from app.turnstile import verify_signup_challenge
 
 router = APIRouter(prefix="/onboarding/sessions", tags=["onboarding-sessions"])
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ async def create_onboarding_session(
     payload: OnboardingSessionCreate,
 ) -> OnboardingSessionRecord:
     service = request.app.state.container.onboarding_sessions
+    await verify_signup_challenge(service.settings, request.headers.get("x-turnstile-token"))
     started_at = time.perf_counter()
     try:
         logger.info(

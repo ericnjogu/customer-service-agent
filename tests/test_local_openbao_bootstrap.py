@@ -134,3 +134,9 @@ def test_deploy_script_flags_are_explicit():
     assert 'if [[ "${AGENT_ONBOARDING_WHATSAPP_ENABLED}" == "true" ]]' in script
     assert '"openbao.enabled=${AGENT_ONBOARDING_WHATSAPP_ENABLED}"' in script
     assert '"onboarding.whatsappEnabled=${AGENT_ONBOARDING_WHATSAPP_ENABLED}"' in script
+    assert (
+        'AGENT_ONBOARDING_TURNSTILE_ENABLED="${AGENT_ONBOARDING_TURNSTILE_ENABLED:-false}"'
+        in script
+    )
+    assert '"onboarding.turnstileEnabled=${AGENT_ONBOARDING_TURNSTILE_ENABLED}"' in script
+    assert '"${AGENT_ONBOARDING_TURNSTILE_ENABLED}"; do' in script

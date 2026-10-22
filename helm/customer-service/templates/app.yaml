@@ -179,6 +179,17 @@ spec:
               value: {{ .Values.onboarding.whatsappEnabled | quote }}
             - name: AGENT_ONBOARDING_WHATSAPP_MODE
               value: {{ .Values.onboarding.whatsappMode | default "cloud_api" | quote }}
+            - name: AGENT_ONBOARDING_TURNSTILE_ENABLED
+              value: {{ .Values.onboarding.turnstileEnabled | quote }}
+            {{- if .Values.onboarding.turnstileEnabled }}
+            {{- range $key := list "AGENT_TURNSTILE_SITE_KEY" "AGENT_TURNSTILE_SECRET_KEY" }}
+            - name: {{ $key }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.onboarding.turnstileSecretName }}
+                  key: {{ $key }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.openbao.enabled }}
             - name: AGENT_OPENBAO_URL
               value: {{ .Values.openbao.url | quote }}

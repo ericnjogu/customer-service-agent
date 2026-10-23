@@ -50,6 +50,8 @@ async def public_configuration():
     settings = get_settings()
     return {
         "telegram_enabled": settings.onboarding_telegram_enabled,
+        "turnstile_enabled": settings.onboarding_turnstile_enabled,
+        "turnstile_site_key": settings.turnstile_site_key,
         "whatsapp_enabled": settings.onboarding_whatsapp_enabled,
         "whatsapp_mode": settings.onboarding_whatsapp_mode,
         "whatsapp_transport": "redirect",

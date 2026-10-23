@@ -18,6 +18,7 @@ import {
 import "@mdxeditor/editor/style.css";
 import "./styles.css";
 import WhatsAppScreen from "./WhatsAppScreen";
+import Turnstile from "./Turnstile";
 import { BUSINESS_CATEGORIES, BUSINESS_TEMPLATE, cleanBusinessSummary, hasBusinessContent } from "./business-information";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
@@ -68,7 +69,7 @@ const noWebsiteSteps = [
 ];
 
 function App() {
-  const [config, setConfig] = useState({ telegram_enabled: false, whatsapp_enabled: false });
+  const [config, setConfig] = useState({ telegram_enabled: false, whatsapp_enabled: false, turnstile_enabled: true });
   const [session, setSession] = useState(null);
   const [step, setStep] = useState("account");
   const [businessDraft, setBusinessDraft] = useState(null);
@@ -225,7 +226,7 @@ function App() {
     setAlert({ type: "info", message });
   }
 
-  async function submitStart() {
+  async function submitStart(turnstileToken) {
     if (session && startForm.username_email === session.admin.username_email &&
         startForm.given_name === session.admin.given_name &&
         startForm.family_name === session.admin.family_name &&
@@ -246,6 +247,7 @@ function App() {
     try {
       const created = await api("/onboarding/sessions", {
         method: "POST",
+        headers: turnstileToken ? { "X-Turnstile-Token": turnstileToken } : {},
         body: JSON.stringify({
           admin: {
             username_email: startForm.username_email,
@@ -584,6 +586,8 @@ function App() {
 
         {step === "account" && (
           <StartScreen
+            turnstileEnabled={config.turnstile_enabled}
+            turnstileSiteKey={config.turnstile_site_key}
             form={startForm}
             setForm={setStartForm}
             onSubmit={submitStart}
@@ -749,12 +753,20 @@ function Progress({ step, session, telegramEnabled = false }) {
   );
 }
 
-function StartScreen({ form, setForm, onSubmit, busy }) {
+function StartScreen({ form, setForm, onSubmit, busy, turnstileEnabled = false, turnstileSiteKey }) {
+  const [turnstileToken, setTurnstileToken] = useState("");
+  const [challengeVersion, setChallengeVersion] = useState(0);
   const validation = useFormValidation(form, validateAccountForm);
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
     if (!validation.validateForSubmit()) return;
-    onSubmit();
+    if (turnstileEnabled && !turnstileToken) return;
+    try {
+      await onSubmit(turnstileToken);
+    } finally {
+      setTurnstileToken("");
+      setChallengeVersion((value) => value + 1);
+    }
   }
 
   return (
@@ -886,7 +898,8 @@ function StartScreen({ form, setForm, onSubmit, busy }) {
           </span>
         </label>
       </fieldset>
-      <button disabled={busy}>
+      {turnstileEnabled && <Turnstile key={challengeVersion} siteKey={turnstileSiteKey} onToken={setTurnstileToken} />}
+      <button disabled={busy || (turnstileEnabled && !turnstileToken)}>
         {busy ? "Sending..." : "Send account verification code to email"}
       </button>
     </form>

@@ -31,6 +31,7 @@ LOG_LEVEL="${LOG_LEVEL:-DEBUG}"
 KUBE_CONTEXT="${KUBE_CONTEXT:-rancher-desktop}"
 AGENT_ONBOARDING_WHATSAPP_ENABLED="${AGENT_ONBOARDING_WHATSAPP_ENABLED:-true}"
 AGENT_ONBOARDING_TELEGRAM_ENABLED="${AGENT_ONBOARDING_TELEGRAM_ENABLED:-false}"
+AGENT_ONBOARDING_TURNSTILE_ENABLED="${AGENT_ONBOARDING_TURNSTILE_ENABLED:-false}"
 LOCAL_META_CONFIG_SECRET="${LOCAL_META_CONFIG_SECRET:-app-configs}"
 LOCAL_OPENBAO_ROLE="${NAMESPACE}-${RELEASE_NAME}"
 # Match the chart's fullname truncation, independent of deployment-name overrides.
@@ -82,7 +83,7 @@ if [[ "${AGENT_PROVIDER_PROJECT_PROVISIONER}" == "api" && -z "${AGENT_OPENAI_ADM
   exit 1
 fi
 
-for enabled in "${AGENT_ONBOARDING_WHATSAPP_ENABLED}" "${AGENT_ONBOARDING_TELEGRAM_ENABLED}"; do
+for enabled in "${AGENT_ONBOARDING_WHATSAPP_ENABLED}" "${AGENT_ONBOARDING_TELEGRAM_ENABLED}" "${AGENT_ONBOARDING_TURNSTILE_ENABLED}"; do
   if [[ "$enabled" != "true" && "$enabled" != "false" ]]; then
     echo "Onboarding feature flags must be true or false." >&2
     exit 1
@@ -146,6 +147,7 @@ helm_args=(
   --set "onboarding.whatsappEnabled=${AGENT_ONBOARDING_WHATSAPP_ENABLED}"
   --set-string "onboarding.whatsappMode=${AGENT_ONBOARDING_WHATSAPP_MODE:-cloud_api}"
   --set "onboarding.telegramEnabled=${AGENT_ONBOARDING_TELEGRAM_ENABLED}"
+  --set "onboarding.turnstileEnabled=${AGENT_ONBOARDING_TURNSTILE_ENABLED}"
   --set "openbao.enabled=${AGENT_ONBOARDING_WHATSAPP_ENABLED}"
   --set-string "openbao.url=https://openbao-local-active.openbao-local.svc:8200"
   --set-string "openbao.caConfigMap=openbao-local-ca"

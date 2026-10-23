@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     whatsapp_graph_api_version_secret_key: str = "WHATSAPP_GRAPH_API_VERSION"
     whatsapp_graph_api_version: str = "v20.0"
     onboarding_telegram_enabled: bool = False
+    onboarding_turnstile_enabled: bool = False
+    turnstile_site_key: str | None = None
+    turnstile_secret_key: SecretStr | None = None
     # Explicit rollout gate: enable only after Meta readiness and vault restore checks.
     onboarding_whatsapp_enabled: bool = True
     onboarding_whatsapp_mode: Literal["coexistence", "cloud_api"] = "cloud_api"

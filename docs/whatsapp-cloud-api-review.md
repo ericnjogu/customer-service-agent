@@ -1,10 +1,10 @@
 # Standard Cloud API app-review testing
 
-Standard Cloud API is the default until app review is complete:
+Coexistence is now the default following App Review and Tech Provider approval.
+For standard Cloud API testing, explicitly set:
 `AGENT_ONBOARDING_WHATSAPP_MODE=cloud_api` (Helm `onboarding.whatsappMode`).
 Local deployment accepts this environment variable through `scripts/deploy-local.sh`.
-To opt into coexistence explicitly, set the variable or Helm value to `coexistence`.
-Completing app review will not automatically change this setting.
+Set the variable or Helm value to `coexistence` to use Business App onboarding.
 
 This mode omits the Business App `featureType` from the Meta SDK launch, changes
 the onboarding explanation, and disables the combined history/media import
@@ -22,7 +22,7 @@ does not test the browser authorization-code exchange; record that limitation
 when preparing app-review evidence. Never commit tokens or registration PINs.
 
 Existing deployments are not changed by editing these defaults; the next deployment
-using them selects Cloud API unless explicitly overridden. A local
+using them selects coexistence unless explicitly overridden. A local
 successful setup does not establish Meta app-review approval or prove webhook
 delivery: separately verify the public HTTPS callback, signature validation,
 inbound routing and outbound replies with the intended test account.

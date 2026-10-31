@@ -8,10 +8,11 @@ from app.whatsapp_signup import WhatsAppSignupError, WhatsAppSignupService
 
 def test_mode_defaults_and_validation(monkeypatch):
     monkeypatch.delenv("AGENT_ONBOARDING_WHATSAPP_MODE", raising=False)
+    assert Settings(_env_file=None).onboarding_whatsapp_mode == "coexistence"
+    assert WhatsAppSignupService(None, None, None).mode == "coexistence"
+    monkeypatch.setenv("AGENT_ONBOARDING_WHATSAPP_MODE", "cloud_api")
     assert Settings(_env_file=None).onboarding_whatsapp_mode == "cloud_api"
-    assert WhatsAppSignupService(None, None, None).mode == "cloud_api"
-    settings = Settings(_env_file=None, onboarding_whatsapp_mode="coexistence")
-    assert settings.onboarding_whatsapp_mode == "coexistence"
+    assert WhatsAppSignupService(None, None, None, mode="cloud_api").mode == "cloud_api"
     with pytest.raises(ValidationError):
         Settings(_env_file=None, onboarding_whatsapp_mode="anything")
 

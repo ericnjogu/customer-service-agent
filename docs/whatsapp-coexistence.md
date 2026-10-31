@@ -1,5 +1,12 @@
 # WhatsApp Business App coexistence
 
+Coexistence is the default for new signups in the application, Helm chart
+(including production), and local deployment script. Override with
+`AGENT_ONBOARDING_WHATSAPP_MODE=cloud_api` or Helm
+`onboarding.whatsappMode=cloud_api` for standard Cloud API signup.
+Changing the default takes effect on the next deployment; it does not change
+Meta configuration or guarantee that a particular number is eligible.
+
 New Embedded Signup requests use `whatsapp_business_app_onboarding`. The backend
 requires Meta to confirm `is_on_biz_app` and Cloud API access, subscribes the WABA,
 and requests history through `smb_app_data` only when the user opts in and connects

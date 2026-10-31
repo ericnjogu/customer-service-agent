@@ -22,6 +22,29 @@ sops encrypt --age "$SOPS_AGE_RECIPIENTS" \
 
 The encrypted output is safe to commit. Confirm it contains no plaintext values.
 
+## Grafana administrator
+
+`grafana-admin.enc.yaml` creates the `monitoring/grafana-admin` Secret using the
+existing production SOPS recipient. The VictoriaMetrics chart references it via
+`grafana.admin.existingSecret`; do not revert to a chart-generated password.
+Argo CD renders charts without access to the live Secret lookup, so random
+password generation can change the bootstrap Secret without updating Grafana's
+persistent account database.
+
+Read `admin-user` and `admin-password` from `grafana-admin`, not the retired
+chart-generated `vm-grafana` Secret. The Grafana service and deployment are still
+named `vm-grafana`. During rollout, apply the SopsSecret and confirm its child
+Secret is ready before syncing the chart change. The earlier sync wave controls
+submission order, but is not a guarantee that decryption has finished.
+
+For future password rotation, edit the encrypted resource with SOPS, reconcile
+the generated Secret, and reset the existing Grafana administrator using the CLI
+with `--password-from-stdin`. Changing the Secret or restarting Grafana alone
+does **not** rotate an existing database password. Keep shell tracing disabled;
+never put passwords in command arguments, logs, or plaintext Git files. Do not
+delete the database or PVC. The initial migration preserves the current Secret
+credentials and synchronizes the existing administrator password once.
+
 `app-configs` must include a random value of at least 32 characters under
 `AGENT_ONBOARDING_VERIFICATION_CODE_SECRET`. The application uses it only as the
 HMAC-SHA256 key for onboarding email codes; rotate it only when outstanding

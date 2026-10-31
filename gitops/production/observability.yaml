@@ -19,6 +19,11 @@ spec:
               resources: { requests: { storage: 10Gi } }
         grafana:
           persistence: { enabled: true, size: 2Gi }
+          # Stable SOPS-managed credentials; Helm-generated passwords drift in Argo CD.
+          admin:
+            existingSecret: grafana-admin
+            userKey: admin-user
+            passwordKey: admin-password
         alertmanager:
           enabled: true
           spec:

@@ -178,7 +178,7 @@ spec:
             - name: AGENT_ONBOARDING_WHATSAPP_ENABLED
               value: {{ .Values.onboarding.whatsappEnabled | quote }}
             - name: AGENT_ONBOARDING_WHATSAPP_MODE
-              value: {{ .Values.onboarding.whatsappMode | default "cloud_api" | quote }}
+              value: {{ .Values.onboarding.whatsappMode | default "coexistence" | quote }}
             - name: AGENT_ONBOARDING_TURNSTILE_ENABLED
               value: {{ .Values.onboarding.turnstileEnabled | quote }}
             {{- if .Values.onboarding.turnstileEnabled }}

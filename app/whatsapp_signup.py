@@ -31,7 +31,7 @@ class WhatsAppSignupService:
         credentials: CredentialStore,
         meta: MetaSignupClient,
         *,
-        mode: str = "cloud_api",
+        mode: str = "coexistence",
     ):
         self.repository = repository
         self.credentials = credentials

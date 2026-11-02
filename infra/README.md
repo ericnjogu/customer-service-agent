@@ -105,3 +105,102 @@ Run `scripts/validate-production.sh` after deployments and node maintenance. Tes
 failure one server at a time and confirm etcd quorum, PostgreSQL primary continuity,
 Argo health and public ingress. Never test two simultaneous node failures: three-node
 etcd and PostgreSQL designs tolerate one.
+
+### k3s and PostgreSQL monitoring
+
+The VictoriaMetrics stack scrapes the authenticated Kubernetes API endpoints on
+all three servers. In k3s these also expose scheduler/controller-manager metrics;
+the component rule groups explicitly use `job="apiserver"`. Do not enable the
+default scheduler/controller pod-selector services: k3s has no such pods. Keep
+their rule groups enabled so recording rules and availability alerts still run.
+Scheduler latency quantiles legitimately have no value when no pods were scheduled
+in the five-minute window. `RecordingRulesNoData` excludes only that measured idle
+case, not missing scheduler input metrics or other empty recording rules.
+
+Embedded etcd needs its own server metrics (the API's etcd *client* metrics are
+not a substitute). The k3s role binds TCP 2381 only to loopback and each server's
+WireGuard address. The monitoring chart discovers the three private addresses
+explicitly. No database client certificates, public ingress, or firewall opening
+are needed. Keep these addresses aligned with the inventory when replacing nodes.
+
+For an existing cluster, roll out in this order:
+
+1. Review/check the k3s role, then run it with the existing encrypted inventory:
+   `ansible-playbook -i ansible/inventory/production.yml ansible/site.yml --tags k3s --ask-vault-pass`.
+   This restarts changed servers **one at a time**, waiting for `/readyz` (including
+   etcd readiness) before proceeding. Schedule this control-plane maintenance;
+   do not run parallel restarts. Verify each private `:2381/metrics` endpoint is
+   reachable from vmagent's network and exposes `etcd_server_has_leader 1`.
+2. Merge/deploy the monitoring changes through GitOps. Deploying the scrape before
+   the listener is available produces real target-down alerts rather than fixing it.
+3. Check vmagent `/api/v1/targets`: three etcd targets and three PostgreSQL targets
+   must be up. The removed scheduler/controller scrape pools must be absent.
+4. Query `scheduler_pending_pods{job="apiserver"}`,
+   `etcd_server_has_leader`, and
+   `barman_cloud_cloudnative_pg_io_last_available_backup_timestamp{namespace="customer-service-production"}`.
+   Check scheduler recording rules produce data during scheduling activity and
+   Alertmanager clears the
+   missing-target and backup-metrics alerts after rule evaluation.
+
+PostgreSQL uses a native `VMPodScrape` of the CNPG instance exporter on port 9187,
+including Barman backup metrics. `enablePodMonitor` is false because the
+Prometheus `PodMonitor` CRD is not installed. Keep the backup failure, stale-backup
+and missing-metrics alerts enabled. A completed Backup resource is evidence of a
+completed job, not a substitute for a restore drill or backup monitoring.
+
+### Grafana traces
+
+Production tracing follows: FastAPI/OpenTelemetry → OTLP HTTP collector → Tempo →
+Grafana's **Tempo** datasource. LangSmith is independent; enabling LangSmith does
+not enable or populate Grafana traces. Application tracing is enabled in
+`helm/customer-service/values-production.yaml` at a 10% root sampling ratio.
+Sampled W3C parent contexts are respected. Health and OAuth callback routes remain
+excluded. The collector strips full URLs/paths/query strings, SQL statements,
+credential-named attributes, and exception messages/stack traces before export.
+Retained timings, errors/status codes and tenant identifiers are operator data;
+keep Grafana access restricted. This filter is not a general PII detector: review
+new custom span attributes before sending them.
+
+Tempo uses community chart **3.2.1**, Tempo **3.1.1** (release/security advisory
+checks performed 2 November 2026), one replica, a retained 10Gi local-path PVC and
+seven-day retention. The release includes Go security updates; the repository's
+published critical memcached advisory concerns a component not deployed here.
+Recheck advisories on upgrades. No external storage credentials are required.
+This is intentionally not an HA or backed-up trace archive: node/disk loss can
+lose traces, and retention does not guarantee the disk cannot fill. Alerts cover
+Tempo availability and low disk space. The collector has a bounded memory queue
+and five-minute retries; prolonged outages or collector restarts can lose queued
+spans without blocking customer responses. Previously discarded traces cannot be
+recovered.
+
+The service is ClusterIP-only. A NetworkPolicy permits collector OTLP ingestion
+and Grafana/vmagent HTTP queries only from selected pods in `monitoring`. Do not
+publish Tempo directly: it has no built-in authentication. Existing Kubernetes
+administrative access (including port-forward) remains privileged access.
+
+After merge and the normal GitOps deployment, wait for Tempo and the collector
+to be ready and the application rollout to complete, then run:
+
+```bash
+KUBECONFIG=/private/tmp/production-kubeconfig-16443 bash scripts/check-production-traces.sh
+```
+
+This sends a harmless sampled config GET and verifies its exact trace ID is in
+Tempo. In Grafana **Explore → Tempo**, look up that ID; ordinary requests are
+sampled, so a short quiet time range can legitimately be empty. Initial scope is
+trace search/inspection, not service graphs or span-derived metrics dashboards.
+
+Run the disposable local acceptance test (Docker also supported):
+
+```bash
+AGENT_TRACE_CONTAINER_TESTS=true AGENT_E2E_CONTAINER_RUNTIME=nerdctl \
+  uv run pytest tests/test_trace_pipeline.py -q
+```
+
+The test uses the rendered production Tempo configuration and real collector
+privacy/export processors, creates an instrumented FastAPI request, checks the
+trace and redaction, restarts Tempo, and verifies the trace still exists. It removes
+only its uniquely named containers/network/volume. Kubernetes enrichment and
+NetworkPolicy enforcement require the post-deployment check. The CI `tracing` job
+runs this test with Docker on every PR; local success does not prove CI or live
+deployment success.

@@ -149,6 +149,23 @@ data:
           - key: k8s.pod.uid
             action: delete
       batch: {}
+      transform/trace_privacy:
+        error_mode: propagate
+        trace_statements:
+          - context: span
+            statements:
+              - delete_key(attributes, "http.url")
+              - delete_key(attributes, "http.target")
+              - delete_key(attributes, "url.full")
+              - delete_key(attributes, "url.path")
+              - delete_key(attributes, "url.query")
+              - delete_key(attributes, "db.statement")
+              - delete_key(attributes, "db.query.text")
+              - delete_matching_keys(attributes, "(?i).*authorization.*|.*cookie.*|.*token.*|.*password.*|.*secret.*")
+          - context: spanevent
+            statements:
+              - delete_key(attributes, "exception.message")
+              - delete_key(attributes, "exception.stacktrace")
     exporters:
       debug:
         verbosity: basic
@@ -157,6 +174,16 @@ data:
         endpoint: {{ required "exporters.otlp.metricsEndpoint is required" .Values.exporters.otlp.metricsEndpoint | quote }}
       otlphttp/logs:
         endpoint: {{ required "exporters.otlp.logsEndpoint is required" .Values.exporters.otlp.logsEndpoint | quote }}
+      {{- end }}
+      {{- if .Values.exporters.traces.enabled }}
+      otlphttp/traces:
+        endpoint: {{ required "exporters.traces.endpoint is required" .Values.exporters.traces.endpoint | quote }}
+        sending_queue:
+          enabled: true
+          queue_size: 256
+        retry_on_failure:
+          enabled: true
+          max_elapsed_time: 300s
       {{- end }}
     service:
       extensions: [file_storage, health_check]
@@ -171,8 +198,8 @@ data:
           exporters: [{{ if .Values.exporters.otlp.enabled }}otlphttp/metrics{{ else }}debug{{ end }}]
         traces:
           receivers: [otlp]
-          processors: [memory_limiter, k8sattributes, transform/service_name, resource/common, batch]
-          exporters: [debug]
+          processors: [memory_limiter, transform/trace_privacy, k8sattributes, transform/service_name, resource/common, batch]
+          exporters: [{{ if .Values.exporters.traces.enabled }}otlphttp/traces{{ else }}debug{{ end }}]
 {{- end }}
 {{ include "observability-collector.configmap" . }}
 ---

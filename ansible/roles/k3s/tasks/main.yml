@@ -33,6 +33,17 @@
       secrets-encryption: true
   register: k3s_secrets_encryption_configuration
 
+- name: Bind embedded etcd metrics to loopback and the private WireGuard address
+  ansible.builtin.copy:
+    dest: /etc/rancher/k3s/config.yaml.d/40-metrics.yaml
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      # K3s binds this to loopback and its private node-ip (set below), not 0.0.0.0.
+      etcd-expose-metrics: true
+  register: k3s_metrics_configuration
+
 - name: Check for the pinned k3s installer
   ansible.builtin.stat:
     path: /usr/local/sbin/install-k3s.sh
@@ -131,5 +142,17 @@
     state: restarted
   when:
     - k3s_service_before_configuration.stat.exists
-    - k3s_snapshot_configuration.changed or k3s_secrets_encryption_configuration.changed
+    - k3s_snapshot_configuration.changed or k3s_secrets_encryption_configuration.changed or k3s_metrics_configuration.changed
     - not ansible_check_mode
+
+# site.yml is serial: 1. Do not proceed to the next server until this member's
+# API has recovered (readyz includes its etcd readiness check).
+- name: Wait for the local Kubernetes API to recover before the next server
+  ansible.builtin.command:
+    argv: [/usr/local/bin/k3s, kubectl, get, --raw=/readyz]
+  register: k3s_ready
+  changed_when: false
+  retries: 60
+  delay: 5
+  until: k3s_ready.rc == 0 and k3s_ready.stdout | trim == 'ok'
+  when: not ansible_check_mode

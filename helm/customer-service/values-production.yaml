@@ -79,7 +79,7 @@ logging:
   level: INFO
 
 telemetry:
-  enabled: false
+  enabled: true
   endpoint: http://otel-collector.monitoring.svc:4318
   serviceName: customer-service-agent
   environment: production

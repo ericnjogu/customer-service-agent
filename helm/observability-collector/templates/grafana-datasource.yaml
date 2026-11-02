@@ -16,3 +16,23 @@ data:
         isDefault: false
         editable: false
 {{- end }}
+{{- if .Values.exporters.traces.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tempo-grafana-datasource
+  labels:
+    grafana_datasource: "1"
+data:
+  tempo.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Tempo
+        uid: tempo
+        type: tempo
+        access: proxy
+        url: {{ required "exporters.traces.grafanaUrl is required" .Values.exporters.traces.grafanaUrl | quote }}
+        isDefault: false
+        editable: false
+{{- end }}

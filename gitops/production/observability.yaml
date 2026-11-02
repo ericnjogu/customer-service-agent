@@ -20,6 +20,10 @@ spec:
           enabled: false
         defaultRules:
           rules:
+            "count:up0":
+              spec:
+                # Emit zero for healthy groups, but stay absent if inputs disappear.
+                expr: sum(up == bool 0) without(instance,pod,node)
             RecordingRulesNoData:
               spec:
                 # VM drops NaN histogram quantiles when no pods were scheduled.
@@ -42,18 +46,18 @@ spec:
               enabled: true
               labelRewrites:
                 job: { match: kube-controller-manager, value: apiserver }
-        # Embedded etcd is not a pod. Enable the private listener with the k3s
-        # Ansible role BEFORE deploying these targets; never expose it publicly.
+        # Preserve etcd rules/dashboards, but use etcd-monitoring.yaml for discovery.
+        # Argo CD excludes Endpoints/EndpointSlice, so chart endpoints aren't applied.
         kubeEtcd:
-          endpoints: [10.50.0.11, 10.50.0.12, 10.50.0.13]
-          service:
-            port: 2381
-            targetPort: 2381
-          vmScrape:
-            spec:
-              endpoints:
-                - port: http-metrics
-                  scheme: http
+          enabled: true
+          service: { enabled: false }
+          vmScrape: { enabled: false }
+        vmagent:
+          spec:
+            resources:
+              requests: { cpu: 100m, memory: 200Mi }
+              # Scrapes are bursty; the operator's 200m default was throttling.
+              limits: { cpu: 500m, memory: 500Mi }
         vmsingle:
           spec:
             retentionPeriod: 7d

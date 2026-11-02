@@ -36,10 +36,23 @@ def test_k3s_reuses_api_scrape_without_disabling_component_rules():
 
 def test_etcd_scrapes_all_private_members_without_database_credentials():
     etcd = monitoring_values()["kubeEtcd"]
-    assert etcd.get("enabled", True) is True
-    assert etcd["endpoints"] == ["10.50.0.11", "10.50.0.12", "10.50.0.13"]
-    assert etcd["service"] == {"port": 2381, "targetPort": 2381}
-    assert etcd["vmScrape"]["spec"]["endpoints"] == [{"port": "http-metrics", "scheme": "http"}]
+    assert etcd == {"enabled": True, "service": {"enabled": False}, "vmScrape": {"enabled": False}}
+    scrape = yaml.safe_load((ROOT / "gitops/production/etcd-monitoring.yaml").read_text())
+    assert scrape["kind"] == "VMStaticScrape"
+    assert scrape["metadata"]["namespace"] == "monitoring"
+    assert scrape["spec"]["jobName"] == "kube-etcd"
+    assert scrape["spec"]["targetEndpoints"] == [
+        {
+            "targets": ["10.50.0.11:2381", "10.50.0.12:2381", "10.50.0.13:2381"],
+            "scheme": "http",
+            "path": "/metrics",
+            "interval": "30s",
+            "labels": {
+                "namespace": "kube-system",
+                "service": "vm-victoria-metrics-k8s-stack-kube-etcd",
+            },
+        }
+    ]
 
 
 def test_no_data_alert_only_exempts_measured_scheduler_idle_periods():
@@ -52,6 +65,17 @@ def test_no_data_alert_only_exempts_measured_scheduler_idle_periods():
     assert 'scheduler_scheduling_attempt_duration_seconds_count{job="apiserver"}' in expression
     assert "== 0" in expression
     assert "or vector(0)" not in expression  # missing input must not be treated as idle
+
+
+def test_down_target_count_reports_zero_without_fabricating_missing_inputs():
+    rule = monitoring_values()["defaultRules"]["rules"]["count:up0"]["spec"]
+    assert rule["expr"] == "sum(up == bool 0) without(instance,pod,node)"
+
+
+def test_vmagent_has_bounded_cpu_headroom_for_scrape_bursts():
+    resources = monitoring_values()["vmagent"]["spec"]["resources"]
+    assert resources["requests"] == {"cpu": "100m", "memory": "200Mi"}
+    assert resources["limits"] == {"cpu": "500m", "memory": "500Mi"}
 
 
 def test_etcd_listener_is_private_and_restart_waits_for_readiness():

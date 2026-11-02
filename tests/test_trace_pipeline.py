@@ -79,6 +79,7 @@ def test_tempo_is_private_persistent_and_pinned():
     assert {p["port"] for r in policy["spec"]["ingress"] for p in r["ports"]} == {3200, 4318}
     assert all("podSelector" in peer for r in policy["spec"]["ingress"] for peer in r["from"])
     assert scrape["kind"] == "VMServiceScrape"
+    assert scrape["spec"]["endpoints"] == [{"port": "tempo-prom-metrics", "path": "/metrics"}]
     assert scrape["spec"]["selector"]["matchExpressions"] == [
         {"key": "prometheus.io/service-monitor", "operator": "NotIn", "values": ["false"]}
     ]
@@ -135,6 +136,11 @@ def test_request_reaches_tempo_with_sensitive_fields_removed(tmp_path):
         and d["metadata"].get("labels", {}).get("prometheus.io/service-monitor") != "false"
     ]
     assert len(scrape_targets) == 1
+    _, scrape, _ = yaml.safe_load_all((ROOT / "gitops/production/tempo-access.yaml").read_text())
+    metrics_port = scrape["spec"]["endpoints"][0]["port"]
+    assert any(
+        p["name"] == metrics_port and p["port"] == 3200 for p in scrape_targets[0]["spec"]["ports"]
+    ), "The scrape port must match the rendered Service port, not the container port name"
     cm = next(d for d in docs if d["kind"] == "ConfigMap" and "tempo.yaml" in d.get("data", {}))
     mounts = []
     for filename, content in cm["data"].items():

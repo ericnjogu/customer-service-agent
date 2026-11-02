@@ -33,7 +33,7 @@ spec:
         operator: NotIn
         values: ["false"]
   endpoints:
-    - port: prom-metrics
+    - port: tempo-prom-metrics
       path: /metrics
 ---
 apiVersion: operator.victoriametrics.com/v1beta1

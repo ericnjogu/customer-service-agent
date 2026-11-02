@@ -116,11 +116,19 @@ their rule groups enabled so recording rules and availability alerts still run.
 Scheduler latency quantiles legitimately have no value when no pods were scheduled
 in the five-minute window. `RecordingRulesNoData` excludes only that measured idle
 case, not missing scheduler input metrics or other empty recording rules.
+`count:up0` uses a boolean comparison plus sum so healthy scrape groups produce
+zero rather than no samples; absent inputs still remain absent. vmagent has a
+100m CPU request and 500m CPU limit to accommodate scrape bursts without the
+throttling observed with the operator's 200m limit; its memory bounds are unchanged.
 
 Embedded etcd needs its own server metrics (the API's etcd *client* metrics are
 not a substitute). The k3s role binds TCP 2381 only to loopback and each server's
-WireGuard address. The monitoring chart discovers the three private addresses
-explicitly. No database client certificates, public ingress, or firewall opening
+WireGuard address. `gitops/production/etcd-monitoring.yaml` uses `VMStaticScrape`
+to discover the three private addresses explicitly. Argo CD excludes Kubernetes
+`Endpoints` and `EndpointSlice` resources, so the chart's legacy static endpoints
+cannot be relied on, even when the application reports Synced. The chart's etcd
+service/scrape are disabled but its rules and dashboards remain enabled.
+No database client certificates, public ingress, or firewall opening
 are needed. Keep these addresses aligned with the inventory when replacing nodes.
 
 For an existing cluster, roll out in this order:

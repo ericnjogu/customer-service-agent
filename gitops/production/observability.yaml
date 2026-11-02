@@ -12,6 +12,48 @@ spec:
     helm:
       releaseName: vm
       valuesObject:
+        # K3s embeds scheduler/controller-manager in the server process. Their
+        # metrics already arrive through the authenticated API-server scrape.
+        kubeControllerManager:
+          enabled: false
+        kubeScheduler:
+          enabled: false
+        defaultRules:
+          rules:
+            RecordingRulesNoData:
+              spec:
+                # VM drops NaN histogram quantiles when no pods were scheduled.
+                # Suppress only that idle case; missing input metrics still alert.
+                expr: |
+                  (sum(vmalert_recording_rules_last_evaluation_samples{group!="kube-scheduler.rules"}) without(id) < 1)
+                  or
+                  ((sum(vmalert_recording_rules_last_evaluation_samples{group="kube-scheduler.rules"}) without(id) < 1)
+                  unless on() (sum(rate(scheduler_scheduling_attempt_duration_seconds_count{job="apiserver"}[5m])) == 0))
+          groups:
+            kube-scheduler.rules:
+              enabled: true
+              labelRewrites:
+                job: { match: kube-scheduler, value: apiserver }
+            kubernetes-system-scheduler:
+              enabled: true
+              labelRewrites:
+                job: { match: kube-scheduler, value: apiserver }
+            kubernetes-system-controller-manager:
+              enabled: true
+              labelRewrites:
+                job: { match: kube-controller-manager, value: apiserver }
+        # Embedded etcd is not a pod. Enable the private listener with the k3s
+        # Ansible role BEFORE deploying these targets; never expose it publicly.
+        kubeEtcd:
+          endpoints: [10.50.0.11, 10.50.0.12, 10.50.0.13]
+          service:
+            port: 2381
+            targetPort: 2381
+          vmScrape:
+            spec:
+              endpoints:
+                - port: http-metrics
+                  scheme: http
         vmsingle:
           spec:
             retentionPeriod: 7d

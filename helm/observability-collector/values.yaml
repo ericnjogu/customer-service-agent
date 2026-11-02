@@ -17,6 +17,10 @@ exporters:
     enabled: false
     metricsEndpoint: ""
     logsEndpoint: ""
+  traces:
+    enabled: false
+    endpoint: ""
+    grafanaUrl: ""
 
 resources:
   requests:

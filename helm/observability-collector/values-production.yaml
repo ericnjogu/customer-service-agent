@@ -7,6 +7,10 @@ exporters:
     enabled: true
     metricsEndpoint: http://vmsingle-vm-victoria-metrics-k8s-stack.monitoring.svc:8428/opentelemetry
     logsEndpoint: http://loki-gateway.monitoring.svc/otlp
+  traces:
+    enabled: true
+    endpoint: http://tempo.monitoring.svc:4318
+    grafanaUrl: http://tempo.monitoring.svc:3200
 
 resources:
   requests: { cpu: 75m, memory: 128Mi }

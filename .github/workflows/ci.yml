@@ -58,6 +58,25 @@ jobs:
   onboarding-browser-qa:
     uses: ./.github/workflows/onboarding-browser-qa.yml
 
+  tracing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      AGENT_TRACE_CONTAINER_TESTS: "true"
+      AGENT_E2E_CONTAINER_RUNTIME: docker
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with: { python-version: "3.12" }
+      - uses: astral-sh/setup-uv@b75a909f75acd358c2196fb9a5f1299a9a8868a4 # v6
+        with: { enable-cache: true }
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+        with: { version: v3.18.6 }
+      - run: uv sync --locked
+      - run: helm lint helm/observability-collector -f helm/observability-collector/values-production.yaml
+      - name: Verify traces reach Tempo and survive restart
+        run: uv run pytest tests/test_trace_pipeline.py tests/test_collector_chart.py tests/test_observability.py tests/test_production_monitoring.py -q
+
   frontend:
     runs-on: ubuntu-latest
     defaults: { run: { working-directory: web } }

@@ -32,7 +32,8 @@ spec:
     topologyKey: kubernetes.io/hostname
     podAntiAffinityType: required
   monitoring:
-    enablePodMonitor: true
+    # The cluster uses VictoriaMetrics CRDs, not Prometheus PodMonitor CRDs.
+    enablePodMonitor: false
   {{- if .Values.backup.enabled }}
   plugins:
     - name: barman-cloud.cloudnative-pg.io

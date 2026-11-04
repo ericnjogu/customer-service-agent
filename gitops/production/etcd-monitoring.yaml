@@ -1,0 +1,17 @@
+# Native static discovery is managed by Argo, unlike Kubernetes Endpoints.
+# Keep job/namespace/service labels compatible with the upstream etcd rules.
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMStaticScrape
+metadata:
+  name: k3s-etcd
+  namespace: monitoring
+spec:
+  jobName: kube-etcd
+  targetEndpoints:
+    - targets: ["10.50.0.11:2381", "10.50.0.12:2381", "10.50.0.13:2381"]
+      scheme: http
+      path: /metrics
+      interval: 30s
+      labels:
+        namespace: kube-system
+        service: vm-victoria-metrics-k8s-stack-kube-etcd

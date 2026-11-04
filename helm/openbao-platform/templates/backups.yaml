@@ -1,0 +1,109 @@
+{{- if .Values.backups.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: openbao-backup }
+---
+{{- range .Values.backups.tiers }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: openbao-backup-{{ .name }}
+spec:
+  schedule: {{ .schedule | quote }}
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 600
+      template:
+        metadata:
+          labels: { app.kubernetes.io/component: openbao-backup }
+        spec:
+          serviceAccountName: openbao-backup
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile: { type: RuntimeDefault }
+          # Newly scheduled pods may precede network-policy rule propagation.
+          # Wait for verified TLS connectivity before attempting authentication.
+          initContainers:
+            - name: wait-for-vault
+              image: {{ $.Values.backups.image }}
+              command: [sh, -ec]
+              args:
+                - |
+                  attempt=0
+                  until bao status >/dev/null 2>&1; do
+                    attempt=$((attempt + 1))
+                    if [ "$attempt" -ge 60 ]; then
+                      echo "Vault not reachable and unsealed within 120 seconds" >&2
+                      exit 1
+                    fi
+                    sleep 2
+                  done
+              env:
+                - { name: BAO_ADDR, value: "https://openbao-active.openbao.svc:8200" }
+                - { name: BAO_CACERT, value: /openbao/tls/ca.crt }
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities: { drop: [ALL] }
+              resources:
+                requests: { cpu: 10m, memory: 32Mi }
+                limits: { cpu: 100m, memory: 64Mi }
+              volumeMounts:
+                - { name: ca, mountPath: /openbao/tls, readOnly: true }
+          containers:
+            - name: snapshot
+              image: {{ $.Values.backups.image }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities: { drop: [ALL] }
+              resources:
+                requests: { cpu: 50m, memory: 64Mi }
+                limits: { cpu: 500m, memory: 256Mi }
+              env:
+                - { name: BAO_ADDR, value: "https://openbao-active.openbao.svc:8200" }
+                - { name: BAO_CACERT, value: /openbao/tls/ca.crt }
+                - { name: BAO_ROLE, value: snapshot }
+                - { name: BAO_AUTH_PATH, value: kubernetes }
+                - { name: TOKEN_PATH, value: /var/run/secrets/openbao/token }
+                - { name: S3_HOST, value: {{ required "backups.endpoint is required" $.Values.backups.endpoint | quote }} }
+                - { name: S3_BUCKET, value: {{ $.Values.backups.bucket | quote }} }
+                - { name: S3_URI, value: {{ printf "s3://%s/%s/%s/" $.Values.backups.bucket $.Values.backups.prefix .name | quote }} }
+                - { name: S3_EXPIRE_DAYS, value: {{ .days | quote }} }
+                - { name: S3CMD_EXTRA_FLAG, value: "--ssl" }
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef: { name: {{ $.Values.backups.credentialsSecret }}, key: AWS_ACCESS_KEY_ID }
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef: { name: {{ $.Values.backups.credentialsSecret }}, key: AWS_SECRET_ACCESS_KEY }
+              volumeMounts:
+                - { name: auth, mountPath: /var/run/secrets/openbao, readOnly: true }
+                - { name: ca, mountPath: /openbao/tls, readOnly: true }
+                - { name: snapshots, mountPath: /bao-snapshots }
+          volumes:
+            - name: auth
+              projected:
+                sources:
+                  - serviceAccountToken:
+                      path: token
+                      audience: openbao
+                      expirationSeconds: 600
+            - name: snapshots
+              emptyDir: { sizeLimit: 1Gi }
+            - name: ca
+              secret:
+                secretName: openbao-tls
+                items: [{ key: ca.crt, path: ca.crt }]
+---
+{{- end }}
+{{- end }}

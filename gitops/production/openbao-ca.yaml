@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openbao-ca
+  namespace: customer-service-production
+# Public CA only. Refresh after a deliberate OpenBao CA rotation; never include tls.key.
+data:
+  ca.crt: |
+    -----BEGIN CERTIFICATE-----
+    MIIBgDCCASagAwIBAgIUfJTwgnBUWjEDUkQWEDrwotCue4IwCgYIKoZIzj0EAwIw
+    HjEcMBoGA1UEAxMTb3BlbmJhby1pbnRlcm5hbC1jYTAeFw0yNjEwMDMxMjI3NTVa
+    Fw0zNjA5MzAxMjI3NTVaMB4xHDAaBgNVBAMTE29wZW5iYW8taW50ZXJuYWwtY2Ew
+    WTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASuC1ogvz82sDUbEVDQFuPJ3H4+Eb9A
+    +OFKtiCVmJI9AvJy149SR2593G5IdgXRAqiV9LKNJeR4tk1wdmBgIfGso0IwQDAO
+    BgNVHQ8BAf8EBAMCAqQwDwYDVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQULJZ+RrVc
+    Jbebiz9CbgTgQSgAclAwCgYIKoZIzj0EAwIDSAAwRQIhAPD6kVDitVnEo6U4ad+U
+    IWXZtFqlXJ+Bip6xuPdSWe8GAiBBOXq0eA4ycX/UkQHiZXxdEipT00edJ/3Gvv9d
+    8smfIg==
+    -----END CERTIFICATE-----

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: observability-collector
+description: Filtered OpenTelemetry logs, infrastructure metrics, and traces
+type: application
+version: 0.1.0
+appVersion: "0.160.0"

@@ -1,0 +1,37 @@
+# Used only by bootstrap-local-openbao.py on the rancher-desktop context.
+# No production keys, peers, networking, backup credentials or monitoring CRDs.
+security: { enabled: false }
+monitoring: { enabled: false }
+backups: { enabled: false }
+openbao:
+  server:
+    updateStrategyType: RollingUpdate
+    affinity: ""
+    dataStorage:
+      size: 1Gi
+      storageClass: local-path
+    ha:
+      replicas: 1
+      apiAddr: https://openbao-local-active.openbao-local.svc:8200
+      disruptionBudget: { enabled: false }
+      raft:
+        config: |
+          ui = false
+          disable_mlock = true
+          listener "tcp" {
+            address = "[::]:8200"
+            cluster_address = "[::]:8201"
+            tls_cert_file = "/openbao/tls/tls.crt"
+            tls_key_file = "/openbao/tls/tls.key"
+          }
+          storage "raft" {
+            path = "/openbao/data"
+          }
+          seal "static" {
+            current_key_id = "local-1"
+            current_key = "file:///openbao/seal/key"
+          }
+          service_registration "kubernetes" {}
+          audit "file" "to-stdout" {
+            options { file_path = "stdout" }
+          }

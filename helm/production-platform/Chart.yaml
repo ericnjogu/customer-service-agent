@@ -1,0 +1,6 @@
+apiVersion: v2
+name: production-platform
+description: Production data services and policies for the one.com k3s cluster
+type: application
+version: 0.1.0
+appVersion: "1.0"

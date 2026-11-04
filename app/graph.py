@@ -20,6 +20,7 @@ from app.models import (
     StoredMessage,
     TenantConfig,
 )
+from app.observability import traced_operation
 from app.ports import (
     AnswerGenerator,
     ConversationRepository,
@@ -91,6 +92,7 @@ def build_service_graph(
         tenant_config = await tenant_configs.get(state["conversation"].tenant_id)
         return {"tenant_config": tenant_config}
 
+    @traced_operation("conversation.plan")
     async def plan_question(state: ServiceState) -> dict:
         history = (
             await issues.repository.history(
@@ -164,6 +166,7 @@ def build_service_graph(
             )
         return {"conversation_metadata": metadata}
 
+    @traced_operation("conversation.retrieve")
     async def retrieve(state: ServiceState) -> dict:
         websites = await tenant_website_urls(state["message"].tenant_id)
         tenant_config = state.get("tenant_config")
@@ -200,6 +203,7 @@ def build_service_graph(
             "conversation_metadata": metadata,
         }
 
+    @traced_operation("conversation.answer")
     async def answer(state: ServiceState) -> dict:
         if state["question_plan"].explicit_human_request:
             return {
@@ -239,6 +243,7 @@ def build_service_graph(
             "low_confidence": should_search_tenant_website(answer_result),
         }
 
+    @traced_operation("conversation.website_search")
     async def search_tenant_website(state: ServiceState) -> dict:
         websites = state.get("tenant_websites", [])
         if (
@@ -439,6 +444,7 @@ def build_service_graph(
             else "reply"
         )
 
+    @traced_operation("conversation.persist_reply")
     async def persist_reply(state: ServiceState) -> dict:
         conversation = state["conversation"]
         answer_text = state["answer"]
@@ -597,6 +603,7 @@ def customer_first_name(sender_name: str | None) -> str | None:
     return parts[0] if parts else None
 
 
+@traced_operation("conversation.process")
 async def invoke_service_graph(
     graph,
     message: IncomingMessage,

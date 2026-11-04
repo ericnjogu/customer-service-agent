@@ -1,4 +1,5 @@
 import logging
+from functools import wraps
 
 from fastapi import FastAPI
 from opentelemetry import trace
@@ -10,11 +11,65 @@ from opentelemetry.instrumentation.redis import RedisInstrumentor
 from opentelemetry.sdk.resources import DEPLOYMENT_ENVIRONMENT, SERVICE_NAME, Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
+from opentelemetry.sdk.trace.sampling import (
+    Decision,
+    ParentBased,
+    SamplingResult,
+    TraceIdRatioBased,
+)
 
 from app.config import Settings
 
 _log_record_factory_installed = False
+
+
+class OperationRootSampler(TraceIdRatioBased):
+    """Don't turn unparented database maintenance/polls into independent traces.
+
+    Used only as ParentBased's root delegate: DB spans inside sampled operations
+    still follow their parent. Missing context is never inferred from SQL text.
+    """
+
+    def should_sample(
+        self,
+        parent_context,
+        trace_id,
+        name,
+        kind=None,
+        attributes=None,
+        links=None,
+        trace_state=None,
+    ):
+        if (
+            kind == trace.SpanKind.CLIENT
+            and attributes
+            and (attributes.get("db.system") or attributes.get("db.system.name"))
+        ):
+            return SamplingResult(Decision.DROP)
+        return super().should_sample(
+            parent_context, trace_id, name, kind, attributes, links, trace_state
+        )
+
+
+def traced_operation(name: str):
+    """Async business span with a fixed name, no arguments/results or error text."""
+
+    def decorate(fn):
+        @wraps(fn)
+        async def wrapped(*args, **kwargs):
+            with trace.get_tracer("app.operations").start_as_current_span(
+                name, record_exception=False, set_status_on_exception=False
+            ) as span:
+                try:
+                    return await fn(*args, **kwargs)
+                except Exception as exc:
+                    span.set_attribute("error.type", type(exc).__name__)
+                    span.set_status(trace.StatusCode.ERROR)
+                    raise
+
+        return wrapped
+
+    return decorate
 
 
 def configure_tracing(app: FastAPI, settings: Settings) -> TracerProvider | None:
@@ -28,7 +83,7 @@ def configure_tracing(app: FastAPI, settings: Settings) -> TracerProvider | None
                 DEPLOYMENT_ENVIRONMENT: settings.deployment_environment,
             }
         ),
-        sampler=ParentBased(TraceIdRatioBased(settings.otel_trace_sample_ratio)),
+        sampler=ParentBased(OperationRootSampler(settings.otel_trace_sample_ratio)),
     )
     endpoint = f"{settings.otel_exporter_otlp_endpoint.rstrip('/')}/v1/traces"
     provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint)))

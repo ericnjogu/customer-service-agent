@@ -223,6 +223,8 @@ telemetry:
   serviceName: customer-service-agent
   environment: local
   traceSampleRatio: "1.0"
+  # NGINX's official module exports OTLP/gRPC, unlike the Python HTTP exporter.
+  webEndpoint: otel-collector.amazon-cloudwatch:4317
 
 prompts:
   enabled: false

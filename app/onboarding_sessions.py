@@ -31,6 +31,7 @@ from app.models import (
     OnboardingTelegramSetupRequest,
 )
 from app.notifications import EmailSender
+from app.observability import traced_operation
 from app.onboarding_jobs import OnboardingJobService
 from app.ports import (
     OnboardingRepository,
@@ -184,6 +185,7 @@ class OnboardingSessionService:
                 raise OnboardingValidationError("Business summary / FAQ is required.")
         return await self.onboarding.update_session(session_id, update)
 
+    @traced_operation("onboarding.analyze_website")
     async def analyze_website(
         self,
         session_id: UUID,
@@ -591,6 +593,7 @@ class OnboardingSessionService:
             provider_projects,
         )
 
+    @traced_operation("onboarding.submit")
     async def submit_session(self, session_id: UUID) -> OnboardingSessionSubmission:
         session = await self._require_session(session_id)
         if not session.username_email_verified or not website_requirement_satisfied(session):

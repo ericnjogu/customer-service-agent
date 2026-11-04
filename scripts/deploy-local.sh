@@ -163,6 +163,7 @@ helm_args=(
   --set "issueProcessing.enabled=${AGENT_ISSUE_PROCESSING_ENABLED:-true}"
   --set "telemetry.enabled=${OTEL_ENABLED}"
   --set "telemetry.endpoint=http://otel-collector.${NAMESPACE}:4318"
+  --set "telemetry.webEndpoint=otel-collector.${NAMESPACE}:4317"
   --set "telemetry.environment=local"
   --set "prompts.enabled=true"
   --set-file "prompts.system=${SYSTEM_PROMPT_PATH}"

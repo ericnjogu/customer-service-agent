@@ -158,13 +158,36 @@ completed job, not a substitute for a restore drill or backup monitoring.
 
 ### Grafana traces
 
-Production tracing follows: FastAPI/OpenTelemetry → OTLP HTTP collector → Tempo →
+Production tracing follows: NGINX web proxy → FastAPI → business operations →
+database/outbound calls → OpenTelemetry collector → Tempo →
 Grafana's **Tempo** datasource. LangSmith is independent; enabling LangSmith does
 not enable or populate Grafana traces. Application tracing is enabled in
 `helm/customer-service/values-production.yaml` at a 10% root sampling ratio.
 Sampled W3C parent contexts are respected. Health and OAuth callback routes remain
-excluded. The collector strips full URLs/paths/query strings, SQL statements,
+excluded. NGINX exports on the private OTLP/gRPC port configured by
+`telemetry.webEndpoint`; Python continues using OTLP/HTTP `telemetry.endpoint`.
+Both use `telemetry.enabled` and `telemetry.traceSampleRatio`. The proxy passes
+sampling decisions downstream, including an explicit unsampled parent. Changing
+the rendered proxy configuration changes its pod checksum and triggers a rollout.
+The web image pins the official NGINX **1.30.6 Alpine OTel** image by digest. The
+[official image catalog](https://github.com/docker-library/official-images/blob/master/library/nginx)
+and [NGINX security advisories](https://nginx.org/en/security_advisories.html) were
+checked on 2 November 2026; recheck these and image package advisories on upgrades.
+
+Business spans include `conversation.process`, planning, retrieval, answer
+generation, website search and reply persistence; onboarding analysis/submission
+and media archival are also traced. Existing issue/provisioning spans remain.
+These fixed-name spans do not capture function arguments, results, prompts or
+customer messages. Browser JavaScript/RUM and cross-job trace linking are not
+included; background jobs may have their own operation-root traces.
+Unparented database spans (including routine queue polling) are not sampled.
+Database calls inside sampled requests or background operations are retained.
+Use existing logs/metrics to investigate standalone database failures; they no
+longer create their own traces. This is head sampling, not error-based tail sampling.
+
+The collector strips full URLs/paths/query strings, SQL statements/parameters,
 credential-named attributes, and exception messages/stack traces before export.
+It also removes client addresses/user-agent attributes and span status messages.
 Retained timings, errors/status codes and tenant identifiers are operator data;
 keep Grafana access restricted. This filter is not a general PII detector: review
 new custom span attributes before sending them.
@@ -193,8 +216,9 @@ to be ready and the application rollout to complete, then run:
 KUBECONFIG=/private/tmp/production-kubeconfig-16443 bash scripts/check-production-traces.sh
 ```
 
-This sends a harmless sampled config GET and verifies its exact trace ID is in
-Tempo. In Grafana **Explore → Tempo**, look up that ID; ordinary requests are
+This sends a harmless sampled config GET and verifies its exact trace ID contains
+connected `web.api` and FastAPI server spans in Tempo. Run it after both web and
+application images are upgraded. In Grafana **Explore → Tempo**, look up that ID; ordinary requests are
 sampled, so a short quiet time range can legitimately be empty. Initial scope is
 trace search/inspection, not service graphs or span-derived metrics dashboards.
 
@@ -205,10 +229,13 @@ AGENT_TRACE_CONTAINER_TESTS=true AGENT_E2E_CONTAINER_RUNTIME=nerdctl \
   uv run pytest tests/test_trace_pipeline.py -q
 ```
 
-The test uses the rendered production Tempo configuration and real collector
-privacy/export processors, creates an instrumented FastAPI request, checks the
-trace and redaction, restarts Tempo, and verifies the trace still exists. It removes
-only its uniquely named containers/network/volume. Kubernetes enrichment and
+The test uses the rendered production Tempo and web configurations and real
+collector privacy/export processors. It checks an NGINX → FastAPI → operation →
+PostgreSQL trace, parent IDs, unsampled context propagation, privacy filtering,
+request success during collector outage, and persisted traces after a Tempo restart.
+It removes only its uniquely named containers/network/volume and test image.
+In Grafana Explore, use `{ span:kind = server }` to find HTTP request traces.
+Kubernetes enrichment and
 NetworkPolicy enforcement require the post-deployment check. The CI `tracing` job
 runs this test with Docker on every PR; local success does not prove CI or live
 deployment success.

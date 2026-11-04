@@ -1,4 +1,4 @@
-{{- if .Values.web.enabled }}
+{{- define "customer-service.web-configmap" -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -7,20 +7,65 @@ metadata:
     {{- include "customer-service.labels" . | nindent 4 }}
 data:
   default.conf: |
+    {{- if .Values.telemetry.enabled }}
+    otel_exporter {
+        endpoint {{ required "telemetry.webEndpoint is required when tracing is enabled" .Values.telemetry.webEndpoint }};
+        interval 5s;
+        batch_size 128;
+        batch_count 4;
+    }
+    otel_service_name {{ include "customer-service.fullname" . }}-web;
+    otel_resource_attr deployment.environment {{ .Values.telemetry.environment | quote }};
+    {{- $ratio := float64 .Values.telemetry.traceSampleRatio }}
+    {{- if or (lt $ratio 0.0) (gt $ratio 1.0) }}
+    {{- fail "telemetry.traceSampleRatio must be between 0 and 1" }}
+    {{- end }}
+    {{- if and (gt $ratio 0.0) (lt $ratio 1.0) }}
+    split_clients "$otel_trace_id" $web_ratio_sampled {
+        {{ mulf $ratio 100 }}% on;
+        * off;
+    }
+    {{- else }}
+    map $host $web_ratio_sampled { default {{ ternary "on" "off" (eq $ratio 1.0) }}; }
+    {{- end }}
+    map $otel_parent_sampled $web_parent_sampled {
+        "1" on;
+        "0" off;
+        default off;
+    }
+    # The module reports parent_sampled=0 even when there is NO parent.
+    # Its validated parent ID is empty in that case; sample a new root normally.
+    map $otel_parent_id $web_sampled {
+        "" $web_ratio_sampled;
+        default $web_parent_sampled;
+    }
+    {{- end }}
     server {
         listen 80;
         server_name _;
 
         root /usr/share/nginx/html;
         index index.html;
+        {{- if .Values.telemetry.enabled }}
+        otel_trace $web_sampled;
+        otel_trace_context propagate;
+        # Never name spans using a raw URI, query string, phone or session ID.
+        otel_span_name "web.page";
+        {{- end }}
 
         location = /healthz {
+            {{- if .Values.telemetry.enabled }}
+            otel_trace off;
+            {{- end }}
             access_log off;
             default_type text/plain;
             return 200 "ok\n";
         }
 
         location /api/ {
+            {{- if .Values.telemetry.enabled }}
+            otel_span_name "web.api";
+            {{- end }}
             proxy_pass http://{{ include "customer-service.fullname" . }}-app:{{ .Values.service.port }}/;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
@@ -31,6 +76,10 @@ data:
 
         # OAuth codes must not enter access logs.
         location = /api/onboarding/whatsapp/callback {
+            {{- if .Values.telemetry.enabled }}
+            otel_trace off;
+            otel_trace_context ignore;
+            {{- end }}
             access_log off;
             proxy_pass http://{{ include "customer-service.fullname" . }}-app:{{ .Values.service.port }}/onboarding/whatsapp/callback;
             proxy_set_header Host $host;
@@ -38,6 +87,10 @@ data:
         }
 
         location = /api/onboarding/drive/callback {
+            {{- if .Values.telemetry.enabled }}
+            otel_trace off;
+            otel_trace_context ignore;
+            {{- end }}
             access_log off;
             proxy_pass http://{{ include "customer-service.fullname" . }}-app:{{ .Values.service.port }}/onboarding/drive/callback;
             proxy_set_header Host $host;
@@ -48,6 +101,9 @@ data:
             try_files $uri $uri/ /index.html;
         }
     }
+{{- end }}
+{{- if .Values.web.enabled }}
+{{ include "customer-service.web-configmap" . }}
 ---
 apiVersion: v1
 kind: Service
@@ -85,6 +141,8 @@ spec:
       app.kubernetes.io/instance: {{ .Release.Name }}
   template:
     metadata:
+      annotations:
+        checksum/nginx: {{ include "customer-service.web-configmap" . | sha256sum }}
       labels:
         app.kubernetes.io/component: web
         app.kubernetes.io/instance: {{ .Release.Name }}

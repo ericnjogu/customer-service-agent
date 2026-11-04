@@ -617,10 +617,12 @@ async def test_scope_foreign_key_closed_history_and_uninspected_messages(reposit
     )
     assert len(await repo.history(conversation, 10)) == 0
     # Existing generic history remains unchanged when the feature is disabled.
+    # Messages use the application clock; conversation creation uses PostgreSQL's
+    # clock, which may differ in a container/VM. Test filtering, not clock sync.
     assert (
         len(
             await PostgresConversationRepository(repo.database).list_messages_since(
-                conversation.id, conversation.created_at, 10
+                conversation.id, min(message.created_at for message in history), 10
             )
         )
         == 2

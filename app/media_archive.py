@@ -22,6 +22,7 @@ from pgqueuer import (
 
 from app.adapters.google_drive import ArchiveError
 from app.adapters.secret_transport import secret_transport
+from app.observability import traced_operation
 from app.whatsapp_signup import capability_hash
 
 ENTRYPOINT = "whatsapp_media_archive"
@@ -368,6 +369,7 @@ class MediaArchive:
         async with self.transfer_slots:
             await self._process(job)
 
+    @traced_operation("media.archive")
     async def _process(self, job):
         attachment_id = UUID(json.loads(job.payload)["id"])
         async with self.pool.acquire() as sql:

@@ -161,6 +161,12 @@ data:
               - delete_key(attributes, "url.query")
               - delete_key(attributes, "db.statement")
               - delete_key(attributes, "db.query.text")
+              - delete_key(attributes, "db.statement.parameters")
+              - delete_key(attributes, "http.user_agent")
+              - delete_key(attributes, "user_agent.original")
+              - delete_key(attributes, "net.sock.peer.addr")
+              - delete_key(attributes, "client.address")
+              - set(status.message, "")
               - delete_matching_keys(attributes, "(?i).*authorization.*|.*cookie.*|.*token.*|.*password.*|.*secret.*")
           - context: spanevent
             statements:

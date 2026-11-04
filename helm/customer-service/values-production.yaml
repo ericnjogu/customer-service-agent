@@ -84,6 +84,7 @@ telemetry:
   serviceName: customer-service-agent
   environment: production
   traceSampleRatio: "0.1"
+  webEndpoint: otel-collector.monitoring.svc:4317
 
 resources:
   requests: { cpu: 150m, memory: 384Mi }

@@ -32,6 +32,7 @@ class WhatsAppSignupService:
         meta: MetaSignupClient,
         *,
         mode: str = "coexistence",
+        attempt_ttl_minutes: int = 30,
     ):
         self.repository = repository
         self.credentials = credentials
@@ -39,6 +40,9 @@ class WhatsAppSignupService:
         if mode not in {"coexistence", "cloud_api"}:
             raise ValueError("Invalid WhatsApp onboarding mode")
         self.mode = mode
+        if not 1 <= attempt_ttl_minutes <= 120:
+            raise ValueError("WhatsApp signup timeout must be between 1 and 120 minutes")
+        self.attempt_ttl_minutes = attempt_ttl_minutes
 
     def validate_asset_mode(self, asset):
         if self.mode == "coexistence" and not asset.is_on_biz_app:
@@ -123,11 +127,13 @@ class WhatsAppSignupService:
             row = await connection.fetchrow(
                 "INSERT INTO whatsapp_signup_attempts "
                 "(session_id,browser_hash,state_hash,expires_at,redirect_uri) "
-                "VALUES($1,$2,$3,now()+interval '10 minutes',$4) RETURNING attempt_id,expires_at",
+                "VALUES($1,$2,$3,now()+$5 * interval '1 minute',$4) "
+                "RETURNING attempt_id,expires_at",
                 session_id,
                 capability_hash(browser),
                 capability_hash(state),
                 redirect_uri,
+                self.attempt_ttl_minutes,
             )
         return {"attempt_id": row["attempt_id"], "state": state, "expires_at": row["expires_at"]}
 
@@ -283,12 +289,13 @@ class WhatsAppSignupService:
                     registration_pin=registration_pin,
                 ),
             )
-            if not existing or not existing.subscribed_at:
-                await self.meta.subscribe(token, asset.waba_id)
-                await sql.execute(
-                    "UPDATE whatsapp_connections SET subscribed_at=now() WHERE connection_id=$1",
-                    connection_id,
-                )
+            # Reassert the environment-specific callback on retries as well.
+            # subscribed_at alone cannot prove the current URL is registered.
+            await self.meta.subscribe(token, asset.waba_id)
+            await sql.execute(
+                "UPDATE whatsapp_connections SET subscribed_at=now() WHERE connection_id=$1",
+                connection_id,
+            )
             if not existing or not existing.registered_at:
                 # Both modes require an already registered number.
                 # Never reset its PIN or call /register here.

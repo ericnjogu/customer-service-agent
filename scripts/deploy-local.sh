@@ -146,6 +146,7 @@ helm_args=(
   --set "onboarding.requireAdminEmailDomainMatch=${AGENT_ONBOARDING_REQUIRE_ADMIN_EMAIL_DOMAIN_MATCH}"
   --set "onboarding.whatsappEnabled=${AGENT_ONBOARDING_WHATSAPP_ENABLED}"
   --set-string "onboarding.whatsappMode=${AGENT_ONBOARDING_WHATSAPP_MODE:-coexistence}"
+  --set "onboarding.whatsappAttemptTtlMinutes=${AGENT_ONBOARDING_WHATSAPP_ATTEMPT_TTL_MINUTES:-30}"
   --set "onboarding.telegramEnabled=${AGENT_ONBOARDING_TELEGRAM_ENABLED}"
   --set "onboarding.turnstileEnabled=${AGENT_ONBOARDING_TURNSTILE_ENABLED}"
   --set "openbao.enabled=${AGENT_ONBOARDING_WHATSAPP_ENABLED}"

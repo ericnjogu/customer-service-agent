@@ -9,6 +9,7 @@ import httpx
 from app.adapters.secret_transport import secret_transport
 from app.models import IncomingMessage, ServiceReply
 from app.ports import TenantConfigRepository
+from app.whatsapp_identity import is_bsuid, message_identity, whatsapp_identity
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,8 @@ class WhatsAppCloudClient:
             await self._send_message(to, text)
 
     async def _send_message(self, to: str, text: str) -> None:
+        if whatsapp_identity(to) is None:
+            raise ValueError("Invalid WhatsApp recipient identifier")
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
                 (
@@ -77,7 +80,7 @@ class WhatsAppCloudClient:
                 headers={"Authorization": f"Bearer {self.access_token}"},
                 json={
                     "messaging_product": "whatsapp",
-                    "to": to,
+                    ("recipient" if is_bsuid(to) else "to"): to,
                     "type": "text",
                     "text": {"body": text},
                 },
@@ -250,9 +253,10 @@ def whatsapp_message_to_incoming_message(
     if not isinstance(message, dict):
         return None
 
-    from_id = message.get("from")
+    from_id = message_identity(message, "from")
     message_id = message.get("id")
     if from_id is None or message_id is None:
+        logger.warning("Skipping WhatsApp message: missing or invalid sender/message identity")
         return None
 
     text = message.get("text")
@@ -283,14 +287,15 @@ def whatsapp_contact_names_by_id(value: dict) -> dict[str, str]:
         if not isinstance(contact, dict):
             continue
 
-        wa_id = contact.get("wa_id")
         profile = contact.get("profile")
-        if wa_id is None or not isinstance(profile, dict):
+        if not isinstance(profile, dict):
             continue
 
         name = profile.get("name")
         if isinstance(name, str) and name.strip():
-            names[str(wa_id)] = name.strip()
+            for key in ("wa_id", "user_id", "parent_user_id"):
+                if identity := whatsapp_identity(contact.get(key)):
+                    names[identity] = name.strip()
 
     return names
 

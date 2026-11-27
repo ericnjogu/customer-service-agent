@@ -2,6 +2,7 @@
 
 import hashlib
 import hmac
+import logging
 import re
 from dataclasses import dataclass
 from time import time
@@ -10,6 +11,8 @@ import httpx
 from pydantic import SecretStr
 
 from app.adapters.secret_transport import secret_transport
+
+logger = logging.getLogger(__name__)
 
 
 class MetaSignupError(RuntimeError):
@@ -34,7 +37,8 @@ def verify_meta_signature(body: bytes, signature: str | None, app_secret: str) -
 
 class MetaSignupClient:
     def __init__(
-        self, client: httpx.AsyncClient, *, app_id: str, app_secret: SecretStr, version: str
+        self, client: httpx.AsyncClient, *, app_id: str, app_secret: SecretStr, version: str,
+        webhook_url: str | None = None, webhook_verify_token: SecretStr | None = None,
     ):
         if not re.fullmatch(r"v\d+\.0", version):
             raise ValueError("A pinned Meta Graph API version is required")
@@ -42,19 +46,49 @@ class MetaSignupClient:
         self.app_id = app_id
         self.app_secret = app_secret
         self.version = version
+        self.webhook_url = webhook_url
+        self.webhook_verify_token = webhook_verify_token
 
     async def _request(self, method: str, path: str, **kwargs) -> dict:
         # Do not log request/response payloads or HTTP exceptions; OAuth/debug APIs
         # contain secrets. HTTP client tracing must exclude this client's endpoint.
+        operation = {
+            "oauth/access_token": "code_exchange",
+            "debug_token": "token_validation",
+            "phone_numbers": "phone_lookup",
+            "subscribed_apps": "subscription",
+            "register": "registration",
+            "smb_app_data": "history_request",
+        }.get(path if path == "oauth/access_token" else path.rsplit("/", 1)[-1],
+              "asset_lookup")
+        response = None
+        result = None
         try:
             with secret_transport():
                 response = await self.client.request(method, f"/{self.version}/{path}", **kwargs)
-            response.raise_for_status()
             result = response.json()
+            response.raise_for_status()
             if not isinstance(result, dict) or "error" in result:
                 raise ValueError("Invalid Graph response")
             return result
         except (httpx.HTTPError, ValueError):
+            error = result.get("error") if isinstance(result, dict) else None
+            error = error if isinstance(error, dict) else {}
+            code = error.get("code")
+            subcode = error.get("error_subcode")
+            trace = error.get("fbtrace_id")
+            # Never log provider messages, exception text, URLs, headers or payloads.
+            # Even error responses can echo authorization codes and credentials.
+            logger.warning(
+                "WhatsApp Meta request failed operation=%s http_status=%s "
+                "meta_code=%s meta_subcode=%s meta_trace_id=%s",
+                operation,
+                response.status_code if response is not None else None,
+                code if type(code) is int else None,
+                subcode if type(subcode) is int else None,
+                trace if isinstance(trace, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", trace)
+                else None,
+            )
             raise MetaSignupError("meta_request_failed") from None
 
     async def exchange(self, code: SecretStr, *, redirect_uri: str | None = None) -> SecretStr:
@@ -192,7 +226,13 @@ class MetaSignupClient:
                 if not isinstance(phone, dict):
                     continue
                 if str(phone.get("id")) == phone_number_id:
-                    if phone.get("code_verification_status") != "VERIFIED":
+                    # Meta's coexistence status check confirms registration with
+                    # these two fields, not the separate SMS/voice verification status.
+                    coexistence = (
+                        phone.get("is_on_biz_app") is True
+                        and phone.get("platform_type") == "CLOUD_API"
+                    )
+                    if not coexistence and phone.get("code_verification_status") != "VERIFIED":
                         raise MetaSignupError("meta_phone_not_verified")
                     display = phone.get("display_phone_number")
                     if not isinstance(display, str) or not display:
@@ -201,8 +241,7 @@ class MetaSignupClient:
                         waba_id,
                         phone_number_id,
                         display,
-                        phone.get("is_on_biz_app") is True
-                        and phone.get("platform_type") == "CLOUD_API",
+                        coexistence,
                         str(phone.get("platform_type", "NOT_APPLICABLE")),
                     )
             paging = phones.get("paging", {})
@@ -219,11 +258,19 @@ class MetaSignupClient:
     async def subscribe(self, token: SecretStr, waba_id: str) -> None:
         if not re.fullmatch(r"[0-9]+", waba_id):
             raise MetaSignupError("meta_asset_invalid")
+        if not self.webhook_url or not self.webhook_verify_token:
+            # An empty subscription body removes overrides and routes to the
+            # shared app default, which may belong to a different environment.
+            raise MetaSignupError("meta_webhook_not_configured")
         result = await self._request(
             "POST",
             f"{waba_id}/subscribed_apps",
             headers={
                 "Authorization": f"Bearer {token.get_secret_value()}",
+            },
+            json={
+                "override_callback_uri": self.webhook_url,
+                "verify_token": self.webhook_verify_token.get_secret_value(),
             },
         )
         if result.get("success") is not True:

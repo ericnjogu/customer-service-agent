@@ -1,8 +1,9 @@
 """Coexistence events are archival input, never prompts for automatic replies."""
 
-import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
+
+from app.whatsapp_identity import message_identities, message_identity, whatsapp_identity
 
 
 @dataclass(frozen=True)
@@ -22,7 +23,7 @@ def imported_messages(value: dict, *, history: bool, incoming: bool = False):
         if not isinstance(batches, list):
             return
         groups = (
-            (str(thread.get("id", "")), thread.get("messages", []))
+            (thread, thread.get("messages", []))
             for batch in batches
             if isinstance(batch, dict)
             if isinstance(batch.get("threads"), list)
@@ -31,18 +32,30 @@ def imported_messages(value: dict, *, history: bool, incoming: bool = False):
         )
     else:
         groups = [(None, value.get("messages" if incoming else "message_echoes", []))]
-    for thread_id, messages in groups:
+    for thread, messages in groups:
         if not isinstance(messages, list):
             continue
         for message in messages:
             if not isinstance(message, dict):
                 continue
-            chat = thread_id if history else str(message.get("from" if incoming else "to", ""))
-            if not chat or not re.fullmatch(r"\d{1,32}", chat):
+            aliases = set()
+            if history:
+                context = thread.get("context")
+                context = context if isinstance(context, dict) else {}
+                identities = [
+                    thread.get("id"),
+                    *(context.get(k) for k in ("wa_id", "user_id", "parent_user_id")),
+                ]
+                chat = whatsapp_identity(*identities)
+                aliases = {i for value in identities if (i := whatsapp_identity(value))}
+            else:
+                chat = message_identity(message, "from" if incoming else "to")
+            if not chat:
                 continue
-            sender = str(message.get("from", ""))
-            outbound = not incoming and (not history or sender != chat)
-            if history and outbound and str(message.get("to", "")) != chat:
+            outbound = not incoming and (
+                not history or not aliases.intersection(message_identities(message, "from"))
+            )
+            if history and outbound and not aliases.intersection(message_identities(message, "to")):
                 continue
             message_id = message.get("id")
             if not isinstance(message_id, str) or not message_id or len(message_id) > 500:

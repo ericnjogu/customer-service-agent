@@ -26,7 +26,8 @@ async function prepare(page, mode = "finish", importMode = null) {
   } });
   await stub("GET", "/v25.0/456", { id: "456" });
   await stub("GET", "/v25.0/456/phone_numbers", { data: [{ id: phone,
-    display_phone_number: "+254700000001", code_verification_status: "VERIFIED",
+    // Coexistence registration is confirmed by the two flags below, not SMS verification.
+    display_phone_number: "+254700000001", code_verification_status: "PENDING",
     is_on_biz_app: true, platform_type: "CLOUD_API" }] });
   await stub("POST", "/v25.0/456/subscribed_apps", { success: true });
   await stub("POST", `/v25.0/${phone}/smb_app_data`, { success: true });
@@ -163,6 +164,12 @@ test("mobile-sized redirect returns to onboarding without an opener or SDK", asy
   const exchanges = (await journal()).filter(({ request }) => request.url === "/v25.0/oauth/access_token");
   expect(exchanges).toHaveLength(1);
   expect(new URLSearchParams(exchanges[0].request.body).get("redirect_uri")).toMatch(/\/api\/onboarding\/whatsapp\/callback$/);
+  const subscriptions = (await journal()).filter(({ request }) => request.url === "/v25.0/456/subscribed_apps");
+  expect(subscriptions).toHaveLength(1);
+  expect(JSON.parse(subscriptions[0].request.body)).toEqual({
+    override_callback_uri: `${process.env.AGENT_E2E_WEB_URL}/api/webhooks/whatsapp`,
+    verify_token: "test-webhook-token",
+  });
 });
 
 test("redirect return without the verified browser cookie cannot exchange a code", async ({ page }) => {

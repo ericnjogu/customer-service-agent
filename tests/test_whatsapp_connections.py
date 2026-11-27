@@ -292,7 +292,7 @@ async def setup(repo, *, import_history=True):
     return service, session, browser, meta
 
 
-async def test_redirect_browser_binding_replay_and_callback(connections, monkeypatch):
+async def test_redirect_browser_binding_replay_and_callback(connections, monkeypatch, caplog):
     from unittest.mock import AsyncMock
     from urllib.parse import parse_qs, urlsplit
 
@@ -337,6 +337,12 @@ async def test_redirect_browser_binding_replay_and_callback(connections, monkeyp
         attempt_id = await connections.pool.fetchval(
             "SELECT attempt_id FROM whatsapp_signup_attempts WHERE session_id=$1", session
         )
+        # A real signup can exceed the former ten-minute window. Both callback
+        # and completion must still work, without relaxing browser/replay checks.
+        await connections.pool.execute(
+            "UPDATE whatsapp_signup_attempts SET created_at=created_at-interval '15 minutes', "
+            "expires_at=expires_at-interval '15 minutes' WHERE attempt_id=$1", attempt_id
+        )
         client.cookies.clear()
         callback = await client.get(
             "/onboarding/whatsapp/callback",
@@ -363,6 +369,12 @@ async def test_redirect_browser_binding_replay_and_callback(connections, monkeyp
         assert result.json()["status"] == "connected"
         meta.exchange.assert_awaited_once_with(SecretStr("test-code"), redirect_uri=uri)
         assert (await client.post(base + "/complete", json=payload)).status_code == 409
+        assert (
+            "WhatsApp redirect completion failed error_code=signup_attempt_invalid_or_used"
+            in caplog.text
+        )
+        for secret in (browser, state, "test-code"):
+            assert secret not in caplog.text
         assert (
             await client.get("/onboarding/whatsapp/callback", params={"state": state})
         ).status_code == 400
@@ -517,7 +529,8 @@ async def test_partial_retry_preserves_progress_without_registration_pin(connect
     after = await complete(service, session, browser)
     assert after.connection_id == before.connection_id
     assert (await service.credentials.read(after.connection_id)).registration_pin is None
-    assert meta.subscriptions == meta.registrations == 1
+    assert meta.subscriptions == 2  # Retry reasserts the current webhook destination.
+    assert meta.registrations == 1
 
 
 async def test_same_waba_multiple_numbers_but_unique_phone(connections):
@@ -539,7 +552,13 @@ async def test_duplicate_webhook_claim_is_atomic_and_inactive_is_not_replayed(co
     assert not await connections.claim_message("456", "789", "inactive", active=True)
 
 
-async def test_history_before_activation_and_echo_pause_are_idempotent(connections):
+@pytest.mark.parametrize("customer,from_key,to_key", [
+    ("254700000001", "from", "to"),
+    ("NL.Abc123", "from_user_id", "to_user_id"),
+])
+async def test_history_before_activation_and_echo_pause_are_idempotent(
+    connections, customer, from_key, to_key
+):
     from app.whatsapp_coexistence import handle_coexistence
 
     service, session, browser, _ = await setup(connections)
@@ -549,11 +568,11 @@ async def test_history_before_activation_and_echo_pause_are_idempotent(connectio
             {
                 "threads": [
                     {
-                        "id": "254700000001",
+                        "context": {"wa_id" if from_key == "from" else "user_id": customer},
                         "messages": [
                             {
                                 "id": "old-message",
-                                "from": "254700000001",
+                                from_key: customer,
                                 "timestamp": "1700000000",
                                 "type": "text",
                                 "text": {"body": "Previous order"},
@@ -570,7 +589,7 @@ async def test_history_before_activation_and_echo_pause_are_idempotent(connectio
     await handle_coexistence(connections, "456", "789", "history", history)
     assert await connections.pool.fetchval("SELECT count(*) FROM whatsapp_imported_messages") == 1
     assert await connections.pool.fetchval("SELECT count(*) FROM messages") == 0
-    assert not await connections.is_paused("456", "789", "254700000001")
+    assert not await connections.is_paused("456", "789", customer)
     job = uuid4()
     await connections.pool.execute("INSERT INTO tenants VALUES('tenant')")
     await connections.pool.execute(
@@ -585,7 +604,7 @@ async def test_history_before_activation_and_echo_pause_are_idempotent(connectio
             {
                 "id": "human",
                 "from": "254700000002",
-                "to": "254700000001",
+                to_key: customer,
                 "timestamp": "1700000001",
                 "type": "text",
                 "text": {"body": "I can help"},
@@ -594,7 +613,7 @@ async def test_history_before_activation_and_echo_pause_are_idempotent(connectio
     }
     await handle_coexistence(connections, "456", "789", "smb_message_echoes", echo)
     await handle_coexistence(connections, "456", "789", "smb_message_echoes", echo)
-    assert await connections.is_paused("456", "789", "254700000001")
+    assert await connections.is_paused("456", "789", customer)
     assert not await connections.is_paused("456", "789", "254700000003")
     assert await connections.pool.fetchval("SELECT count(*) FROM messages") == 2
     await connections.pool.execute(
@@ -604,7 +623,7 @@ async def test_history_before_activation_and_echo_pause_are_idempotent(connectio
     echo["message_echoes"][0].update(id="human-2", to="254700000003")
     await handle_coexistence(connections, "456", "789", "smb_message_echoes", echo)
     assert not await connections.is_paused("456", "789", "254700000003")
-    assert await connections.is_paused("456", "789", "254700000001")
+    assert await connections.is_paused("456", "789", customer)
 
 
 async def test_new_attempt_invalidates_old_and_expired_attempts_fail(connections):
@@ -623,3 +642,25 @@ async def test_new_attempt_invalidates_old_and_expired_attempts_fail(connections
                 waba_id="456",
                 phone_number_id="789",
             )
+
+
+@pytest.mark.parametrize("minutes", [30, 60, 120])
+async def test_attempt_timeout_persisted_and_not_retroactive(connections, minutes):
+    service, session, browser, _ = await setup(connections)
+    service.attempt_ttl_minutes = minutes
+    attempt = await service.start(session, browser)
+    duration = await connections.pool.fetchval(
+        "SELECT extract(epoch FROM expires_at-created_at) FROM whatsapp_signup_attempts "
+        "WHERE attempt_id=$1", attempt["attempt_id"]
+    )
+    assert float(duration) == minutes * 60
+    await connections.pool.execute(
+        "UPDATE whatsapp_signup_attempts SET expires_at=now()-interval '1 second' "
+        "WHERE attempt_id=$1", attempt["attempt_id"]
+    )
+    service.attempt_ttl_minutes = 120
+    with pytest.raises(WhatsAppSignupError, match="signup_attempt_invalid_or_used"):
+        await service.complete(
+            session, browser, attempt_id=attempt["attempt_id"], state=attempt["state"],
+            code=SecretStr("code"), waba_id="456", phone_number_id="789",
+        )

@@ -285,6 +285,7 @@ async def verify_whatsapp_webhook(
     hub_challenge: str | None = Query(default=None, alias="hub.challenge"),
     hub_verify_token: str | None = Query(default=None, alias="hub.verify_token"),
 ) -> Response:
+    request.scope["query_string"] = b""  # Never log Meta's webhook verification token.
     settings = get_settings()
     verification_token = settings.meta_webhook_verification_token
     if (

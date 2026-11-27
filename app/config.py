@@ -69,6 +69,7 @@ class Settings(BaseSettings):
     # Explicit rollout gate: enable only after Meta readiness and vault restore checks.
     onboarding_whatsapp_enabled: bool = True
     onboarding_whatsapp_mode: Literal["coexistence", "cloud_api"] = "coexistence"
+    onboarding_whatsapp_attempt_ttl_minutes: int = Field(default=30, ge=1, le=120)
     meta_app_id: str | None = None
     meta_signup_configuration_id: str | None = None
     meta_app_secret: SecretStr | None = None
@@ -152,7 +153,7 @@ class Settings(BaseSettings):
     @property
     def public_webhook_api_url(self) -> str | None:
         web_url = self.web_public_base_url.strip().rstrip("/")
-        # Telegram requires HTTPS; HTTP is only used against mocks in tests.
+        # Public channel webhooks require HTTPS; HTTP is only used against test mocks.
         if web_url.startswith("https://") or (
             self.deployment_environment == "test" and web_url.startswith("http://")
         ):

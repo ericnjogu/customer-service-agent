@@ -5,7 +5,59 @@ signup is enabled (the default). This is **Rancher Desktop Kubernetes only**;
 the script pins every Kubernetes/Helm operation to `rancher-desktop` and does not
 change the current kube context. Do not point it at production.
 
+## Message webhook routing
+
+Signup subscribes the WABA with an explicit callback override derived from
+`WEB_PUBLIC_BASE_URL`: `<public-base>/api/webhooks/whatsapp`. It uses the configured
+`AGENT_META_WEBHOOK_VERIFICATION_TOKEN` to verify that destination. HTTPS is
+required outside tests. Missing configuration fails instead of falling back to
+the shared Meta app's default webhook (which may point at production).
+
+This URL is separate from `/api/onboarding/whatsapp/callback`, the OAuth return
+page. Successful signup retries reassert the message callback. Existing active
+connections are **not** rerouted simply by changing an environment variable or
+restarting: explicitly reconcile their WABA subscription with Meta after checking
+the new destination. Never change the shared app-level production callback just
+to test locally.
+
+Overrides apply to the entire WABA, including all its numbers—not one local
+tenant. Do not share a WABA across local and production environments. Meta documents
+this override for `messages` notifications; do not assume it also reroutes history,
+human-message echoes or other app-level event subscriptions. Use a separate Meta
+test app when those events need complete isolation.
+
+## Diagnosing a failed Meta return
+
+For coexistence, Meta confirms registration through `is_on_biz_app=true` and
+`platform_type=CLOUD_API`. A separate `code_verification_status=VERIFIED` is not
+required for that combination; other numbers still require it. Token permissions,
+WABA grants, phone membership and the configured signup mode remain enforced.
+See [Meta's coexistence status check](https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/onboarding-business-app-users).
+
+The callback page redirects back to onboarding, but sanitized failure diagnostics
+remain in the application logs. No global DEBUG setting is necessary:
+
+```bash
+kubectl --context rancher-desktop -n customer-service logs \
+  deployment/cs-local-customer-service-app --since=10m | grep 'WhatsApp.*failed'
+```
+
+`WhatsApp redirect completion failed` records the application error code.
+`WhatsApp Meta request failed` records the operation, HTTP status, numeric Meta
+error/subcode and Meta trace ID (when supplied). Provider messages, exception
+text, callback URLs, codes, tokens, cookies and session IDs are excluded. Do not
+enable HTTP payload logging or paste callback request bodies into tickets.
+
 ## First setup
+
+WhatsApp signup attempts expire after 30 minutes. For longer Meta setup flows,
+set `AGENT_ONBOARDING_WHATSAPP_ATTEMPT_TTL_MINUTES=60` when running
+`scripts/deploy-local.sh` (allowed range: 1–120 minutes). The Helm equivalent is
+`onboarding.whatsappAttemptTtlMinutes`. This affects new attempts only, not
+email-verification codes or existing signup attempts. Meta's authorization code
+has its own lifetime; increasing our timeout does not extend it. Expired or used
+callbacks must be restarted from onboarding, retaining the verified browser and
+saved form. Never paste callback URLs into logs or tickets: they contain codes.
 
 Start Rancher Desktop with Kubernetes/containerd enabled. Install `kubectl`,
 `helm`, `nerdctl`, `uv` and `openssl`. Keep the existing local PostgreSQL, API-key
@@ -92,6 +144,21 @@ delete an existing vault or credentials. Add
 
 Browser QA still uses mocked Meta/OpenBao endpoints. Do not use its dummy
 configuration or `AGENT_DEPLOYMENT_ENVIRONMENT=test` for real customer signup.
+
+## Messages without a customer phone number
+
+WhatsApp can omit `from` and supply `from_user_id` (a business-scoped user ID,
+or BSUID). The receiver accepts that identifier, including the country prefix,
+and sends replies using Meta's `recipient` field. Phone-number replies continue
+using `to`. Contact names, archived media and human-reply pauses also support
+BSUIDs. Invalid sender identifiers produce a sanitized warning without message
+content or identifiers.
+
+Identifiers remain scoped to their tenant. When a phone number is present it
+remains the conversation key; this change does not merge previously separate
+phone-number and BSUID conversations or backfill dropped webhooks.
+
+See [Meta's BSUID documentation](https://developers.facebook.com/documentation/business-messaging/whatsapp/business-scoped-user-ids).
 
 ## Resuming in another browser
 

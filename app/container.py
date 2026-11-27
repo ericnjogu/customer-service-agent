@@ -369,8 +369,14 @@ async def create_container(settings: Settings) -> Container:
                 app_id=settings.meta_app_id,
                 app_secret=settings.meta_app_secret,
                 version=settings.meta_graph_api_version,
+                webhook_url=(
+                    f"{settings.public_webhook_api_url}/webhooks/whatsapp"
+                    if settings.public_webhook_api_url else None
+                ),
+                webhook_verify_token=settings.meta_webhook_verification_token,
             ),
             mode=settings.onboarding_whatsapp_mode,
+            attempt_ttl_minutes=settings.onboarding_whatsapp_attempt_ttl_minutes,
         )
         from app.adapters.google_drive import GoogleDrive
         from app.media_archive import MediaArchive

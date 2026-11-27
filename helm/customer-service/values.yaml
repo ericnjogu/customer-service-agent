@@ -112,6 +112,7 @@ onboarding:
   telegramEnabled: false
   whatsappEnabled: true # Requires Meta configuration and OpenBao; explicitly disable before bootstrap.
   whatsappMode: coexistence # Business App signup; cloud_api remains an explicit option.
+  whatsappAttemptTtlMinutes: 30 # New signup attempts only; bounded to 1–120 minutes.
   actionTokenTtlMinutes: 60
   emailVerificationTokenTtlMinutes: 60
   emailVerificationCodeTtlMinutes: 10

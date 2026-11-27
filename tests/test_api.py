@@ -2374,7 +2374,12 @@ def test_paused_whatsapp_chat_does_not_invoke_graph_or_send(monkeypatch) -> None
     assert sender.sent_messages == []
 
 
-def test_whatsapp_webhook_receives_customer_message_and_sends_reply() -> None:
+@pytest.mark.parametrize("sender_key,recipient", [
+    ("from", "254700000001"),
+    ("from_user_id", "NL.Abc123"),
+    ("from_parent_user_id", "NL.ENT.Abc123"),
+])
+def test_whatsapp_webhook_receives_customer_message_and_sends_reply(sender_key, recipient) -> None:
     sender = FakeWhatsAppSender()
     with TestClient(app) as client:
         seed_default_knowledge(
@@ -2399,7 +2404,7 @@ def test_whatsapp_webhook_receives_customer_message_and_sends_reply() -> None:
                                     ],
                                     "messages": [
                                         {
-                                            "from": "254700000001",
+                                            sender_key: recipient,
                                             "id": "wamid.1001",
                                             "type": "text",
                                             "text": {"body": "What is the refund policy?"},
@@ -2417,7 +2422,7 @@ def test_whatsapp_webhook_receives_customer_message_and_sends_reply() -> None:
     assert response.json()["ok"] is True
     assert sender.sent_messages == [
         (
-            "254700000001",
+            recipient,
             "Refund requests can be submitted within 30 days of purchase.",
             "default",
         )

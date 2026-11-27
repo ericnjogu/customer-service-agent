@@ -45,6 +45,8 @@ def meta():
         app_id="123",
         app_secret=SecretStr("app-secret"),
         version="v25.0",
+        webhook_url="https://test.example/api/webhooks/whatsapp",
+        webhook_verify_token=SecretStr("webhook-verification-secret"),
     )
     return client, state, phone, requests
 
@@ -58,8 +60,34 @@ async def test_exchange_verify_subscribe_and_register(meta, caplog):
     await client.subscribe(token, asset.waba_id)
     await client.register(token, asset.phone_number_id, SecretStr("123456"))
     assert len(requests) == 6
-    for secret in ("customer-token", "app-secret", "authorization-code", "123456"):
+    for secret in (
+        "customer-token", "app-secret", "authorization-code", "123456",
+        "webhook-verification-secret",
+    ):
         assert secret not in caplog.text
+
+
+async def test_subscription_sets_environment_callback(meta):
+    import json
+    client, _, _, requests = meta
+    await client.subscribe(SecretStr("token"), "456")
+    assert requests[-1].url.path == "/v25.0/456/subscribed_apps"
+    assert json.loads(requests[-1].content) == {
+        "override_callback_uri": "https://test.example/api/webhooks/whatsapp",
+        "verify_token": "webhook-verification-secret",
+    }
+    client.webhook_url = "https://changed.example/api/webhooks/whatsapp"
+    await client.subscribe(SecretStr("token"), "456")
+    assert json.loads(requests[-1].content)["override_callback_uri"] == client.webhook_url
+
+
+@pytest.mark.parametrize("missing", ["webhook_url", "webhook_verify_token"])
+async def test_missing_webhook_configuration_never_clears_override(meta, missing):
+    client, _, _, requests = meta
+    setattr(client, missing, None)
+    with pytest.raises(MetaSignupError, match="meta_webhook_not_configured"):
+        await client.subscribe(SecretStr("token"), "456")
+    assert requests == []
 
 
 async def test_redirect_exchange_and_discovery(meta):
@@ -134,7 +162,50 @@ async def test_phone_membership_and_verification(meta, change, code):
         await client.verify_asset(SecretStr("token"), waba_id="456", phone_number_id="789")
 
 
-async def test_http_error_is_sanitized():
+@pytest.mark.parametrize("status", ["VERIFIED", "NOT_VERIFIED", "PENDING", None])
+async def test_coexistence_registration_does_not_require_sms_verification(meta, status):
+    client, _, phone, _ = meta
+    phone.update(is_on_biz_app=True, platform_type="CLOUD_API")
+    if status is None:
+        phone.pop("code_verification_status")
+    else:
+        phone["code_verification_status"] = status
+    asset = await client.discover_asset(SecretStr("token"))
+    assert asset.is_on_biz_app is True
+    assert asset.platform_type == "CLOUD_API"
+    assert asset.phone_number_id == "789"
+
+
+@pytest.mark.parametrize("on_app,platform", [
+    (False, "CLOUD_API"), (None, "CLOUD_API"), ("true", "CLOUD_API"),
+    (True, None), (True, "NOT_APPLICABLE"), (True, "ON_PREMISE"),
+])
+async def test_incomplete_coexistence_flags_do_not_bypass_verification(meta, on_app, platform):
+    client, _, phone, _ = meta
+    phone.update(is_on_biz_app=on_app, platform_type=platform, code_verification_status="PENDING")
+    with pytest.raises(MetaSignupError, match="meta_phone_not_verified"):
+        await client.verify_asset(SecretStr("token"), waba_id="456", phone_number_id="789")
+
+
+@pytest.mark.parametrize("failure", ["scope", "grant", "membership"])
+async def test_coexistence_still_requires_permissions_and_ownership(meta, failure):
+    client, state, phone, _ = meta
+    phone.update(is_on_biz_app=True, platform_type="CLOUD_API", code_verification_status="PENDING")
+    if failure == "scope":
+        state["scopes"] = []
+        expected = "meta_token_invalid"
+    elif failure == "grant":
+        state["granular_scopes"] = []
+        expected = "meta_waba_not_granted"
+    else:
+        phone["id"] = "000"
+        expected = "meta_phone_not_in_waba"
+    with pytest.raises(MetaSignupError, match=expected):
+        await client.verify_asset(SecretStr("token"), waba_id="456", phone_number_id="789")
+
+
+async def test_http_error_is_sanitized(caplog):
+    caplog.set_level(logging.DEBUG)
     def fail(request):
         return httpx.Response(400, json={"error": "secret-provider-details"})
 
@@ -146,6 +217,46 @@ async def test_http_error_is_sanitized():
         )
         with pytest.raises(MetaSignupError, match="^meta_request_failed$"):
             await client.exchange(SecretStr("code"))
+    assert "secret-provider-details" not in caplog.text
+    assert "operation=code_exchange http_status=400" in caplog.text
+
+
+async def test_meta_failure_logs_only_safe_diagnostics(caplog):
+    caplog.set_level(logging.DEBUG)
+    def fail(request):
+        return httpx.Response(400, json={"error": {
+            "message": "authorization-code customer-token app-secret",
+            "code": 190, "error_subcode": 464, "fbtrace_id": "safe_Meta-trace123",
+        }})
+
+    async with httpx.AsyncClient(
+        base_url="https://graph.facebook.com", transport=httpx.MockTransport(fail)
+    ) as http:
+        client = MetaSignupClient(
+            http, app_id="123", app_secret=SecretStr("app-secret"), version="v25.0"
+        )
+        with pytest.raises(MetaSignupError):
+            await client.discover_asset(SecretStr("customer-token"))
+    assert "operation=token_validation http_status=400" in caplog.text
+    assert "meta_code=190 meta_subcode=464 meta_trace_id=safe_Meta-trace123" in caplog.text
+    for secret in ("authorization-code", "customer-token", "app-secret", "input_token"):
+        assert secret not in caplog.text
+
+
+async def test_transport_failure_does_not_log_exception_url(caplog):
+    caplog.set_level(logging.DEBUG)
+    def fail(request):
+        raise httpx.ConnectError("https://example.com?access_token=secret-value", request=request)
+    async with httpx.AsyncClient(
+        base_url="https://graph.facebook.com", transport=httpx.MockTransport(fail)
+    ) as http:
+        client = MetaSignupClient(
+            http, app_id="123", app_secret=SecretStr("app-secret"), version="v25.0"
+        )
+        with pytest.raises(MetaSignupError):
+            await client.exchange(SecretStr("authorization-code"))
+    assert "operation=code_exchange http_status=None" in caplog.text
+    assert "secret-value" not in caplog.text
 
 
 def test_signature_checks_exact_raw_body():

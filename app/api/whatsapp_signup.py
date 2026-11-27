@@ -1,4 +1,5 @@
 import json
+import logging
 import secrets
 from urllib.parse import urlencode, urlsplit
 from uuid import UUID
@@ -13,6 +14,7 @@ from app.models import OnboardingJobCreate
 from app.whatsapp_signup import WhatsAppSignupError, capability_hash
 
 router = APIRouter(prefix="/onboarding", tags=["whatsapp-signup"])
+logger = logging.getLogger(__name__)
 
 
 def browser_cookie(session_id: UUID) -> str:
@@ -205,6 +207,9 @@ async def redirect_complete(request: Request, session_id: UUID, payload: Redirec
             redirect_uri=meta_redirect_uri(),
         )
     except (WhatsAppSignupError, MetaSignupError) as error:
+        # Both exceptions expose application-defined codes, never provider payloads.
+        # Do not log request data, session IDs, browser cookies or exception tracebacks.
+        logger.warning("WhatsApp redirect completion failed error_code=%s", str(error))
         try:
             await service.cancel(
                 session_id, browser, attempt_id=payload.attempt_id, state=payload.state

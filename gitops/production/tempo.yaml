@@ -1,0 +1,47 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tempo
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  project: default
+  source:
+    repoURL: https://grafana-community.github.io/helm-charts
+    chart: tempo
+    targetRevision: 3.2.1
+    helm:
+      releaseName: tempo
+      valuesObject:
+        fullnameOverride: tempo
+        replicas: 1
+        tempo:
+          tag: "3.1.1"
+          reportingEnabled: false
+          retention: 168h
+          receivers:
+            otlp:
+              protocols:
+                grpc: null
+                http: { endpoint: "0.0.0.0:4318" }
+          resources:
+            requests: { cpu: 100m, memory: 512Mi }
+            limits: { cpu: "1", memory: 1Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+        serviceAccount:
+          automountServiceAccountToken: false
+        persistence:
+          enabled: true
+          storageClassName: local-path
+          size: 10Gi
+          enableStatefulSetAutoDeletePVC: false
+        service:
+          type: ClusterIP
+          labels: { ristoh.co.ke/scrape: tempo }
+  destination: { server: https://kubernetes.default.svc, namespace: monitoring }
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=true]

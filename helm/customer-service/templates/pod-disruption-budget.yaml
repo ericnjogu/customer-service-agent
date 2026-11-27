@@ -1,0 +1,31 @@
+{{- if gt (int .Values.replicaCount) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "customer-service.fullname" . }}-app
+  labels:
+    {{- include "customer-service.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: app
+      app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+{{- if and (gt (int .Values.replicaCount) 1) (gt (int .Values.web.replicaCount) 1) }}
+---
+{{- end }}
+{{- if gt (int .Values.web.replicaCount) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "customer-service.fullname" . }}-web
+  labels:
+    {{- include "customer-service.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: web
+      app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}

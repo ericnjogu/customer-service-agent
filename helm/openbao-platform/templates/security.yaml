@@ -1,0 +1,86 @@
+{{- if .Values.security.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: openbao-operator }
+automountServiceAccountToken: false
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata: { name: openbao-selfsigned }
+spec: { selfSigned: {} }
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: { name: openbao-ca }
+spec:
+  isCA: true
+  commonName: openbao-internal-ca
+  secretName: openbao-ca
+  duration: 87600h
+  renewBefore: 8760h
+  privateKey: { algorithm: ECDSA, size: 256 }
+  issuerRef: { name: openbao-selfsigned }
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata: { name: openbao-ca }
+spec:
+  ca: { secretName: openbao-ca }
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: { name: openbao-tls }
+spec:
+  secretName: openbao-tls
+  duration: 2160h
+  renewBefore: 720h
+  privateKey: { algorithm: ECDSA, size: 256 }
+  issuerRef: { name: openbao-ca }
+  dnsNames:
+    - openbao
+    - openbao.openbao.svc
+    - openbao-active.openbao.svc
+    - '*.openbao-internal'
+    - '*.openbao-internal.openbao.svc'
+    - localhost
+  ipAddresses: [127.0.0.1]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: openbao-private }
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: openbao, component: server }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: openbao, component: server }
+      ports: [{ port: 8200 }, { port: 8201 }]
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: {{ .Values.applicationNamespace }} }
+          podSelector:
+            matchLabels: { app.kubernetes.io/component: app, app.kubernetes.io/instance: one-css }
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: {{ .Values.monitoringNamespace }} }
+        - podSelector:
+            matchLabels: { app.kubernetes.io/component: openbao-backup }
+      ports: [{ port: 8200 }]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: openbao, component: server }
+      ports: [{ port: 8200 }, { port: 8201 }]
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+      ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]
+    # k3s TokenReview and service registration use the private Kubernetes API.
+    - to:
+        - ipBlock: { cidr: 10.50.0.11/32 }
+        - ipBlock: { cidr: 10.50.0.12/32 }
+        - ipBlock: { cidr: 10.50.0.13/32 }
+        - ipBlock: { cidr: 10.43.0.1/32 }
+      ports: [{ port: 6443 }, { port: 443 }]
+{{- end }}

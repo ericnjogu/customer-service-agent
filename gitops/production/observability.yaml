@@ -1,0 +1,142 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: victoria-metrics
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://victoriametrics.github.io/helm-charts
+    chart: victoria-metrics-k8s-stack
+    targetRevision: 0.92.1
+    helm:
+      releaseName: vm
+      valuesObject:
+        # K3s embeds scheduler/controller-manager in the server process. Their
+        # metrics already arrive through the authenticated API-server scrape.
+        kubeControllerManager:
+          enabled: false
+        kubeScheduler:
+          enabled: false
+        defaultRules:
+          rules:
+            "count:up0":
+              spec:
+                # Emit zero for healthy groups, but stay absent if inputs disappear.
+                expr: sum(up == bool 0) without(instance,pod,node)
+            RecordingRulesNoData:
+              spec:
+                # VM drops NaN histogram quantiles when no pods were scheduled.
+                # Suppress only that idle case; missing input metrics still alert.
+                expr: |
+                  (sum(vmalert_recording_rules_last_evaluation_samples{group!="kube-scheduler.rules"}) without(id) < 1)
+                  or
+                  ((sum(vmalert_recording_rules_last_evaluation_samples{group="kube-scheduler.rules"}) without(id) < 1)
+                  unless on() (sum(rate(scheduler_scheduling_attempt_duration_seconds_count{job="apiserver"}[5m])) == 0))
+          groups:
+            kube-scheduler.rules:
+              enabled: true
+              labelRewrites:
+                job: { match: kube-scheduler, value: apiserver }
+            kubernetes-system-scheduler:
+              enabled: true
+              labelRewrites:
+                job: { match: kube-scheduler, value: apiserver }
+            kubernetes-system-controller-manager:
+              enabled: true
+              labelRewrites:
+                job: { match: kube-controller-manager, value: apiserver }
+        # Preserve etcd rules/dashboards, but use etcd-monitoring.yaml for discovery.
+        # Argo CD excludes Endpoints/EndpointSlice, so chart endpoints aren't applied.
+        kubeEtcd:
+          enabled: true
+          service: { enabled: false }
+          vmScrape: { enabled: false }
+        vmagent:
+          spec:
+            resources:
+              requests: { cpu: 100m, memory: 200Mi }
+              # Scrapes are bursty; the operator's 200m default was throttling.
+              limits: { cpu: 500m, memory: 500Mi }
+        vmsingle:
+          spec:
+            retentionPeriod: 7d
+            storage:
+              resources: { requests: { storage: 10Gi } }
+        grafana:
+          persistence: { enabled: true, size: 2Gi }
+          # Stable SOPS-managed credentials; Helm-generated passwords drift in Argo CD.
+          admin:
+            existingSecret: grafana-admin
+            userKey: admin-user
+            passwordKey: admin-password
+        alertmanager:
+          enabled: true
+          spec:
+            configSecret: operations-alert-email
+  destination: { server: https://kubernetes.default.svc, namespace: monitoring }
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=true,ServerSideApply=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: loki
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://grafana.github.io/helm-charts
+    chart: loki
+    targetRevision: 7.3.0
+    helm:
+      valuesObject:
+        deploymentMode: SingleBinary
+        lokiCanary:
+          # Keep the unique pod label; use the second canary label for service
+          # identity in both direct pushes and the canary's verification query.
+          extraArgs:
+            - -streamname=service_name
+            - -streamvalue=loki-canary
+        loki:
+          auth_enabled: false
+          commonConfig: { replication_factor: 1 }
+          storage: { type: filesystem }
+          limits_config: { retention_period: 168h }
+          schemaConfig:
+            configs:
+              - from: "2026-01-01"
+                store: tsdb
+                object_store: filesystem
+                schema: v13
+                index: { prefix: loki_index_, period: 24h }
+          compactor:
+            retention_enabled: true
+            delete_request_store: filesystem
+          rulerConfig:
+            storage:
+              type: local
+              local: { directory: /etc/loki/rules }
+            rule_path: /var/loki/rules-tmp
+            alertmanager_url: http://vmalertmanager-vm-victoria-metrics-k8s-stack.monitoring.svc:9093
+            enable_alertmanager_v2: true
+        singleBinary:
+          replicas: 1
+          persistence: { size: 10Gi }
+          extraVolumes:
+            - name: openbao-alert-rules
+              configMap:
+                name: openbao-audit-alerts
+                items: [{ key: openbao.yaml, path: fake/openbao.yaml }]
+          extraVolumeMounts:
+            - { name: openbao-alert-rules, mountPath: /etc/loki/rules, readOnly: true }
+        chunksCache: { enabled: false }
+        resultsCache: { enabled: false }
+        backend: { replicas: 0 }
+        read: { replicas: 0 }
+        write: { replicas: 0 }
+  destination: { server: https://kubernetes.default.svc, namespace: monitoring }
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=true]
